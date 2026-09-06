@@ -1,0 +1,9 @@
+{
+  "name": "@standardcode/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "standardcode": "bin/standardcode.js"
+  }
+}

@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@standardcode/cli':
+        specifier: workspace:*
+        version: link:apps/cli
+
+  apps/cli: {}
+
+  packages/capabilities: {}
+
+  packages/context: {}
+
+  packages/harness: {}
+
+  packages/platform: {}
+
+  packages/providers: {}

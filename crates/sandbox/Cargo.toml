@@ -1,0 +1,6 @@
+[package]
+name = "standardcode-sandbox"
+version = "0.0.0"
+edition = "2021"
+
+# M0 占位：Rust workspace（M5 交付，v2.8 §12.3）。本包当前无任何实现。
