@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "bench:cold-start": "node apps/cli/scripts/cold-start.mjs"
+  },
   "devDependencies": {
     "@standardcode/cli": "workspace:*"
   }
