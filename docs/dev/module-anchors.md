@@ -21,3 +21,4 @@
 | `guard-path` | L4 | TS | 高危路径护栏（M1 起常驻，先于沙箱） | [CC] `_616.js`（`.claude` 守卫正则）+ Codex `PROTECTED_METADATA_PATH_NAMES` |
 | `provider-adapter` | L5 | **TS** | 多协议适配、能力声明、重试回退 | OpenCode `packages/llm`（Protocol/Route 分离）+ `packages/opencode/src/provider/`（provider.ts 2047 行 / transform.ts 1856 行，注意 `packages/llm/src/provider.ts` 仅 36 行门面）；Kimi `kosong`（方言自适应、四层防御）；Codex `model-provider-info` |
 | `platform-services` | L6 | TS | 配置、存储、更新、遥测、计费、i18n | [CC] `_811.js`（467 env）、`_2.js`（--settings 早期处理）、`_710.js`、`_310.js`（keychain）、`_788.js`（**file-history 快照**；"checkpoint"称谓未在其源码出现）、`_367.js`（OTel）、`_7.js`（CA 证书）；错误码常量在 `_795.js:11`（`ERR_FILE_TOO_LARGE`），`_830.js` 仅错误分类 getter |
+
