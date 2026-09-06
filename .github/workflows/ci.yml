@@ -1,0 +1,30 @@
+name: ci
+
+# ENG-070 CI 即验收：三平台矩阵必绿。本 workflow 仅 checkout+install+--version（WP-05 边界）；冷启动门禁由 WP-06 追加。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: version gate
+        run: pnpm exec standardcode --version
