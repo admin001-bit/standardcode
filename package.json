@@ -7,7 +7,7 @@
   "scripts": {
     "bench:cold-start": "node apps/cli/scripts/cold-start.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities"
+    "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities && tsc -p apps/cli"
   },
   "devDependencies": {
     "@standardcode/cli": "workspace:*",

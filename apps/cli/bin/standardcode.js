@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// M0 骨架占位：仅 --version 输出，零业务逻辑（WP-04 边界）。
+// standardcode 入口。--version 短路保持冷启动门禁口径（spawn→输出版本→退出，不加载会话栈）；
+// 无参=交互 REPL（WP-03），动态 import 会话栈。
 import { readFileSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -10,4 +11,11 @@ if (arg === "--version" || arg === "-v") {
   process.exit(0);
 }
 
-console.log(`standardcode ${pkg.version} — M0 骨架占位（无业务能力，命令随里程碑交付）`);
+if (arg === undefined) {
+  const { main } = await import("../src/main.ts");
+  await main();
+  process.exit(process.exitCode ?? 0);
+}
+
+console.log(`standardcode ${pkg.version}\nusage: standardcode [--version]`);
+process.exit(1);

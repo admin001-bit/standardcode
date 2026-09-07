@@ -21,7 +21,20 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@24.13.3)
 
-  apps/cli: {}
+  apps/cli:
+    dependencies:
+      '@standardcode/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
+      '@standardcode/context':
+        specifier: workspace:*
+        version: link:../../packages/context
+      '@standardcode/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
+      '@standardcode/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
 
   packages/capabilities:
     dependencies:

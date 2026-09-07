@@ -1,9 +1,15 @@
 {
   "name": "@standardcode/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
     "standardcode": "bin/standardcode.js"
+  },
+  "dependencies": {
+    "@standardcode/capabilities": "workspace:*",
+    "@standardcode/context": "workspace:*",
+    "@standardcode/harness": "workspace:*",
+    "@standardcode/providers": "workspace:*"
   }
 }
