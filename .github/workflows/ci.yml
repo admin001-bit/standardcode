@@ -1,6 +1,8 @@
 name: ci
 
 # ENG-070 CI 即验收：三平台矩阵必绿。本 workflow 仅 checkout+install+--version（WP-05 边界）；冷启动门禁由 WP-06 追加。
+# WP-12：actions 钉版方式经提请按推荐档=major tag（可随时改 SHA）；checkout/setup-node 升 v5（actions 运行时 Node20→24 迁移，消弃用告警）。
+# WP-12：冷启动阈值在步骤级 env 钉死 400——仓库级 env/vars 无法覆盖（ENG-070：CI 即验收，阈值不可被环境弱化）。
 on:
   push:
     branches: [main]
@@ -18,9 +20,9 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -30,3 +32,5 @@ jobs:
         run: pnpm exec standardcode --version
       - name: cold-start gate
         run: pnpm run bench:cold-start
+        env:
+          COLD_START_MAX_MS: 400
