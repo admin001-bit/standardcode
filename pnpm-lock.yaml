@@ -32,6 +32,9 @@ importers:
       '@standardcode/harness':
         specifier: workspace:*
         version: link:../../packages/harness
+      '@standardcode/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
       '@standardcode/providers':
         specifier: workspace:*
         version: link:../../packages/providers

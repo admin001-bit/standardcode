@@ -47,14 +47,14 @@ describe("M1 五命令（§8.2 最小集）", () => {
 
   it("/permission 无参按 EXE-001 循环；有参直设；非法报错", () => {
     const { ctx, out, session } = fixture();
-    expect(session.permissionMode).toBe("default");
+    expect(session.broker.mode()).toBe("default");
     for (const expected of ["acceptEdits", "plan", "bypassPermissions", "default"]) {
       M1_COMMANDS[4]!.execute("", ctx);
-      expect(session.permissionMode).toBe(expected);
+      expect(session.broker.mode()).toBe(expected);
     }
     expect(out.join("\n")).toContain(PERMISSION_LABEL.plan);
     M1_COMMANDS[4]!.execute("plan", ctx);
-    expect(session.permissionMode).toBe("plan");
+    expect(session.broker.mode()).toBe("plan");
     expect(() => M1_COMMANDS[4]!.execute("auto", ctx)).toThrow(/unknown mode/);
     expect(PERMISSION_CYCLE).toEqual(["default", "acceptEdits", "plan", "bypassPermissions"]);
   });

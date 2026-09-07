@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runAgentLoop } from "@standardcode/harness";
-import { PERMISSION_CYCLE, type Session } from "./session.ts";
+import { checkToolInput as guardCheck } from "@standardcode/platform";
+import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { M1_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
 import { renderTurn } from "./render.ts";
@@ -32,14 +33,10 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       if (!s.catalog.includes(name)) throw new Error(`unknown model: ${name}（可用：${s.catalog.join(", ")}）`);
       s.model = name;
     },
-    permissionMode: () => s.permissionMode,
-    cyclePermissionMode: () => {
-      const next = PERMISSION_CYCLE[(PERMISSION_CYCLE.indexOf(s.permissionMode) + 1) % PERMISSION_CYCLE.length]!;
-      s.permissionMode = next;
-      return next;
-    },
+    permissionMode: () => s.broker.mode(),
+    cyclePermissionMode: () => s.broker.cycle(),
     setPermissionMode: (mode) => {
-      s.permissionMode = mode;
+      s.broker.setMode(mode);
     },
     clearHistory: () => {
       s.messages.length = 0;
@@ -80,7 +77,22 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   s.activeAbort = new AbortController();
   try {
     const final = await renderTurn(
-      runAgentLoop({ provider: s.provider, model: s.model, messages: s.messages, tools: s.tools, signal: s.activeAbort.signal }),
+      runAgentLoop({
+        provider: s.provider,
+        model: s.model,
+        messages: s.messages,
+        tools: s.tools,
+        // WP-09：guard-path 护栏（platform 实现；stop 硬停/confirm 升 ask——S-9 Auto 不豁免）
+        guard: {
+          check: (name, input) => {
+            const v = guardCheck(name, input, s.cwd);
+            return { action: v.action, ...(v.rule ? { rule: v.rule } : {}), ...(v.detail ? { detail: v.detail } : {}) };
+          },
+        },
+        // WP-08：权限仲裁挂接（评估序与 Plan 硬门在 broker；ask 无确认 UI→fail-closed 拒绝，B-13/SEC-020）
+        permission: { check: async (name, input) => s.broker.evaluate(name, input).decision },
+        signal: s.activeAbort.signal,
+      }),
       deps.io.write,
       s.meter,
     );

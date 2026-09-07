@@ -23,9 +23,9 @@ export function createRegistry(tools: Tool[]): ToolRegistry {
   return new Map(tools.map((t) => [t.name, t]));
 }
 
-/** 权限接口点（WP-08 落实体；缺省全放行——卡边界已登记）。 */
+/** 权限接口点（WP-08 落实体）。三值：allow 执行、deny 拒绝、ask=需确认（M1 无确认 UI→fail-closed 拒绝，B-13/SEC-020）。 */
 export interface PermissionGate {
-  check(toolName: string, input: unknown): Promise<"allow" | "deny">;
+  check(toolName: string, input: unknown): Promise<"allow" | "deny" | "ask">;
 }
 
 export interface TurnState {
@@ -67,6 +67,8 @@ export interface LoopOptions {
   tools?: Tool[];
   /** 权限闸（WP-08）；缺省全放行。 */
   permission?: PermissionGate;
+  /** guard-path 护栏（WP-09，platform 实现）：stop 硬停/confirm 强制确认（S-9 Auto 不豁免）。 */
+  guard?: { check(toolName: string, input: unknown): { action: "stop" | "confirm" | "pass"; rule?: string; detail?: string } };
   /** 恢复链⑧：单 turn 内工具轮数上限（默认 25，[自定]）。 */
   maxToolRounds?: number;
   /** 恢复链③/④：续写预算（默认 3，§5.4 ③限 3 次）。 */

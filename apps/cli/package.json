@@ -10,6 +10,7 @@
     "@standardcode/capabilities": "workspace:*",
     "@standardcode/context": "workspace:*",
     "@standardcode/harness": "workspace:*",
-    "@standardcode/providers": "workspace:*"
+    "@standardcode/providers": "workspace:*",
+    "@standardcode/platform": "workspace:*"
   }
 }

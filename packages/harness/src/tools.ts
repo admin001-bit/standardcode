@@ -1,7 +1,7 @@
 // 工具执行回路（§5.4：schema 校验 → 权限仲裁（接口点，WP-08）→ 执行 → 回灌）。
 
 import { spawn, type ChildProcess } from "node:child_process";
-import type { Tool, ToolContext, ToolRegistry } from "./types.ts";
+import type { Tool, ToolContext, ToolRegistry, PermissionGate } from "./types.ts";
 
 export interface ToolCall {
   id: string;
@@ -37,9 +37,22 @@ export function validateToolInput(schema: Tool["inputSchema"], input: unknown): 
   return null;
 }
 
+/** 护栏判定（WP-09 guard-path 的结构面；platform 侧实现满足此形状）。stop=硬停（deny 恒赢）、confirm=强制确认（S-9，Auto 不豁免）。 */
+export interface ToolGuardVerdict {
+  action: "stop" | "confirm" | "pass";
+  rule?: string;
+  detail?: string;
+}
+
+export interface ToolGuard {
+  check(toolName: string, input: unknown): ToolGuardVerdict;
+}
+
 export interface RunToolsOptions {
   registry: ToolRegistry;
-  permission?: { check(toolName: string, input: unknown): Promise<"allow" | "deny"> };
+  permission?: PermissionGate;
+  /** guard-path（WP-09）：先于权限判定（EXE-020 工具层权威判定）；stop 硬停，confirm 升 ask（S-9 Auto 不豁免）。 */
+  guard?: ToolGuard;
   signal?: AbortSignal;
 }
 
@@ -102,11 +115,26 @@ async function runOneTool(call: ToolCall, ctx: ToolContext, opts: RunToolsOption
   if (!tool) {
     return { id: call.id, name: call.name, content: `unknown tool: ${call.name}`, isError: true };
   }
+  const guard = opts.guard?.check(call.name, call.input);
+  if (guard?.action === "stop") {
+    // EXE-020：检测+停止；deny 恒赢（B-13）——护栏硬停先于权限判定
+    return { id: call.id, name: call.name, content: `guard-path stop (${guard.rule}): ${guard.detail ?? ""}`, isError: true };
+  }
+  let decision: "allow" | "deny" | "ask" = "allow";
   if (opts.permission) {
-    const decision = await opts.permission.check(call.name, call.input);
-    if (decision === "deny") {
-      return { id: call.id, name: call.name, content: `permission denied: ${call.name}`, isError: true };
-    }
+    decision = await opts.permission.check(call.name, call.input);
+  }
+  if (decision === "allow" && guard?.action === "confirm") {
+    // S-9 强制确认且 Auto 不豁免（§11）：护栏 confirm 把 allow 降为 ask
+    decision = "ask";
+  }
+  if (decision === "deny") {
+    return { id: call.id, name: call.name, content: `permission denied: ${call.name}`, isError: true };
+  }
+  if (decision === "ask") {
+    // M1 无交互确认 UI（WP-03 命令面未含确认流）——ask fail-closed 拒绝（B-13/SEC-020：一切执行面默认 ask，未批不执行）
+    const why = guard?.action === "confirm" ? `guard-path confirm (${guard.rule}): ${guard.detail ?? ""}` : `permission required (ask) and unattended: ${call.name}`;
+    return { id: call.id, name: call.name, content: why, isError: true };
   }
   const invalid = validateToolInput(tool.inputSchema, call.input);
   if (invalid) {

@@ -5,11 +5,12 @@
 import { AnthropicAdapter, OpenAIChatAdapter, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
+import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
 
-// EXE-001：Manual↔default、Plan↔plan、Accept Edits↔acceptEdits、Auto↔bypassPermissions；
-// 循环切换序 default → acceptEdits → plan → bypassPermissions → default（首版四模式，auto 档 M5+ MAY）。
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
-export const PERMISSION_CYCLE: readonly PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions"];
+/** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
+export { PERMISSION_MODES as PERMISSION_CYCLE } from "@standardcode/harness";
+export type { PermissionMode } from "@standardcode/harness";
+import type { PermissionMode } from "@standardcode/harness";
 export const PERMISSION_LABEL: Record<PermissionMode, string> = {
   default: "Manual",
   acceptEdits: "Accept Edits",
@@ -27,7 +28,8 @@ export interface Session {
   tools: StandardTool[];
   cwd: string;
   meter: UsageMeter;
-  permissionMode: PermissionMode;
+  /** 权限仲裁（WP-08）：模式与评估序唯一权威；permissionMode 为其投影（/permission 经 cycleMode 操作）。 */
+  broker: PermissionBroker;
   exitRequested: boolean;
   /** 进行中 turn 的中断控制器（Ctrl+C → abort；§8.4 中断不变量的 L0 触发点）。 */
   activeAbort: AbortController | null;
@@ -42,6 +44,8 @@ export interface SessionInit {
   cwd?: string;
   /** env 直读时的替身（测试）。 */
   env?: NodeJS.ProcessEnv;
+  /** 权限规则（M1 env 直读配置的一部分；持久化落 local 层属 M2）。 */
+  rules?: Partial<Ruleset>;
 }
 
 const ANTHROPIC_ENTRIES: Record<string, AnthropicModelEntry> = {
@@ -102,7 +106,7 @@ export function createSession(init: SessionInit = {}): Session {
     tools: createStandardTools({ cwd: init.cwd ?? process.cwd() }),
     cwd: init.cwd ?? process.cwd(),
     meter: new UsageMeter(),
-    permissionMode: "default",
+    broker: createPermissionBroker({ rules: init.rules }),
     exitRequested: false,
     activeAbort: null,
   };

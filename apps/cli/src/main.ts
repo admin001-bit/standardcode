@@ -1,7 +1,7 @@
 // CLI 入口装配（§5.1 L0 装配 L1/L3/L5；version 门禁与冷启动门禁不经此路径——bin 对 --version 短路）。
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
-import { createSession } from "./session.ts";
+import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
 import { M1_COMMANDS } from "./commands.ts";
 
@@ -27,6 +27,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     input: process.stdin,
     completer: completerFor(M1_COMMANDS), // UI-001
   });
+  // EXE-001 shift+tab 切换（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）
+  if (process.stdin.isTTY) {
+    const { emitKeypressEvents } = await import("node:readline");
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.on("keypress", (_s: string, key: { name?: string; shift?: boolean; ctrl?: boolean }) => {
+      if (key?.shift && key.name === "tab" && !key.ctrl) {
+        const next = session.broker.cycle();
+        process.stdout.write(`\n[permission] ${PERMISSION_LABEL[next]} (${next})\n`);
+        rl.prompt();
+      }
+    });
+  }
   rl.on("SIGINT", () => {
     // §8.4 中断：turn 进行中→停流；空闲→提示退出方式（M1 不做二次确认计数）
     if (session.activeAbort) session.activeAbort.abort();
