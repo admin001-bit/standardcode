@@ -1,0 +1,234 @@
+{
+  "schema": "standardcode-golden-snapshot@1",
+  "model": "claude-sonnet-4-6",
+  "segments": [
+    {
+      "name": "identity",
+      "cacheScope": "org",
+      "size": 130
+    },
+    {
+      "name": "tools",
+      "cacheScope": "global",
+      "size": 1206
+    },
+    {
+      "name": "dynamic",
+      "cacheScope": "dynamic",
+      "size": 33
+    },
+    {
+      "name": "history",
+      "cacheScope": "dynamic",
+      "size": 4
+    }
+  ],
+  "system": "You are StandardCode, an interactive CLI coding agent.\nYou help the user with software engineering tasks in the current workspace.",
+  "messages": [
+    {
+      "role": "user",
+      "isMeta": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder>gitStatus: (clean) on branch main</system-reminder>"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "List the files in the current directory."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_fixture_01",
+          "name": "Glob",
+          "input": {
+            "pattern": "**/*"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "toolUseId": "toolu_fixture_01",
+          "content": "README.md"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The workspace contains README.md."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "Bash",
+      "description": "Executes a shell command and returns combined stdout/stderr. Default timeout 120s, hard cap 600s (pass timeout in milliseconds to raise per-call); output beyond 30k characters is truncated. Long-running commands must respect user interruption.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "the shell command to execute"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "optional timeout in ms (max 600000)"
+          }
+        }
+      }
+    },
+    {
+      "name": "Read",
+      "description": "Reads a file from the local filesystem as UTF-8 text with cat -n line numbers (default up to 2000 lines; overlong lines truncated). Use offset/limit for paging. Binary files are rejected.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path"
+        ],
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "absolute or session-cwd-relative path"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "1-based start line"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "max lines to read"
+          }
+        }
+      }
+    },
+    {
+      "name": "Write",
+      "description": "Writes a file to the local filesystem, overwriting it if it exists (parent directories are created). Prefer Edit for changing existing files.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path",
+          "content"
+        ],
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "absolute or session-cwd-relative path"
+          },
+          "content": {
+            "type": "string",
+            "description": "full file content"
+          }
+        }
+      }
+    },
+    {
+      "name": "Edit",
+      "description": "Replaces old_string with new_string in a file. Fails when old_string is not unique unless replace_all is set — include more surrounding context to make it unique. Fails when old_string does not match exactly.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path",
+          "old_string",
+          "new_string"
+        ],
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "absolute or session-cwd-relative path"
+          },
+          "old_string": {
+            "type": "string",
+            "description": "exact text to replace"
+          },
+          "new_string": {
+            "type": "string",
+            "description": "replacement text"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "replace every occurrence (default false)"
+          }
+        }
+      }
+    },
+    {
+      "name": "Glob",
+      "description": "Fast file pattern matching: returns up to 100 newest files matching a glob pattern (supports * and **), sorted by modification time. Skips node_modules, .git and dot-directories.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "glob pattern relative to the search root, e.g. src/**/*.ts"
+          },
+          "path": {
+            "type": "string",
+            "description": "optional root directory (default session cwd)"
+          }
+        }
+      }
+    },
+    {
+      "name": "Grep",
+      "description": "Content search backed by ripgrep (must be installed on PATH; on Windows: winget install BurntSushi.ripgrep.MSVC). Supports regular expressions with output modes: content (default), files_with_matches, count.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "regular expression to search for"
+          },
+          "path": {
+            "type": "string",
+            "description": "optional file or directory to search (default session cwd)"
+          },
+          "include": {
+            "type": "string",
+            "description": "glob filter, e.g. *.ts"
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "description": "output shape (default content)"
+          },
+          "case_insensitive": {
+            "type": "boolean",
+            "description": "case-insensitive matching"
+          }
+        }
+      }
+    }
+  ]
+}

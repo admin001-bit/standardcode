@@ -6,6 +6,8 @@
   "packageManager": "pnpm@11.18.0",
   "scripts": {
     "bench:cold-start": "node apps/cli/scripts/cold-start.mjs",
+    "golden:capture": "node evals/golden/capture.mjs",
+    "golden:compare": "node evals/golden/compare.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities && tsc -p apps/cli"
   },
