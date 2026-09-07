@@ -1,3 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+# ENG-071（禁 install script 豁免制）：esbuild 平台二进制由 @esbuild/* 平台包提供，
+# 其 install script 无需运行——显式登记为禁用（false）而非豁免放行。
+allowBuilds:
+  esbuild: false

@@ -5,9 +5,14 @@
   "type": "module",
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "bench:cold-start": "node apps/cli/scripts/cold-start.mjs"
+    "bench:cold-start": "node apps/cli/scripts/cold-start.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/providers"
   },
   "devDependencies": {
-    "@standardcode/cli": "workspace:*"
+    "@standardcode/cli": "workspace:*",
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }
