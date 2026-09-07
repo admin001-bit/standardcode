@@ -1,0 +1,28 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CTX-100 M1 四分段 > 单测快照（WP-10 Golden 建立前的代位，卡边界） 1`] = `"You are StandardCode."`;
+
+exports[`CTX-100 M1 四分段 > 单测快照（WP-10 Golden 建立前的代位，卡边界） 2`] = `
+[
+  {
+    "cacheScope": "org",
+    "name": "identity",
+    "size": 21,
+  },
+  {
+    "cacheScope": "global",
+    "name": "tools",
+    "size": 37,
+  },
+  {
+    "cacheScope": "dynamic",
+    "name": "dynamic",
+    "size": 16,
+  },
+  {
+    "cacheScope": "dynamic",
+    "name": "history",
+    "size": 3,
+  },
+]
+`;
