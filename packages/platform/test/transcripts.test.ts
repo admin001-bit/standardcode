@@ -20,7 +20,7 @@ describe("路径编码（ADR-0028 决策 2）", () => {
     expect(encodeProjectPath("D:\\projects\\standardcode")).toBe("D--projects-standardcode");
     expect(encodeProjectPath("D:\\a b\\c")).toBe("D--a-b-c");
     expect(encodeProjectPath("/tmp/x")).toBe("-tmp-x");
-    expect(encodeProjectPath("D:\\中文")).toBe("D-----");
+    expect(encodeProjectPath("D:\\中文")).toBe("D----");
   });
 });
 
