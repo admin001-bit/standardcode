@@ -27,7 +27,11 @@ importers:
 
   packages/context: {}
 
-  packages/harness: {}
+  packages/harness:
+    dependencies:
+      '@standardcode/providers':
+        specifier: workspace:*
+        version: link:../providers
 
   packages/platform: {}
 
