@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runAgentLoop } from "@standardcode/harness";
-import type { LLMEvent, Tool } from "@standardcode/harness";
+import type { Tool } from "@standardcode/harness";
+import type { LLMEvent } from "@standardcode/providers";
 import { encodeProjectPath, rebuildMessages, readTranscript, resumeFrom, TranscriptWriter } from "../src/transcripts.ts";
 
 async function tmpBase() {
