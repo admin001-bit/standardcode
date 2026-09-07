@@ -1,6 +1,13 @@
 {
   "name": "@standardcode/platform",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@standardcode/harness": "workspace:*",
+    "@standardcode/providers": "workspace:*"
+  }
 }

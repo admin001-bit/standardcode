@@ -37,7 +37,14 @@ importers:
         specifier: workspace:*
         version: link:../providers
 
-  packages/platform: {}
+  packages/platform:
+    dependencies:
+      '@standardcode/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@standardcode/providers':
+        specifier: workspace:*
+        version: link:../providers
 
   packages/providers: {}
 

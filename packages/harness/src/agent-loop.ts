@@ -173,10 +173,16 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     // —— 中断收尾（§8.4）：保留已生成；已完成工具的回灌在 runTools 侧合成，此处先入 assistant ——
     if (signal?.aborted) {
       if (blocks.length > 0) state.messages.push({ role: "assistant", content: blocks });
-      const hadTools = toolCalls.length > 0 || toolInputs.size > 0;
-      if (hadTools) {
+      // pending 只收"会以 tool_use 形态入历史的调用"（完整+未终止）；畸形 id（malformedIds）不入历史，
+      // 也不得为其合成 tool_result——否则终态留孤儿 result（V 复验偏差⑥，WP-06 修复）
+      const pending: ToolCall[] = [
+        ...toolCalls,
+        ...[...toolInputs.keys()]
+          .filter((id) => !toolCalls.some((c) => c.id === id) && !malformedIds.has(id))
+          .map((id) => ({ id, name: toolNames.get(id) ?? "", input: {} })),
+      ];
+      if (pending.length > 0) {
         // 未执行的调用合成 error tool_result（无悬空 tool_use，硬不变量）
-        const pending: ToolCall[] = [...toolCalls, ...[...toolInputs.keys()].filter((id) => !toolCalls.some((c) => c.id === id)).map((id) => ({ id, name: toolNames.get(id) ?? "", input: {} }))];
         const outcomes = await runTools(pending, { registry, permission: opts.permission, signal });
         const resultBlocks: ContentBlock[] = outcomes.map((o) => ({ type: "tool_result", toolUseId: o.id, content: o.content, isError: true }));
         for (const o of outcomes) yield { type: "tool_result", ...o, isError: true };
