@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 /** 元数据目录名（隐式保护；Codex .codex → 本仓 .standardcode；.agents 沿用——产品自身约定通道）。 */
 export const PROTECTED_METADATA_NAMES: readonly string[] = [".git", ".agents", ".standardcode"];
 
-/** 高危系统路径（EXE-020：C:\Windows 等；Windows 盘根+系统目录，POSIX 根与 etc/usr/boot）。 */
+/** 高危系统路径（EXE-020：C:\Windows 等；M1 最小集=Windows 系统目录 4 项，POSIX 系统目录清单随护栏运营/M2 扩充）。 */
 export const HIGH_RISK_PATHS: readonly string[] = [
   "C:\\Windows",
   "C:\\Program Files",
