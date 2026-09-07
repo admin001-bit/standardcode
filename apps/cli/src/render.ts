@@ -1,5 +1,6 @@
 // 流式输出上屏（DoD④；UI-040 Concise [自定]：正文直出、工具折叠为状态行、thinking 不上屏、usage 行随 WP-05 口径）。
 import { formatRawUsage, type UsageMeter } from "@standardcode/context";
+import type { TokenUsage } from "@standardcode/providers";
 import type { AgentEvent, TurnState } from "@standardcode/harness";
 
 export async function renderTurn(
@@ -9,6 +10,9 @@ export async function renderTurn(
 ): Promise<TurnState> {
   const it = events[Symbol.asyncIterator]();
   let sawText = false;
+  // ADR-0027：usage 事件=轮内快照（Anthropic 每轮两条：message_start 部分快照+message_delta 合并）。
+  // 只 observe 轮内末条，且挂到 finish（每轮恰一次）——按事件数 observe 会把会话累计翻倍（V 核验发现，WP-05 报告跑偏①）。
+  let pendingUsage: TokenUsage | null = null;
   while (true) {
     const r = await it.next();
     if (r.done) {
@@ -32,7 +36,11 @@ export async function renderTurn(
         write(` ${ev.isError ? "✗" : "✓"}\n`);
         break;
       case "usage":
-        write(`\n${formatRawUsage(ev.usage, meter.observe(ev.usage))}\n`);
+        pendingUsage = ev.usage;
+        break;
+      case "finish":
+        if (pendingUsage) write(`\n${formatRawUsage(pendingUsage, meter.observe(pendingUsage))}\n`);
+        pendingUsage = null;
         break;
       case "recovery":
         write(`\n[recovery] ${ev.chain} (round ${ev.round})\n`);
@@ -47,7 +55,7 @@ export async function renderTurn(
         if (ev.reason !== "end") write(`[done: ${ev.reason}]\n`);
         break;
       default:
-        break; // turn_start / finish：上屏省略（concise）
+        break; // turn_start：上屏省略（concise）
     }
   }
 }

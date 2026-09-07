@@ -103,6 +103,20 @@ describe("runRepl (四模式派发 + 流式上屏)", () => {
     expect(JSON.stringify(requests[1]!.messages)).toContain("second");
   });
 
+  it("usage 事件翻倍防护：轮内两条 usage 只 observe 末条（ADR-0027，V 核验跨卡缺陷回归）", async () => {
+    const round: LLMEvent[] = [
+      { type: "message_start", id: "m", model: "test" },
+      { type: "usage", usage: { inputTokens: 120, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 } },
+      { type: "text_delta", text: "ok" },
+      { type: "usage", usage: { inputTokens: 120, outputTokens: 20, cacheCreationTokens: 0, cacheReadTokens: 0 } },
+      { type: "finish", reason: "completed", raw: "end_turn" },
+    ];
+    const { out } = await runReplWith(["t1", "t2", "/exit"], scriptedProvider([round, round]));
+    const usageLines = out.split("\n").filter((l) => l.startsWith("usage:"));
+    expect(usageLines).toHaveLength(2); // 每轮恰一条（轮内末条口径）
+    expect(usageLines[1]).toContain("session: input=240 output=40"); // 末条合并快照累计，未按事件数翻倍
+  });
+
   it("真实落盘产物核对（cwd 会话目录）", async () => {
     const provider = scriptedProvider([TEXT_ROUND]);
     const { out } = await runReplWith(["x", "/exit"], provider);

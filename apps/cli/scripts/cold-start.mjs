@@ -2,7 +2,8 @@
 // WP-06 冷启动门禁计时脚本。口径（在脚本内固定）[自定]：空载冷启动 = 子进程自 spawn 起、
 // 至打印 --version 输出并退出止的墙钟时间（M0 CLI 为占位入口、无内部阶段可分；阶段化遥测口径
 // 参照 [CC] dig-08 §1，待真实启动链落地后细化）。3 次预热不计入，取 21 次实测中位数。
-// 阈值默认 400ms（v2.8 §2 M0 DoD）；COLD_START_MAX_MS 仅供本地演示失败路径，CI 不设置。
+// 阈值默认 400ms（v2.8 §2 M0 DoD）；CI 侧经 ci.yml 步骤级 env 钉死 400（WP-12，仓库级 env 不可覆盖），
+// COLD_START_MAX_MS 本地覆盖仅供演示失败路径。
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
