@@ -378,6 +378,24 @@ describe("runAgentLoop（ARCH-005 主循环）", () => {
     expect(results.map((r) => r.isError)).toEqual([false, true]); // 完整者真实执行、未终止者 error
   });
 
+  it("回归（WP-05/ADR-0027）：Anthropic 合并式 usage 双上报——轮内取最后一条快照，input 不翻倍", async () => {
+    const p = queueProvider([
+      [
+        { type: "message_start", id: "m", model: "m" },
+        { type: "usage", usage: { inputTokens: 120, outputTokens: 1, cacheCreationTokens: 53, cacheReadTokens: 0 } },
+        { type: "text_delta", text: "x" },
+        { type: "usage", usage: { inputTokens: 120, outputTokens: 42, cacheCreationTokens: 53, cacheReadTokens: 0 } },
+        ...STOP,
+      ],
+    ]);
+    const stateRef: { current?: import("../src/types.ts").TurnState } = {};
+    const { events, done } = await collect(runAgentLoop({ provider: p, model: "m", messages: baseMessages(), stateRef }));
+    expect(done).toBe("end");
+    const last = events.filter((e) => e.type === "usage").at(-1) as { usage: { inputTokens: number; outputTokens: number } };
+    expect(last.usage).toEqual({ inputTokens: 120, outputTokens: 42, cacheCreationTokens: 53, cacheReadTokens: 0 });
+    expect(stateRef.current!.usage).toEqual({ inputTokens: 120, outputTokens: 42, cacheCreationTokens: 53, cacheReadTokens: 0 });
+  });
+
   it("回归（V 清单外-2）：无 finish 事件（流硬断）走④续写通道", async () => {
     const noFinish = queueProvider([
       [{ type: "text_delta", text: "cut" }],

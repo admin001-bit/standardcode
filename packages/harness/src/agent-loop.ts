@@ -131,15 +131,10 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           break;
         }
         case "usage":
-          state.usage = state.usage
-            ? {
-                inputTokens: state.usage.inputTokens + ev.usage.inputTokens,
-                outputTokens: state.usage.outputTokens + ev.usage.outputTokens,
-                cacheCreationTokens: state.usage.cacheCreationTokens + ev.usage.cacheCreationTokens,
-                cacheReadTokens: state.usage.cacheReadTokens + ev.usage.cacheReadTokens,
-              }
-            : ev.usage;
-          yield { type: "usage", usage: state.usage };
+          // ADR-0027 决策 2：usage 事件=该轮快照（最后一条为准，Anthropic 合并式上报不得增量累加）；
+          // 跨轮累计归 @standardcode/context 的 UsageMeter。
+          state.usage = ev.usage;
+          yield { type: "usage", usage: ev.usage };
           break;
         case "finish":
           finish = { reason: ev.reason, raw: ev.raw };
