@@ -55,7 +55,9 @@ describe("OpenAIChatAdapter SSE 回放", () => {
     expect(events[0]).toMatchObject({ type: "message_start", id: "chatcmpl-1", model: "gpt-test" });
     expect(events.filter((e) => e.type === "text_delta").map((e: any) => e.text).join("")).toBe("Hello");
     expect(events).toContainEqual({ type: "tool_start", id: "call_1", name: "Bash" });
+    // 回归（WP-01 V 跑偏#1）：后续增量只带 index 不带 id，仍须归因到 call_1
     expect(events.filter((e) => e.type === "tool_input_delta").map((e: any) => e.jsonPartial).join("")).toBe('{"command":"ls"}');
+    expect(events.filter((e) => e.type === "tool_input_delta").every((e: any) => e.id === "call_1")).toBe(true);
     expect(events).toContainEqual({ type: "tool_end", id: "call_1" });
     // OpenAI 协议：usage 块在 finish_reason 帧之后到达 → finish 先于 usage
     expect(events[events.length - 2]).toEqual({ type: "finish", reason: "tool_calls", raw: "tool_calls" });
@@ -118,6 +120,23 @@ describe("OpenAIChatAdapter SSE 回放", () => {
     );
     const events = await collect(a.stream({ model: "gpt-test", messages: [{ role: "user", content: [{ type: "text", text: "x" }] }] }));
     expect(events.at(-1)).toEqual({ type: "finish", reason: "unknown", raw: null });
+  });
+
+  it("回归（V 跑偏#1）：并行双工具增量只带 index 不带 id，按 index 各自归因", async () => {
+    const a = adapter(async () =>
+      sseResponse(
+        `data: {"id":"c","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"Bash","arguments":""}}]},"finish_reason":null}]}\n\ndata: {"id":"c","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}\n\ndata: {"id":"c","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"c\\":"}}]},"finish_reason":null}]}\n\ndata: {"id":"c","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\\"f\\":"}}]},"finish_reason":null}]}\n\ndata: {"id":"c","model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n`,
+      ),
+    );
+    const events = await collect(a.stream({ model: "gpt-test", messages: [{ role: "user", content: [{ type: "text", text: "x" }] }] }));
+    expect(events.filter((e) => e.type === "tool_input_delta")).toEqual([
+      { type: "tool_input_delta", id: "call_a", jsonPartial: '{"c":' },
+      { type: "tool_input_delta", id: "call_b", jsonPartial: '{"f":' },
+    ]);
+    expect(events.filter((e) => e.type === "tool_end")).toEqual([
+      { type: "tool_end", id: "call_a" },
+      { type: "tool_end", id: "call_b" },
+    ]);
   });
 
   it("length/content_filter 映射", async () => {

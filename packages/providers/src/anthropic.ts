@@ -57,11 +57,13 @@ function encodeBlock(b: ContentBlock, cacheControl: boolean): Record<string, unk
     case "tool_use":
       return { type: "tool_use", id: b.id, name: b.name, input: b.input };
     case "tool_result":
+      // 工具回灌的标准形状=末条 user 消息末块为 tool_result：cache_control 必须可挂（CTX-004/§7.1）
       return {
         type: "tool_result",
         tool_use_id: b.toolUseId,
         content: b.content,
         ...(b.isError ? { is_error: true } : {}),
+        ...(cacheControl ? { cache_control: { type: "ephemeral" } } : {}),
       };
     case "thinking":
       return { type: "thinking", thinking: b.thinking, signature: b.signature };
@@ -87,6 +89,7 @@ function encodeToolsAnthropic(tools: ToolDef[] | undefined): unknown[] | undefin
 
 async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGenerator<LLMEvent> {
   let sawStart = false;
+  let sawFinish = false;
   let inputUsage: TokenUsage | null = null;
   // content block index → tool_use id（input_json_delta 按 index 关联）
   const blockTools = new Map<number, string>();
@@ -141,6 +144,7 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
         break;
       }
       case "message_delta": {
+        sawFinish = true;
         const out = ev.usage?.output_tokens;
         if (inputUsage && typeof out === "number") {
           const merged: TokenUsage = { ...inputUsage, outputTokens: out };
@@ -160,6 +164,11 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
       default:
         break; // ping / 未知类型忽略
     }
+  }
+  if (sawStart && !sawFinish) {
+    // message_start 后流止（message_delta 未达）：finish{unknown}（kosong null 语义，
+    // provider.ts "stream was cut off before the final event"；与 OpenAI 侧对称，恢复链④输入）
+    yield { type: "finish", reason: "unknown", raw: null };
   }
   if (!sawStart) {
     // 未收到 message_start 即流止：协议异常，交 L1 恢复链④（流中断）处理

@@ -92,8 +92,9 @@ function encodeToolsOpenAI(tools: LLMRequest["tools"]): unknown[] | undefined {
 async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: OpenAIModelEntry["reasoningDialect"]): AsyncGenerator<LLMEvent> {
   let sawStart = false;
   let sawFinish = false;
-  // 已 tool_start 且未收尾的工具 id；finish_reason 时统一收束
+  // 已 tool_start 且未收尾的工具 id（收束 tool_end 用）；index→id 映射（增量归因）
   const openTools = new Set<string>();
+  const indexTools = new Map<number, string>();
   let reasoningSeen: "reasoning_content" | "reasoning" | null = null;
   for await (const frame of parseSse(body)) {
     if (frame.data === "[DONE]") break;
@@ -127,15 +128,25 @@ async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: Op
         ? (reasoningSeen ?? (delta.reasoning_content ? "reasoning_content" : delta.reasoning ? "reasoning" : null))
         : (dialect ?? null);
     if (dialect === "auto") reasoningSeen = useKey;
-    const reasoning = useKey === "reasoning_content" ? delta.reasoning_content : useKey === "reasoning" ? delta.reasoning : undefined;    if (reasoning) yield { type: "thinking_delta", thinking: reasoning };
+    const reasoning =
+      useKey === "reasoning_content" ? delta.reasoning_content : useKey === "reasoning" ? delta.reasoning : undefined;
+    if (reasoning) yield { type: "thinking_delta", thinking: reasoning };
     if (delta.tool_calls) {
       for (const tc of delta.tool_calls) {
+        // 流式增量只带 index 不带 id：index→id 映射归因（与 Anthropic 侧 blockTools 同构）
+        const idx: number = tc.index ?? 0;
+        let mapped = indexTools.get(idx);
         if (tc.id && tc.function?.name) {
-          openTools.add(tc.id);
-          yield { type: "tool_start", id: tc.id, name: tc.function.name };
+          if (!mapped) {
+            const newId: string = tc.id;
+            mapped = newId;
+            indexTools.set(idx, newId);
+            openTools.add(newId);
+            yield { type: "tool_start", id: newId, name: tc.function.name };
+          }
         }
         if (tc.function?.arguments) {
-          yield { type: "tool_input_delta", id: tc.id ?? "", jsonPartial: tc.function.arguments };
+          yield { type: "tool_input_delta", id: mapped ?? "", jsonPartial: tc.function.arguments };
         }
       }
     }

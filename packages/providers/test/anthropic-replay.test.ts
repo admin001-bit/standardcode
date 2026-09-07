@@ -101,8 +101,38 @@ describe("AnthropicAdapter SSE 回放", () => {
     expect(msgs[2].content[0]).toHaveProperty("cache_control");
   });
 
-  it("stop_reason=end_turn → completed；max_tokens → truncated", async () => {
-    const mk = (stop: string) =>
+  it("回归（V 跑偏#3）：message_start 后流止（无 message_delta）→ finish{unknown}", async () => {
+    const a = adapter(async () =>
+      sseResponse(`event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1}}}\n\n`),
+    );
+    const events = await collect(a.stream({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: [{ type: "text", text: "x" }] }] }));
+    expect(events.at(-1)).toEqual({ type: "finish", reason: "unknown", raw: null });
+  });
+
+  it("回归（V 跑偏#2）：末条 user 末块=tool_result 时 cache_control 挂上（CTX-004 工具回灌形状）", async () => {
+    let captured: any;
+    const a = adapter(async (_url, init) => {
+      captured = JSON.parse(init!.body as string);
+      return sseResponse(
+        `event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1}}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n`,
+      );
+    });
+    await collect(
+      a.stream({
+        model: "claude-sonnet-4-6",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "q" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", toolUseId: "t1", content: "data" }] },
+        ],
+      }),
+    );
+    const last = captured.messages.at(-1).content.at(-1);
+    expect(last.type).toBe("tool_result");
+    expect(last).toHaveProperty("cache_control");
+  });
+
+  it("stop_reason=end_turn → completed；max_tokens → truncated", async () => {    const mk = (stop: string) =>
       `event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1}}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"${stop}"},"usage":{"output_tokens":2}}\n\n`;
     const run = async (stop: string) => {
       const a = adapter(async () => sseResponse(mk(stop)));
