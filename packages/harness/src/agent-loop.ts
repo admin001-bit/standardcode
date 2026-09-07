@@ -74,6 +74,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     const toolCalls: ToolCall[] = [];
     const toolInputs = new Map<string, string>();
     const toolNames = new Map<string, string>();
+    const malformedIds = new Set<string>();
     let finish: { reason: string; raw: string | null } | null = null;
     let partialText = "";
     let streamError: ProviderError | null = null;
@@ -124,7 +125,8 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
             const input = raw === "" ? {} : JSON.parse(raw);
             toolCalls.push({ id: ev.id, name: toolNames.get(ev.id) ?? "", input });
           } catch {
-            malformedThisRound = true; // 恢复链⑤：畸形工具调用
+            malformedIds.add(ev.id);
+            malformedThisRound = true; // 恢复链⑤：畸形工具调用（完整收到但 JSON 坏——与"未收到 tool_end 的截断"区分）
           }
           break;
         }
@@ -155,16 +157,22 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       } catch {}
     }
 
-    // —— 块收尾（无论中断与否）：partial 文本 + 已完整 tool_use；未终止的 tool_use 尽力解析 ——
+    // —— 块收尾（无论中断与否）：partial 文本 + 已完整 tool_use + 未终止的 tool_use（V 首验清单外-1 修复：
+    //     未终止调用入 assistant 历史（协议形状完整），但非中断路径下它们获得 error tool_result——
+    //     镜像中断路径做法；流截断不是模型的错，不计入⑤畸形预算）——
+    const unterminated: ToolCall[] = [];
     if (partialText) blocks.push({ type: "text", text: partialText });
     for (const call of toolCalls) blocks.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
     for (const [id, raw] of toolInputs) {
-      if (toolCalls.some((c) => c.id === id)) continue;
+      if (toolCalls.some((c) => c.id === id) || malformedIds.has(id)) continue;
+      let input: unknown = {};
       try {
-        blocks.push({ type: "tool_use", id, name: toolNames.get(id) ?? "", input: raw === "" ? {} : JSON.parse(raw) });
+        if (raw !== "") input = JSON.parse(raw);
       } catch {
-        malformedThisRound = true; // tool_start 过但流断，input 不完整 → ⑤
+        input = {};
       }
+      unterminated.push({ id, name: toolNames.get(id) ?? "", input });
+      blocks.push({ type: "tool_use", id, name: toolNames.get(id) ?? "", input });
     }
 
     // —— 中断收尾（§8.4）：保留已生成；已完成工具的回灌在 runTools 侧合成，此处先入 assistant ——
@@ -199,8 +207,10 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
 
     if (blocks.length > 0) state.messages.push({ role: "assistant", content: blocks });
 
-    // —— 无工具调用：finish 语义分派 ——
-    if (toolCalls.length === 0) {
+    // —— 无任何工具调用（完整或未终止）：finish 语义分派 ——
+    //（任一 tool_use 在历史即 MUST 跟随 tool_result（硬不变量）——故含 tool_use 的截断轮
+    //  一律走下方工具轮回灌再生，字面"续写"仅适用于纯文本截断，V 复验对质点）
+    if (toolCalls.length === 0 && unterminated.length === 0) {
       if (malformedThisRound) {
         // 恢复链⑤：畸形——丢弃本轮重试
         if (state.malformedRounds < maxMalformedRounds) {
@@ -221,7 +231,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
         yield { type: "done", reason: "truncated_gave_up" };
         return state;
       }
-      if (finish?.reason === "unknown" || finish?.reason === "paused") {
+      if (finish === null || finish?.reason === "unknown" || finish?.reason === "paused") {
         // 恢复链④：流中断续写（与③共享预算）
         if (state.continuations < maxContinuations) {
           state.continuations++;
@@ -244,31 +254,35 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     // —— 工具轮预算（恢复链⑧）——
     if (state.toolRounds >= maxToolRounds) {
       // 预算耗尽：不执行（防预算边界外的副作用白跑），直接合成 error tool_result（无悬空 tool_use）
-      const resultBlocks: ContentBlock[] = toolCalls.map((c) => ({
-        type: "tool_result",
-        toolUseId: c.id,
-        content: "max tool rounds reached",
-        isError: true,
-      }));
+      const resultBlocks: ContentBlock[] = blocks
+        .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use")
+        .map((b) => ({ type: "tool_result", toolUseId: b.id, content: "max tool rounds reached", isError: true }));
       state.messages.push({ role: "user", content: resultBlocks });
       yield { type: "done", reason: "max_turns" };
       return state;
     }
     state.toolRounds++;
 
-    // —— 工具执行（并发策略+中断合成）并按 block index 回填 ——
+    // —— 工具执行（并发策略+中断合成）并按 block index 回灌 ——
+    //（含未终止调用：完整者真实执行，未终止者合成 error——单条 user 消息保持 block 序）
     const outcomes = await runTools(toolCalls, {
       registry,
       permission: opts.permission,
       signal,
     });
-    const resultBlocks: ContentBlock[] = outcomes.map((o) => ({
-      type: "tool_result",
-      toolUseId: o.id,
-      content: o.content,
-      isError: o.isError,
-    }));
-    for (const o of outcomes) yield { type: "tool_result", ...o };
+    const outcomeById = new Map(outcomes.map((o) => [o.id, o]));
+    type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;
+    const resultBlocks: ToolResultBlock[] = blocks
+      .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use")
+      .map((b) => {
+        const o = outcomeById.get(b.id);
+        return o
+          ? { type: "tool_result", toolUseId: o.id, content: o.content, isError: o.isError }
+          : { type: "tool_result", toolUseId: b.id, content: "tool call was cut off before completion", isError: true };
+      });
+    for (const rb of resultBlocks) {
+      yield { type: "tool_result", id: rb.toolUseId, name: toolNames.get(rb.toolUseId) ?? "", content: rb.content, isError: rb.isError === true };
+    }
     state.messages.push({ role: "user", content: resultBlocks });
     // 循环递推（transition: next_turn）
   }

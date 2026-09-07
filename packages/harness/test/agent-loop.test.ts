@@ -26,6 +26,13 @@ function queueProvider(pages: LLMEvent[][], capture?: { reqs: LLMRequest[] }): P
 
 const STOP: LLMEvent[] = [{ type: "finish", reason: "completed", raw: "end_turn" }];
 
+function baseMessages() {
+  return [{ role: "user" as const, content: [{ type: "text" as const, text: "q" }] }];
+}
+const sr1: { current?: import("../src/types.ts").TurnState } = {};
+const sr2: { current?: import("../src/types.ts").TurnState } = {};
+const sr3: { current?: import("../src/types.ts").TurnState } = {};
+
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<{ events: AgentEvent[]; done?: DoneReason }> {
   const events: AgentEvent[] = [];
   let done: DoneReason | undefined;
@@ -323,6 +330,62 @@ describe("runAgentLoop（ARCH-005 主循环）", () => {
     expect(done).toBe("interrupted");
     expect(events.some((e) => e.type === "interrupted" && e.phase === "stream")).toBe(true);
     expect(events.filter((e) => e.type === "text_delta").map((e) => (e as { text: string }).text).join("")).toBe("par");
+  });
+
+  it("回归（V 首验清单外-1）：截断发生于 tool_use 中途——③④与普通工具轮均不悬空、不崩", async () => {
+    // 变体①：④ text+tool_start+完整 JSON 增量+finish{unknown}（无 tool_end）
+    const v1 = queueProvider([
+      [
+        { type: "text_delta", text: "t" },
+        { type: "tool_start", id: "tx", name: "echo" },
+        { type: "tool_input_delta", id: "tx", jsonPartial: '{"text":"hi"}' },
+        { type: "finish", reason: "unknown", raw: null },
+      ],
+      [{ type: "finish", reason: "completed", raw: "end_turn" }],
+    ]);
+    const r1 = await collect(runAgentLoop({ provider: v1, model: "m", messages: baseMessages(), tools: [echoTool()], stateRef: sr1 }));
+    expect(r1.done).toBe("end");
+    expect(() => assertProtocolInvariants(sr1.current!.messages)).not.toThrow();
+
+    // 变体②：③ tool_start 后零输入即 truncated
+    const v2 = queueProvider([
+      [
+        { type: "tool_start", id: "ta", name: "echo" },
+        { type: "finish", reason: "truncated", raw: "max_tokens" },
+      ],
+      [{ type: "finish", reason: "completed", raw: "end_turn" }],
+    ]);
+    const r2 = await collect(runAgentLoop({ provider: v2, model: "m", messages: baseMessages(), tools: [echoTool()], stateRef: sr2 }));
+    expect(r2.done).toBe("end");
+    expect(() => assertProtocolInvariants(sr2.current!.messages)).not.toThrow();
+
+    // 变体③：普通工具轮并行截断（t1 完整执行 + t2 未终止合成 error）——单条回灌保持 block 序
+    const v3 = queueProvider([
+      [
+        { type: "tool_start", id: "t1", name: "echo" },
+        { type: "tool_input_delta", id: "t1", jsonPartial: '{"text":"a"}' },
+        { type: "tool_end", id: "t1" },
+        { type: "tool_start", id: "t2", name: "echo" },
+        { type: "finish", reason: "tool_calls", raw: "tool_use" },
+      ],
+      [{ type: "finish", reason: "completed", raw: "end_turn" }],
+    ]);
+    const r3 = await collect(runAgentLoop({ provider: v3, model: "m", messages: baseMessages(), tools: [echoTool()], stateRef: sr3 }));
+    expect(r3.done).toBe("end");
+    expect(() => assertProtocolInvariants(sr3.current!.messages)).not.toThrow();
+    const results = r3.events.filter((e) => e.type === "tool_result") as Array<{ id: string; isError?: boolean }>;
+    expect(results.map((r) => r.id)).toEqual(["t1", "t2"]); // block 序
+    expect(results.map((r) => r.isError)).toEqual([false, true]); // 完整者真实执行、未终止者 error
+  });
+
+  it("回归（V 清单外-2）：无 finish 事件（流硬断）走④续写通道", async () => {
+    const noFinish = queueProvider([
+      [{ type: "text_delta", text: "cut" }],
+      [{ type: "finish", reason: "completed", raw: "end_turn" }],
+    ]);
+    const { events, done } = await collect(runAgentLoop({ provider: noFinish, model: "m", messages: baseMessages() }));
+    expect(done).toBe("end");
+    expect(events.some((e) => e.type === "recovery" && e.chain === "stream_resume")).toBe(true);
   });
 
   it("主循环无递归：深轮次工具链状态递推不爆栈", async () => {
