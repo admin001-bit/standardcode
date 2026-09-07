@@ -32,12 +32,17 @@ export function parseRule(raw: string): PermissionRule {
   return { tool: m[1]!, specifier: m[2] ?? null };
 }
 
-/** allow 侧禁裸通配（[CC] 同构）：Bash 的 allow 规则必须给 specifier（Bash(*)/Bash 无效——任意命令放行面过大）。 */
+/** allow 侧禁裸通配（[CC] chunk-4svxqcrq）：Bash specifier 裸通配无效；工具名通配仅 `mcp__` 前缀形态（dig-02 §2.1：通配只允许在 mcp__<server>__ 之后的 tool 位）。 */
 export function parseRuleset(raw: Ruleset, side: keyof Ruleset): PermissionRule[] {
   return raw[side].map((r) => {
     const parsed = parseRule(r);
-    if (side === "allow" && parsed.tool === "Bash" && (parsed.specifier === null || parsed.specifier === "*")) {
-      throw new Error(`invalid allow rule (wildcard not supported): ${r}`);
+    if (side === "allow") {
+      if (parsed.tool === "Bash" && (parsed.specifier === null || parsed.specifier === "*")) {
+        throw new Error(`invalid allow rule (wildcard not supported): ${r}`);
+      }
+      if (parsed.tool.includes("*") && !parsed.tool.startsWith("mcp__")) {
+        throw new Error(`invalid allow rule (tool name wildcard only for mcp__ prefix): ${r}`);
+      }
     }
     return parsed;
   });
@@ -114,7 +119,8 @@ const GIT_READONLY_SUBCOMMANDS: ReadonlySet<string> = new Set(["status", "log", 
 /** Plan 模式 Bash 可变更性判定（启发式，fail-closed）：重定向/命令替换/管道段首词白名单外/包装器 → 可变更。 */
 export function isMutatingBash(command: string): boolean {
   const stripped = stripQuoted(command);
-  for (const segment of stripped.split(/(?:\|\||&&|;|\||\n)/)) {
+  // 分段符含单 `&`（后台操作符）——`echo hi & rm -rf x` 的第二段必须独立受检（V 退回①：[CC] 2.1.212 回归面）
+  for (const segment of stripped.split(/(?:\|\||&&|;|\||\n|&)/)) {
     const seg = segment.trim();
     if (seg === "") continue;
     if (/./.test(seg) && /[<>]/.test(seg)) return true; // 重定向（含 > >> 2> &> <）

@@ -95,6 +95,18 @@ describe("rules: parse & evaluation order (deny → ask → allow, first match w
     expect(() => parseRuleset({ deny: ["Bash(*)"], ask: [], allow: [] }, "deny")).not.toThrow(); // deny 允许通配
   });
 
+  it("allow rules reject tool-name wildcards except mcp__ prefix (dig-02 §2.1 L59；V 退回②回归)", () => {
+    expect(() => parseRuleset({ deny: [], ask: [], allow: ["*"] }, "allow")).toThrow(/tool name wildcard/);
+    expect(() => parseRuleset({ deny: [], ask: [], allow: ["Bash*"] }, "allow")).toThrow(/tool name wildcard/);
+    expect(() => parseRuleset({ deny: [], ask: [], allow: ["mcp__srv__*"] }, "allow")).not.toThrow(); // mcp 前缀形态保留
+    expect(() => parseRuleset({ deny: ["Bash*"], ask: [], allow: [] }, "deny")).not.toThrow();
+  });
+
+  it("isMutatingBash: single & background operator segments (V 退回①回归)", () => {
+    expect(isMutatingBash("echo hi & rm -rf /tmp/x")).toBe(true);
+    expect(isMutatingBash("ls & cat /etc/passwd & whoami")).toBe(false); // 全只读段不误拦
+  });
+
   it("globMatch: path segments (**, single *) vs bare-command semantics", () => {
     expect(globMatch("src/**", "src/a/b.ts")).toBe(true);
     expect(globMatch("src/*", "src/a.ts")).toBe(true);
