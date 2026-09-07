@@ -22,3 +22,19 @@
 | `provider-adapter` | L5 | **TS** | 多协议适配、能力声明、重试回退 | OpenCode `packages/llm`（Protocol/Route 分离）+ `packages/opencode/src/provider/`（provider.ts 2047 行 / transform.ts 1856 行，注意 `packages/llm/src/provider.ts` 仅 36 行门面）；Kimi `kosong`（方言自适应、四层防御）；Codex `model-provider-info` |
 | `platform-services` | L6 | TS | 配置、存储、更新、遥测、计费、i18n | [CC] `_811.js`（467 env）、`_2.js`（--settings 早期处理）、`_710.js`、`_310.js`（keychain）、`_788.js`（**file-history 快照**；"checkpoint"称谓未在其源码出现）、`_367.js`（OTel）、`_7.js`（CA 证书）；错误码常量在 `_795.js:11`（`ERR_FILE_TOO_LARGE`），`_830.js` 仅错误分类 getter |
 
+## 实现映射（M1 至 WP-07 时点，随实现演进）
+
+| §5.2 模块 | 本仓位置 | 状态 |
+| :-- | :-- | :-- |
+| `provider-adapter` | `packages/providers/` | M1（WP-01） |
+| `session-orchestrator` | `packages/harness/` | M1（WP-02） |
+| `prompt-layout` | `packages/context/src/prompt-layout/` | M1（WP-04） |
+| `context-store`（计量切片） | `packages/context/src/metering/` | M1（WP-05） |
+| `platform-services`（transcripts 切片） | `packages/platform/src/transcripts.ts` | M1（WP-06） |
+| `capability-runtime`（工具+注册表切片） | `packages/capabilities/` | M1（WP-07） |
+| `executor` | `packages/executor/` | M1（WP-07） |
+| `cli-terminal` | — | 待 WP-03 |
+| `permission-broker` | — | 待 WP-08 |
+| `guard-path` | — | 待 WP-09 |
+| `planner` / `memory-loader` / `sandbox-backend` | — | M2+ |
+

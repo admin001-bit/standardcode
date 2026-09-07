@@ -23,13 +23,25 @@ importers:
 
   apps/cli: {}
 
-  packages/capabilities: {}
+  packages/capabilities:
+    dependencies:
+      '@standardcode/executor':
+        specifier: workspace:*
+        version: link:../executor
+      '@standardcode/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@standardcode/providers':
+        specifier: workspace:*
+        version: link:../providers
 
   packages/context:
     dependencies:
       '@standardcode/providers':
         specifier: workspace:*
         version: link:../providers
+
+  packages/executor: {}
 
   packages/harness:
     dependencies:
