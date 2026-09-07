@@ -243,11 +243,10 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
 
     // —— 工具轮预算（恢复链⑧）——
     if (state.toolRounds >= maxToolRounds) {
-      // 已收到的 tool_use 必须不留悬空：合成 error tool_result 回灌后终止
-      const outcomes = await runTools(toolCalls, { registry, permission: opts.permission, signal });
-      const resultBlocks: ContentBlock[] = outcomes.map((o) => ({
+      // 预算耗尽：不执行（防预算边界外的副作用白跑），直接合成 error tool_result（无悬空 tool_use）
+      const resultBlocks: ContentBlock[] = toolCalls.map((c) => ({
         type: "tool_result",
-        toolUseId: o.id,
+        toolUseId: c.id,
         content: "max tool rounds reached",
         isError: true,
       }));
