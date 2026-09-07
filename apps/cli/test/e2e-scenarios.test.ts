@@ -89,6 +89,18 @@ async function collect(gen: AsyncGenerator<AgentEvent, TurnState>): Promise<{ ev
   return { events, final: r.value };
 }
 
+/** 从已消费到的迭代状态继续收集到 done（首参=最后一个未入列事件）。 */
+async function collectRest(gen: AsyncGenerator<AgentEvent, TurnState>, pending: IteratorResult<AgentEvent, TurnState>): Promise<{ events: AgentEvent[]; final: TurnState }> {
+  const events: AgentEvent[] = [];
+  if (!pending.done && pending.value) events.push(pending.value);
+  let r = await gen.next();
+  while (!r.done) {
+    events.push(r.value);
+    r = await gen.next();
+  }
+  return { events, final: r.value };
+}
+
 function countDangling(state: TurnState): number {
   const uses = state.messages.flatMap((m) => m.content.filter((b) => b.type === "tool_use")).length;
   const results = state.messages.flatMap((m) => m.content.filter((b) => b.type === "tool_result")).length;
@@ -98,7 +110,70 @@ function countDangling(state: TurnState): number {
 // —— 场景③：Ctrl+C 后改指令 ——
 
 describe("E2E ③ interrupt → synthesize → tree cleanup → JSONL resume", () => {
-  it("tool-phase interrupt: unfinished tool gets error tool_result, 60s sleep killed promptly, change-of-instruction continues, transcript resume equals final state", async () => {
+  it("真实子进程树清理：工具 spawn 长睡子进程经 registerProcess 注册，abort 后子进程被终止（V 退回修复：与 L479 '进程树清理'相称的证据形态）", async () => {
+    const { spawn } = await import("node:child_process");
+    const ctl = new AbortController();
+    let child: import("node:child_process").ChildProcess | null = null;
+    const spawnTool: Tool = {
+      name: "Bash",
+      description: "spawns a real long-sleep child process (fixture)",
+      inputSchema: { type: "object" },
+      isConcurrencySafe: false,
+      execute: async (_input, ctx) => {
+        // Windows: ping -n 61 ≈ 60s；POSIX: sleep 60。registerProcess 注册→中断时 harness 树杀
+        const cmd = process.platform === "win32" ? "ping" : "sleep";
+        const args = process.platform === "win32" ? ["-n", "61", "127.0.0.1"] : ["60"];
+        child = spawn(cmd, args, { stdio: "ignore" });
+        ctx.registerProcess(child);
+        spawnedResolve();
+        await new Promise<void>((resolve) => {
+          child!.on("close", () => resolve());
+          ctx.signal.addEventListener("abort", () => resolve(), { once: true }); // 工具侧及时退出（§8.4）
+        });
+        if (ctx.signal.aborted) throw new Error("interrupted"); // 工具自报中断（executor bash 同款语义）
+        return "child finished";
+      },
+    };
+    const provider = replay([toolRound("t1", {}), FINAL]); // provider 正常返回——abort 落在真实工具执行期（V 探针 Case B 形态）
+    let spawnedResolve: () => void = () => {};
+    const spawned = new Promise<void>((r) => (spawnedResolve = r));
+    const gen = runAgentLoop({
+      provider,
+      model: "m",
+      messages: [{ role: "user", content: [{ type: "text", text: "start a long child process" }] }],
+      tools: [spawnTool],
+      signal: ctl.signal,
+    });
+    // 后台驱动到 done；等 spawn 标志（子进程已产生且已注册）后中断——确定性落在工具执行期
+    const collecting = collect(gen);
+    await spawned;
+    const started = Date.now();
+    ctl.abort();
+    const { events, final } = await collecting;
+    const elapsed = Date.now() - started;
+
+    // 中断落在 runTools 期间→循环顶部中断（phase=stream，WP-02 既验语义）；真实工具报错回灌
+    const realResult = events.filter((e): e is Extract<AgentEvent, { type: "tool_result" }> => e.type === "tool_result").at(-1);
+    expect(realResult).toBeDefined();
+    expect(realResult!.isError).toBe(true);
+    expect(realResult!.content).toContain("interrupted");
+    expect(elapsed).toBeLessThan(5000); // 60s 子进程在 <5s 内被树杀
+    // 子进程确已死亡（exitCode/signal 非空）——taskkill/组杀异步落地，轮询等待（3s 上限）
+    const c = child!;
+    expect(c.pid).toBeDefined();
+    const deadline = Date.now() + 3000;
+    while ((c.exitCode === null && c.signalCode === null) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(c.exitCode !== null || c.signalCode !== null).toBe(true);
+    // 不变量：每个 tool_use 至少配对一个 tool_result
+    const useIds = final.messages.flatMap((m) => m.content.filter((b) => b.type === "tool_use")).map((b) => (b as { id: string }).id);
+    const resultIds = new Set(final.messages.flatMap((m) => m.content.filter((b) => b.type === "tool_result")).map((b) => (b as { toolUseId: string }).toolUseId));
+    for (const id of useIds) expect(resultIds.has(id)).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "done", reason: "interrupted" });
+  }, 20000);
+
+  it("tool-phase interrupt: unfinished tool gets error tool_result, change-of-instruction continues, transcript resume equals final state", async () => {
     const base = join(dir, "s3");
     const w = await TranscriptWriter.create(dir, "s3", base);
     const ctl = new AbortController();

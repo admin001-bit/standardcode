@@ -189,3 +189,18 @@ describe("execGlob written-file verify", () => {
     }
   });
 });
+
+describe("runProcess abort (WP-13 V 观察⑤：树杀原语测试缺口)", () => {
+  it("abort → 子进程及时终止（Windows taskkill /T /F、POSIX 进程组 SIGKILL）", async () => {
+    const { runProcess } = await import("../src/index.ts");
+    const ctl = new AbortController();
+    const long = process.platform === "win32" ? ["-e", "setTimeout(function(){},60000)"] : ["-e", "setTimeout(function(){},60000)"];
+    const p = runProcess({ command: process.execPath, args: ["-e", long[1]!], signal: ctl.signal, timeoutMs: 30_000 });
+    await new Promise((r) => setTimeout(r, 200)); // 子进程已起
+    ctl.abort();
+    const started = Date.now();
+    const result = await p;
+    expect(Date.now() - started).toBeLessThan(5000); // 60s 进程被打断
+    expect(result.code === 0).toBe(false); // 非正常退出
+  }, 15000);
+});

@@ -75,9 +75,10 @@ export async function runTools(calls: ToolCall[], opts: RunToolsOptions): Promis
   };
 
   const allSafe = calls.length > 0 && calls.every((c) => (opts.registry.get(c.name)?.isConcurrencySafe ?? false) === true);
-  const all = Promise.all(calls.map(runOne));
   if (allSafe) {
     // 并行：abort 竞速仅在提供 signal 时建立（否则 race 会被非 thenable 立即胜出）
+    // eager map 限于并行分支——无条件建 Promise.all 会让串行分支的工具被 map 立即启动（双执行+abort 后不可取消，WP-13 V 退回）
+    const all = Promise.all(calls.map(runOne));
     const abortP = abortPromise(opts.signal);
     await (abortP ? Promise.race([all, abortP]) : all);
   } else {

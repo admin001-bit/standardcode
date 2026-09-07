@@ -188,3 +188,54 @@ describe("runTools guard flow (WP-08×WP-09 集成)", () => {
     expect(out[0]).toMatchObject({ isError: false, content: "Echo-executed" });
   });
 });
+
+// —— WP-13 V 退回回归：串行分支零双执行+abort 后零启动（tools.ts eager map 缺陷）——
+import { runTools as runToolsInner } from "../src/index.ts";
+
+describe("runTools serial branch (WP-13 V 退回回归)", () => {
+  const serialTool = (name: string, counter: { n: number }, delayMs = 0): Tool => ({
+    name,
+    description: "serial fixture",
+    inputSchema: { type: "object" },
+    isConcurrencySafe: false,
+    execute: async () => {
+      counter.n++;
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      return `${name}-ok`;
+    },
+  });
+
+  it("串行单调用恰执行一次（eager map 缺陷曾致双执行）", async () => {
+    const counter = { n: 0 };
+    const out = await runToolsInner([{ id: "s1", name: "Serial", input: {} }], {
+      registry: { get: () => serialTool("Serial", counter) },
+    });
+    expect(out[0]).toMatchObject({ isError: false, content: "Serial-ok" });
+    expect(counter.n).toBe(1);
+  });
+
+  it("串行多调用按序各执行一次（不并行、不双跑）", async () => {
+    const a = { n: 0 }, b = { n: 0 };
+    const out = await runToolsInner(
+      [{ id: "1", name: "A", input: {} }, { id: "2", name: "B", input: {} }],
+      { registry: { get: (n) => (n === "A" ? serialTool("A", a, 30) : serialTool("B", b, 30)) } },
+    );
+    expect(a.n).toBe(1);
+    expect(b.n).toBe(1);
+    expect(out.map((o) => o.name)).toEqual(["A", "B"]);
+  });
+
+  it("abort 后串行队列剩余调用零启动（守卫不被 eager map 击穿）", async () => {
+    const ctl = new AbortController();
+    const a = { n: 0 }, b = { n: 0 };
+    const p = runToolsInner(
+      [{ id: "1", name: "A", input: {} }, { id: "2", name: "B", input: {} }],
+      { registry: { get: (n) => (n === "A" ? serialTool("A", a, 200) : serialTool("B", b)) }, signal: ctl.signal },
+    );
+    setTimeout(() => ctl.abort(), 30);
+    const out = await p;
+    expect(a.n).toBe(1);
+    expect(b.n).toBe(0); // 未执行（含未启动）
+    expect(out[1]).toMatchObject({ isError: true, content: "interrupted" });
+  });
+});
