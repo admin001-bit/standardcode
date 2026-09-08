@@ -1,4 +1,7 @@
 // WP-09 guard-path 单测：元数据隐式保护/高危路径/S-9 强制确认/祖先禁重命名/无沙箱依赖导入。
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HIGH_RISK_PATHS,
@@ -89,5 +92,26 @@ describe("independence (DoD④): no sandbox imports", () => {
     const src = await import("node:fs").then((fs) => fs.readFileSync(new URL("../src/guard-path.ts", import.meta.url), "utf8"));
     expect(src).not.toMatch(/sandbox/i);
     expect(src).not.toMatch(/@standardcode\/(executor|capabilities|harness|providers)/);
+  });
+});
+
+// WP-07：S-9"PATH 内脚本"并入 EXE-020 清单（M1 WP-09 跑偏②闭环）。
+describe("S-9 PATH 内脚本（WP-07）", () => {
+  it("写入目标落在 PATH 目录内 → confirm（Auto 不豁免语义不变）", () => {
+    const pathDir = join(tmpdir(), "stdcode-pathprobe");
+    mkdirSync(pathDir, { recursive: true });
+    const v = guardPath({ target: join(pathDir, "evil.cmd"), cwd: tmpdir(), operation: "write", env: { PATH: pathDir } });
+    expect(v.action).toBe("confirm");
+    expect(v.rule).toBe("persistence-path");
+    // 大小写/斜杠形态归一命中（Windows）
+    const v2 = guardPath({ target: join(pathDir, "sub", "..", "tool.exe"), cwd: tmpdir(), operation: "write", env: { Path: pathDir } });
+    expect(v2.action).toBe("confirm");
+  });
+
+  it("非 PATH 目录写入不受新类影响；全局包管理器安装命令按 PATH 脚本类确认", () => {
+    const elsewhere = join(tmpdir(), "stdcode-not-in-path");
+    expect(guardPath({ target: join(elsewhere, "x.txt"), cwd: tmpdir(), operation: "write" }).action).toBe("pass");
+    expect(checkToolInput("Bash", { command: "npm install -g left-pad" }, tmpdir()).action).toBe("confirm");
+    expect(checkToolInput("Bash", { command: "npm install" }, tmpdir()).action).toBe("pass");
   });
 });

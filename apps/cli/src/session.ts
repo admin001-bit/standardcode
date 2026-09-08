@@ -9,6 +9,7 @@ import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { createTrustGate, isTrusted, readTrustStore, type TrustGateResult } from "@standardcode/platform";
 import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
 
@@ -46,6 +47,10 @@ export interface Session {
   thinking: ThinkingSetting | undefined;
   /** AutoCompact 协调器（M2 WP-03：四道闸+重压缩链；执行体 runCompaction 在 repl 装配=WP-04）。 */
   autocompact: CompactionCoordinator;
+  /** 工作区信任门控（WP-07/S-8）：生效信任态+被门控剔除的共享设置登记（信任对话框消费）。 */
+  trust: TrustGateResult;
+  /** 家目录覆写（测试隔离用；"总是允许"落盘路径随之，未传=真实家目录）。 */
+  home?: string;
 }
 
 /** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
@@ -77,6 +82,8 @@ export interface SessionInit {
   memoryOptions?: { inProject?: boolean; relevantPaths?: string[] };
   /** 扩展思维直接注入（测试/装配）；缺省走 env/settings 解析（resolveThinking）。 */
   thinking?: ThinkingSetting;
+  /** 信任覆写（测试/装配）：缺省按 trust store 判定（WP-07）。 */
+  trusted?: boolean;
 }
 
 /**
@@ -134,6 +141,27 @@ export function createSession(init: SessionInit = {}): Session {
     ...(init.memoryOptions?.relevantPaths ? { relevantPaths: init.memoryOptions.relevantPaths } : {}),
   });
   const thinking = resolveThinking(init.thinking, env, settings);
+  // WP-07（S-8/UI-061）：信任门控——未信任时共享层受控键（permissions.allow/additionalDirectories/env.*）
+  // 不参与合并；deny/ask 立即生效。门控后 settings 才进 env 注入与权限规则装配（顺序=门控先于消费）。
+  // trust store 随 home 覆写（测试隔离；未传=真实家目录）。
+  const trustStoreFile = init.home ? path.join(init.home, ".standardcode", "trust.json") : undefined;
+  const trust = createTrustGate(sessionCwd, settings, init.trusted ?? isTrusted(sessionCwd, readTrustStore(trustStoreFile)));
+  const gatedSettings = trust.settings;
+  // WP-07：权限规则两源合并（settings 合并序供静态规则——allow 受信任门控与 broker 构造期清洗双重把关；
+  // init.rules=程序化注入通道优先）。门控剔除已在 trust.settings 完成（allow/env 不进 merged）。
+  const settingsRules: Required<Ruleset> = {
+    deny: settingsValue<string[]>(gatedSettings, "permissions.deny") ?? [],
+    ask: settingsValue<string[]>(gatedSettings, "permissions.ask") ?? [],
+    allow: settingsValue<string[]>(gatedSettings, "permissions.allow") ?? [],
+  };
+  const hasSettingsRules = settingsRules.deny.length > 0 || settingsRules.ask.length > 0 || settingsRules.allow.length > 0;
+  const mergedRules: Partial<Ruleset> | undefined =
+    init.rules || hasSettingsRules
+      ? {
+          ...settingsRules,
+          ...(init.rules ?? {}),
+        }
+      : undefined;
   // WP-03：协调器配置（env 逃逸舱+settings；模型窗口来源=UNKNOWN_MODEL_ASSUMED/auto——窗口解析链 WP-03 原文，模型目录窗口接线随 WP-05 /context）
   const autocompact = createCompactionCoordinator(
     resolveAutocompactConfig({
@@ -190,13 +218,15 @@ export function createSession(init: SessionInit = {}): Session {
     tools: createStandardTools({ cwd: init.cwd ?? process.cwd() }),
     cwd: init.cwd ?? process.cwd(),
     meter: new UsageMeter(),
-    broker: createPermissionBroker({ rules: init.rules }),
+    broker: createPermissionBroker({ ...(mergedRules ? { rules: mergedRules } : {}) }),
     exitRequested: false,
     activeAbort: null,
     settings,
     memory,
     thinking,
     autocompact,
+    trust,
+    ...(init.home !== undefined ? { home: init.home } : {}),
   };
 }
 

@@ -7,9 +7,10 @@ import { checkToolInput as guardCheck } from "@standardcode/platform";
 import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
-import { bashWriteTargets, sessionDiff, type FileHistoryStore } from "@standardcode/platform";
+import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction } from "@standardcode/context";
+import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
@@ -27,6 +28,8 @@ export interface ReplDeps {
   commands?: readonly SlashCommand[];
   /** file-history store（WP-09；main.ts 装配；缺席=/rewind 报错、工具写盘不快照）。 */
   fileHistory?: FileHistoryStore;
+  /** 确认 UI（WP-07；main.ts TTY 装配/测试注入；缺席=ask 保持 fail-closed 拒绝，SEC-020）。 */
+  confirm?: ConfirmPrompt;
 }
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
@@ -168,8 +171,26 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             return { action: v.action, ...(v.rule ? { rule: v.rule } : {}), ...(v.detail ? { detail: v.detail } : {}) };
           },
         },
-        // WP-08：权限仲裁挂接（评估序与 Plan 硬门在 broker；ask 无确认 UI→fail-closed 拒绝，B-13/SEC-020）
-        permission: { check: async (name, input) => s.broker.evaluate(name, input).decision },
+        // WP-08：权限仲裁挂接（评估序与 Plan 硬门在 broker；ask → 确认 UI 最小流——解除 M1 拒绝降级）
+        permission: {
+          check: async (name, input) => {
+            const v = s.broker.evaluate(name, input);
+            if (v.decision !== "ask" || !deps.confirm) return v.decision;
+            const rule = alwaysAllowRuleFor(name, input);
+            const choice = await deps.confirm.confirm(name, v.reason);
+            if (choice === "once") return "allow";
+            if (choice === "always") {
+              try {
+                s.broker.addAllow(rule); // 运行时即时生效（构造期清洗，违规抛错→按拒绝处理）
+              } catch {
+                return "deny";
+              }
+              persistAlwaysAllow(s.cwd, rule); // ADR-0037：跨会话落项目 local 层（§8.3"只落 local 层"原文路径）
+              return "allow";
+            }
+            return "deny";
+          },
+        },
         signal: s.activeAbort.signal,
       }),
       deps.io.write,

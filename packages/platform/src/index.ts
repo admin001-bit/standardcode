@@ -4,3 +4,4 @@ export * from "./settings.ts";
 export * from "./session-store.ts";
 export * from "./file-history.ts";
 export * from "./diff.ts";
+export * from "./trust.ts";

@@ -3,7 +3,7 @@
 // 模式（§10 原文）=[CC] `_616.js` 运行时子目录正则守卫 + Codex 元数据名"隐式保护+双保险 deny+祖先禁重命名"
 //（codex-rs/protocol/src/permissions.rs PROTECTED_METADATA_PATH_NAMES 同构，映射：.git/.agents/.codex→.git/.agents/.standardcode，卡依据）。
 // 判定在工具层做权威判定（EXE-020 原文）：调用方=executor 工具执行前。
-import { isAbsolute, resolve, sep } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 
 /** 元数据目录名（隐式保护；Codex .codex → 本仓 .standardcode；.agents 沿用——产品自身约定通道）。 */
@@ -34,6 +34,21 @@ export const PERSISTENCE_PATH_FRAGMENTS: readonly string[] = [
   ".git/hooks", // git hooks（S-9 原文）——先于元数据保护判定（hooks 下任何写入都算）
 ];
 
+/** PATH 环境变量目录集（S-9"PATH 内脚本"类别，WP-07 并入 EXE-020 清单——M1 WP-09 跑偏②闭环）。 */
+export function pathDirectories(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.PATH ?? env.Path ?? "";
+  const sep = process.platform === "win32" ? ";" : ":";
+  return raw.split(sep).map((d) => d.trim()).filter((d) => d !== "");
+}
+
+/** S-9"PATH 内脚本"：写入目标落在 PATH 任一目录内（可执行脚本投毒=跨会话持久化）。 */
+export function isPathDirScript(target: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const dir = dirname(normalize(target));
+  const norm = (p: string) => p.replaceAll("/", sep).replaceAll("\\", sep).replace(/[\\/]+$/, "").toLowerCase();
+  const d = norm(dir);
+  return pathDirectories(env).some((pd) => pd !== "" && norm(pd) === d);
+}
+
 export type GuardVerdict =
   | { action: "stop"; rule: "high-risk-path" | "protected-metadata" | "metadata-ancestor-rename"; detail: string }
   | { action: "confirm"; rule: "persistence-path"; detail: string }
@@ -48,6 +63,8 @@ export interface GuardCheck {
   operation: "write" | "rename";
   /** rename 的源路径。 */
   source?: string;
+  /** PATH 环境覆写（测试隔离；缺省 process.env）。 */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** basename 是否受保护元数据名（Codex is_protected_metadata_name 同构：整名相等，非子串）。 */
@@ -86,8 +103,9 @@ export function guardPath(check: GuardCheck): GuardVerdict {
   if (isHighRiskPath(target)) {
     return { action: "stop", rule: "high-risk-path", detail: `target inside high-risk system path: ${target}` };
   }
-  if (isPersistencePath(target)) {
-    return { action: "confirm", rule: "persistence-path", detail: `S-9 persistence path hit: ${target} — explicit user confirmation required (Auto mode not exempt)` };
+  if (isPersistencePath(target) || isPathDirScript(target, check.env)) {
+    const via = isPersistencePath(target) ? "fragment" : "PATH-dir script";
+    return { action: "confirm", rule: "persistence-path", detail: `S-9 persistence path hit (${via}): ${target} — explicit user confirmation required (Auto mode not exempt)` };
   }
   if (isProtectedMetadataName(basenameOf(target))) {
     return { action: "stop", rule: "protected-metadata", detail: `write into protected metadata directory: ${target}` };
@@ -147,6 +165,11 @@ export function checkToolInput(toolName: string, input: unknown, cwd: string): G
       if (isPersistencePath(token)) {
         return { action: "confirm", rule: "persistence-path", detail: `command references S-9 persistence path: ${token}` };
       }
+    }
+    // S-9"PATH 内脚本"命令形态（WP-07 并入）：`npm install -g`（bin 链接落 PATH）与显式安装前缀
+    // 落可执行面的保守命中 [自定]——PATH 目录 token 本身不拦（只拦"写入 PATH 目录"的写面语义）。
+    if (/\b(npm|pnpm|yarn)\s+(install|i|add)\b.*\s(-g|--global)\b/.test(rec.command)) {
+      return { action: "confirm", rule: "persistence-path", detail: "command installs into PATH (global package manager) — S-9 PATH-script class" };
     }
     return { action: "pass" };
   }

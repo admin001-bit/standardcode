@@ -139,7 +139,11 @@ export function loadSettings(opts: LoadSettingsOptions): LoadedSettings {
     docs[source] = doc;
     if (warning) warnings.push({ source, path: paths[source], reason: warning });
   }
+  return mergeSettingsDocs(docs, warnings);
+}
 
+/** 合并核心（WP-07 提取复用：信任门控对 docs 过滤后重合并，见 trust.ts applyTrustGate）。 */
+export function mergeSettingsDocs(docs: Record<SettingsSourceName, SettingsDoc | null>, warnings: LoadedSettings["warnings"] = []): LoadedSettings {
   // 合并：叶子键并集；标量/对象键自末尾（最高）遍历首中即返；列表键高→低拼接去重。
   const merged: Record<string, unknown> = {};
   const keyOrder: string[] = [];

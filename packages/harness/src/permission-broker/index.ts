@@ -2,8 +2,13 @@
 // 模式=EXE-001 四模式（首版不含 [CC] 分类器 auto，M5+ MAY 第五档）；评估序 deny→ask→allow 首匹配定结果（§8.3）；
 // deny 恒赢（B-13）——deny 规则先于一切，任何 allow 规则/模式都不能解锁（[CC] STo 复核同构："hook allow 永远不能解锁一条
 // deny 规则"，dig-02 §1 逐字）。Plan 模式改文件类拦截=模式级硬门（[CC] 2.1.212 漏洞回归要求，§8.3 L381）。
-// 规则清洗 M1 切片 [自定]：allow 规则禁裸通配（[CC] chunk-4svxqcrq：Wildcard tool name not supported in allow rules）；
-// rooted/设备通道等完整清洗随 M2 settings 五来源落地。
+// 规则清洗：M1 切片=allow 禁裸通配（[CC] chunk-4svxqcrq）；WP-07 补齐三件=rooted/home 锚定拒绝+网络命令白名单（65 项
+// 实测）+段式形状校验（sanitize.ts，dig-02 §2.1/§2.2）。
+// WP-07 评估序对质结论（M1 核验遗留"Plan 硬门与 ask 相对序"）：Plan 硬门位于 ask 规则之前——硬门=模式级安全边界
+//（[CC] 2.1.212 回归面），语义上是"模式能否执行该操作"的先决问题，先于"规则要求确认"（§8.3 评估序原文仅钉
+// deny→ask→allow 首匹配；硬门插在 ask 前使 plan 下改文件类不可经 allow 规则解锁，[自定] 保守序，登记结果页）。
+
+import { sanitizeAllowSpecifier } from "./sanitize.ts";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 export type PermissionDecision = "allow" | "deny" | "ask";
@@ -42,6 +47,11 @@ export function parseRuleset(raw: Ruleset, side: keyof Ruleset): PermissionRule[
       }
       if (parsed.tool.includes("*") && !parsed.tool.startsWith("mcp__")) {
         throw new Error(`invalid allow rule (tool name wildcard only for mcp__ prefix): ${r}`);
+      }
+      // WP-07 清洗三件（sanitize.ts）：rooted/home 拒绝+网络命令白名单+段式形状
+      if (parsed.specifier !== null) {
+        const f = sanitizeAllowSpecifier(parsed.tool, parsed.specifier);
+        if (!f.ok) throw new Error(`invalid allow rule: ${f.reason}`);
       }
     }
     return parsed;
@@ -166,6 +176,11 @@ export interface PermissionBroker {
   /** EXE-001 循环序推进一档。 */
   cycle(): PermissionMode;
   evaluate(toolName: string, input: unknown): BrokerEvaluateResult;
+  /**
+   * WP-07（§8.3 持久化）："总是允许"运行时追加 allow 规则（落 local 层由调用方 persistAlwaysAllow 负责；
+   * 解析清洗与构造期同规——违规即抛）。返回成功追加的规则原文。
+   */
+  addAllow(raw: string): string;
 }
 
 export interface BrokerOptions {
@@ -178,7 +193,8 @@ export function createPermissionBroker(opts: BrokerOptions = {}): PermissionBrok
   let mode: PermissionMode = opts.mode ?? "default";
   const deny = parseRuleset({ deny: opts.rules?.deny ?? [], ask: [], allow: [] }, "deny");
   const ask = parseRuleset({ deny: [], ask: opts.rules?.ask ?? [], allow: [] }, "ask");
-  const allow = parseRuleset({ deny: [], ask: [], allow: opts.rules?.allow ?? [] }, "allow");
+  const allow: PermissionRule[] = parseRuleset({ deny: [], ask: [], allow: opts.rules?.allow ?? [] }, "allow");
+  const allowRaw: string[] = [...(opts.rules?.allow ?? [])];
 
   return {
     mode: () => mode,
@@ -188,6 +204,12 @@ export function createPermissionBroker(opts: BrokerOptions = {}): PermissionBrok
     cycle: () => {
       mode = PERMISSION_MODES[(PERMISSION_MODES.indexOf(mode) + 1) % PERMISSION_MODES.length]!;
       return mode;
+    },
+    addAllow: (raw) => {
+      const [parsed] = parseRuleset({ deny: [], ask: [], allow: [raw] }, "allow");
+      allow.push(parsed);
+      allowRaw.push(raw);
+      return raw;
     },
     evaluate: (toolName, input) => {
       for (const r of deny) {

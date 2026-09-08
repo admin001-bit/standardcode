@@ -4,9 +4,17 @@ import { readFileSync } from "node:fs";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
 import { CLI_COMMANDS } from "./commands.ts";
-import { FileHistoryStoreImpl } from "@standardcode/platform";
+import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink } from "@standardcode/platform";
+import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
 
 const VERSION = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+/** WP-07：一次一行提问（rl 复用 REPL 输入流；TUI 化随 WP-11 矩阵 [自定]）。 */
+async function askLine(rl: import("node:readline").Interface, question: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => resolve(answer));
+  });
+}
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   if (argv.length > 0) {
@@ -14,6 +22,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1;
     return;
   }
+  // WP-07（UI-061）：启动信任对话框——非 TTY/已信任跳过；接受以 git 仓库根为密钥写 trust store。
+  const rlPre = createInterface({ input: process.stdin });
+  if (process.stdin.isTTY) {
+    const workdir = process.cwd();
+    if (!isTrusted(workdir)) {
+      const repoRoot = findGitRoot(workdir);
+      const symlinkFlagged = isNativeDirSymlink(workdir);
+      const answer = await askLine(rlPre, trustQuestion(workdir, repoRoot, symlinkFlagged));
+      if (parseTrustAnswer(answer)) acceptTrust(workdir);
+      else process.stdout.write("[trust] proceeding without trust — shared settings stay gated (deny/ask still apply)\n");
+    }
+  }
+  rlPre.close();
   let session;
   try {
     session = createSession();
@@ -35,6 +56,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     input: process.stdin,
     completer: completerFor(CLI_COMMANDS), // UI-001
   });
+  // WP-07 确认 UI 最小流：ask → 行内三选（y/a/n）；非 TTY 无 confirm（ask 保持 fail-closed 拒绝，SEC-020）。
+  const ttyConfirm = process.stdin.isTTY
+    ? {
+        async confirm(toolLabel: string, detail: string): Promise<ConfirmChoice> {
+          const answer = await askLine(rl, confirmQuestion(toolLabel, detail));
+          return parseConfirmAnswer(answer);
+        },
+      }
+    : undefined;
   // EXE-001 shift+tab 切换（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）
   if (process.stdin.isTTY) {
     const { emitKeypressEvents } = await import("node:readline");
@@ -58,5 +88,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     session,
     io: { lines: rl, write: (s) => process.stdout.write(s), close: () => rl.close() },
     fileHistory,
+    confirm: ttyConfirm,
   });
 }
