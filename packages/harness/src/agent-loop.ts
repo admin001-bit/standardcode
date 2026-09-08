@@ -96,7 +96,17 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       } catch (err) {
         if (signal?.aborted) break;
         if (isContextLength(err)) {
-          // 恢复链②：CTX-101——M1 不做半成品压缩，交还用户开新会话
+          // 恢复链②（CTX-101 交接，WP-03）：路由改接压缩协调器——四道闸放行且有执行体才压缩；
+          // 未提供 perform（WP-04 前）或闸拒 → 维持 context_exhausted 交还用户
+          const gate = opts.autocompact?.evaluate(state.usage?.inputTokens ?? 0, state.toolRounds);
+          if (gate?.shouldCompact && opts.autocompact?.perform) {
+            const r = await opts.autocompact.perform(state.toolRounds);
+            if (r.ok) {
+              yield { type: "compact_decided", level: gate.level, postCompactTokens: r.postCompactTokens };
+              state.messages = []; // 压缩后消息历史由摘要替代（WP-04 落地前的占位语义，登记偏差）
+              continue; // 下轮重试原请求（压缩后仍超阈值→下轮再压，重压缩链在协调器侧）
+            }
+          }
           yield { type: "context_exhausted" };
           yield { type: "done", reason: "context_exhausted" };
           return state;
@@ -213,6 +223,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     // —— 流级错误（非中断）——
     if (streamError && !finish) {
       if (isContextLength(streamError)) {
+        // 同恢复链②（WP-03 路由接缝；未配 autocompact 时维持原行为）
         yield { type: "context_exhausted" };
         yield { type: "done", reason: "context_exhausted" };
         return state;

@@ -1,4 +1,4 @@
-// DoD③：UI-001 五命令 Tab 补全与参数提示。
+// UI-001 Tab 补全测试（M1 五命令+M2 /rewind /diff=七命令）。
 import { describe, expect, it } from "vitest";
 import { CLI_COMMANDS } from "../src/commands.ts";
 import { completeInput } from "../src/tab-complete.ts";

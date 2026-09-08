@@ -59,6 +59,8 @@ export type AgentEvent =
   | { type: "recovery"; chain: "max_tokens_continue" | "stream_resume" | "malformed_retry"; round: number }
   | { type: "interrupted"; phase: "stream" | "tool" }
   | { type: "context_exhausted" }
+  /** WP-03（CTX-101 交接）：压缩协调器放行且执行体成功（摘要替换历史）。 */
+  | { type: "compact_decided"; level: string; postCompactTokens: number }
   | { type: "done"; reason: DoneReason };
 
 export interface LoopOptions {
@@ -75,6 +77,15 @@ export interface LoopOptions {
   guard?: { check(toolName: string, input: unknown): { action: "stop" | "confirm" | "pass"; rule?: string; detail?: string } };
   /** file-history 快照钩子（WP-09，EXE-040）：每次工具写盘前触发。 */
   fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
+  /**
+   * WP-03（CTX-101 交接）：恢复链②context_length 路由改接压缩协调器（阈值+四道闸，packages/context）。
+   * evaluate=门判定（compact/blocked）；perform=压缩执行体（9 段摘要，WP-04 交付；未提供时路由
+   * 暴露 compact_decided 事件后维持 context_exhausted 行为——登记偏差）。
+   */
+  autocompact?: {
+    evaluate(usedTokens: number, turn: number): { shouldCompact: boolean; level: string; reason?: string };
+    perform?(turn: number): Promise<{ ok: boolean; postCompactTokens: number }>;
+  };
   /** 恢复链⑧：单 turn 内工具轮数上限（默认 25，[自定]）。 */
   maxToolRounds?: number;
   /** 恢复链③/④：续写预算（默认 3，§5.4 ③限 3 次）。 */
