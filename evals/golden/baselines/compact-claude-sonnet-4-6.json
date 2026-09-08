@@ -1,0 +1,23 @@
+{
+  "schema": "standardcode-golden-compact-snapshot@1",
+  "model": "claude-sonnet-4-6",
+  "sections": [
+    "Primary Request and Intent",
+    "Key Technical Concepts",
+    "Files and Code Sections",
+    "Errors and fixes",
+    "Problem Solving",
+    "All user messages",
+    "Pending Tasks",
+    "Current Work",
+    "Optional Next Step"
+  ],
+  "partialSections": [
+    "Work Completed",
+    "Context for Continuing Work"
+  ],
+  "variants": {
+    "full": "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.\nThis summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.\nBefore providing your final summary, wrap your analysis in <analysis> tags. The <analysis> section is internal working notes and is stripped before the summary is used.\n\n1. Chronologically analyze each message. Pay special attention to user feedback telling you to do something differently, and preserve security-related instructions verbatim (they MUST appear in the summary word-for-word, unmodified).\n2. Double-check technical accuracy and completeness.\n\nThe summary MUST contain exactly these sections, in this order:\n1. Primary Request and Intent\n2. Key Technical Concepts\n3. Files and Code Sections\n4. Errors and fixes\n5. Problem Solving\n6. All user messages\n7. Pending Tasks\n8. Current Work\n9. Optional Next Step\n\nTool use is not allowed during compaction — produce a text summary only.",
+    "partial": "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.\nThis summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.\nBefore providing your final summary, wrap your analysis in <analysis> tags. The <analysis> section is internal working notes and is stripped before the summary is used.\n\n1. Chronologically analyze each message. Pay special attention to user feedback telling you to do something differently, and preserve security-related instructions verbatim (they MUST appear in the summary word-for-word, unmodified).\n2. Double-check technical accuracy and completeness.\n\nThe summary MUST contain exactly these sections, in this order:\n1. Primary Request and Intent\n2. Key Technical Concepts\n3. Files and Code Sections\n4. Errors and fixes\n5. Problem Solving\n6. All user messages\n7. Pending Tasks\n8. Work Completed\n9. Context for Continuing Work\n\nTool use is not allowed during compaction — produce a text summary only."
+  }
+}

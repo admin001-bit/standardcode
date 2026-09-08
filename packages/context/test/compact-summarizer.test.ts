@@ -1,4 +1,6 @@
 // WP-04（M2）9 段压缩摘要测试（v2.8 §7.2 CTX-036；判据自足：板 WP-04 DoD①-⑦）。
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { LLMEvent, LLMRequest, ProviderAdapter } from "@standardcode/providers";
 import {
@@ -121,5 +123,37 @@ describe("DoD④/⑤ 执行管线：<analysis> 剥离+安全指令逐字保留",
     expect(r.newMessages).toEqual([{ role: "user", content: [{ type: "text", text: "1. Primary Request and Intent" }] }]);
     const bad = echoSummaryProvider(""); // 空摘要
     await expect(runCompaction({ provider: bad, model: "m", messages: CONVO })).rejects.toThrow("empty summary");
+  });
+});
+
+// R-G 修复（2026-09-09 V 退回）：Golden 对比纪律入 CI（v2.8 §12.2 CTX-100"每加一段跑 Golden 对比"）。
+// 模板↔基线相等钉死：改模板（如加段）必先重采基线（pnpm golden:capture:compact）再过 golden:compare——
+// 本测试变红即纪律闸口，防止"声明跑了对比而实际无记录"复现。
+describe("Golden 对比纪律（CTX-100；基线=evals/golden/baselines/compact-claude-sonnet-4-6.json）", () => {
+  const baselinePath = fileURLToPath(new URL("../../../evals/golden/baselines/compact-claude-sonnet-4-6.json", import.meta.url));
+  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+
+  it("基线 schema/段名/两变体全文与现行模板逐字节一致", () => {
+    expect(baseline.schema).toBe("standardcode-golden-compact-snapshot@1");
+    expect(baseline.sections).toEqual([...COMPACT_SECTIONS]);
+    expect(baseline.partialSections).toEqual([PARTIAL_SECTION_8, PARTIAL_SECTION_9]);
+    expect(baseline.variants.full).toBe(buildCompactPrompt());
+    expect(baseline.variants.partial).toBe(buildCompactPrompt({ partial: true }));
+  });
+});
+
+// R-G 修复（2026-09-09 V 退回）：Golden 对比纪律入 CI（v2.8 §12.2 CTX-100"每加一段跑 Golden 对比"）。
+// 模板↔基线相等钉死：改模板（如加段）必先重采基线（pnpm golden:capture:compact）再跑对比——
+// 本测试变红即纪律闸口，防止"声明跑了对比而实际无记录"复现。
+describe("Golden 对比纪律（CTX-100；基线=evals/golden/baselines/compact-claude-sonnet-4-6.json）", () => {
+  const baselinePath = fileURLToPath(new URL("../../../evals/golden/baselines/compact-claude-sonnet-4-6.json", import.meta.url));
+  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+
+  it("基线 schema/段名/两变体全文与现行模板逐字节一致", () => {
+    expect(baseline.schema).toBe("standardcode-golden-compact-snapshot@1");
+    expect(baseline.sections).toEqual([...COMPACT_SECTIONS]);
+    expect(baseline.partialSections).toEqual([PARTIAL_SECTION_8, PARTIAL_SECTION_9]);
+    expect(baseline.variants.full).toBe(buildCompactPrompt());
+    expect(baseline.variants.partial).toBe(buildCompactPrompt({ partial: true }));
   });
 });
