@@ -8,6 +8,7 @@ import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, type FileHistoryStore } from "@standardcode/platform";
+import { runCompaction } from "@standardcode/context";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
@@ -97,6 +98,22 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
         // WP-06（CTX-020）：thinking 配置随每 turn 请求（缺省关闭不发）
         thinking: s.thinking,
+        // WP-04：AutoCompact 执行体接线（协调器=WP-03 装配；CTX-101 交接终点）
+        autocompact: {
+          evaluate: (used, turn) => s.autocompact.evaluate(used, turn),
+          perform: async (turn) => {
+            const r = await runCompaction({
+              provider: s.provider,
+              model: s.model,
+              system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
+              messages: s.messages,
+              thinking: s.thinking,
+            });
+            s.messages = r.newMessages;
+            s.autocompact.recordCompactSuccess(r.postTokens, turn);
+            return { ok: true, postCompactTokens: r.postTokens, messages: r.newMessages };
+          },
+        },
         // WP-09（EXE-030/040）：写盘前快照（Write/Edit 取 file_path；Bash 重定向启发式，[自定]）
         fileHistory: deps.fileHistory
           ? {

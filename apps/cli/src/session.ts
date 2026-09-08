@@ -9,7 +9,7 @@ import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
-import { detectProjectWorkspace, loadMemory, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
+import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
@@ -44,6 +44,8 @@ export interface Session {
   memory: LoadedMemory;
   /** 扩展思维配置（M2 WP-06，缺省关闭=不发 thinking 字段；每 turn 请求与压缩请求共用）。 */
   thinking: ThinkingSetting | undefined;
+  /** AutoCompact 协调器（M2 WP-03：四道闸+重压缩链；执行体 runCompaction 在 repl 装配=WP-04）。 */
+  autocompact: CompactionCoordinator;
 }
 
 /** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
@@ -132,6 +134,17 @@ export function createSession(init: SessionInit = {}): Session {
     ...(init.memoryOptions?.relevantPaths ? { relevantPaths: init.memoryOptions.relevantPaths } : {}),
   });
   const thinking = resolveThinking(init.thinking, env, settings);
+  // WP-03：协调器配置（env 逃逸舱+settings；模型窗口来源=UNKNOWN_MODEL_ASSUMED/auto——窗口解析链 WP-03 原文，模型目录窗口接线随 WP-05 /context）
+  const autocompact = createCompactionCoordinator(
+    resolveAutocompactConfig({
+      env,
+      settings: {
+        autocompactEnabled: settingsValue<boolean>(settings, "autocompact.enabled"),
+        autocompactWindow: settingsValue<unknown>(settings, "autocompact.window"),
+        autocompactPct: settingsValue<unknown>(settings, "autocompact.pct"),
+      },
+    }),
+  );
 
   const providerDefault = settingsValue<string>(settings, "providers.default");
   let providerName = (init.providerName ?? env.STANDARD_CODE_PROVIDER ?? providerDefault ?? "anthropic").toLowerCase();
@@ -183,6 +196,7 @@ export function createSession(init: SessionInit = {}): Session {
     settings,
     memory,
     thinking,
+    autocompact,
   };
 }
 

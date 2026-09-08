@@ -65,6 +65,37 @@ describe("WP-03 恢复链② 路由改接（CTX-101 交接）", () => {
     expect(events.some((e) => e.type === "finish" && (e as any).reason === "completed")).toBe(true);
   });
 
+  it("WP-04：perform 返回新历史 → state.messages 被替换（摘要非清空）", async () => {
+    const NEW_HISTORY = [{ role: "user" as const, content: [{ type: "text" as const, text: "summary-of-before" }] }];
+    let rounds = 0;
+    const p: ProviderAdapter = {
+      capabilities: () => {
+        throw new Error("not used");
+      },
+      countTokens: async () => 0,
+      async *stream() {
+        rounds++;
+        if (rounds === 1) throw new ProviderError("context_length", "prompt is too long");
+        yield { type: "text_delta", text: "ok" } as LLMEvent;
+        yield { type: "finish", reason: "completed", raw: "end_turn" } as LLMEvent;
+      },
+    };
+    const sr: { current?: import("../src/types.ts").TurnState } = {};
+    await collect(
+      runAgentLoop({
+        provider: p,
+        model: "m",
+        messages: MSGS,
+        stateRef: sr,
+        autocompact: {
+          evaluate: () => ({ shouldCompact: true, level: "compact" }),
+          perform: async () => ({ ok: true, postCompactTokens: 900, messages: NEW_HISTORY }),
+        },
+      }),
+    );
+    expect(sr.current!.messages).toEqual(NEW_HISTORY); // 摘要替换（非清空占位）
+  });
+
   it("闸拒（shouldCompact=false）→ 维持 context_exhausted（WP-04 前行为不变）", async () => {
     const events = await collect(
       runAgentLoop({

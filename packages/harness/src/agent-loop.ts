@@ -103,7 +103,8 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
             const r = await opts.autocompact.perform(state.toolRounds);
             if (r.ok) {
               yield { type: "compact_decided", level: gate.level, postCompactTokens: r.postCompactTokens };
-              state.messages = []; // 压缩后消息历史由摘要替代（WP-04 落地前的占位语义，登记偏差）
+              // WP-04：摘要替换历史（perform 返回新消息；缺省清空=占位）
+              state.messages = r.messages ?? [];
               continue; // 下轮重试原请求（压缩后仍超阈值→下轮再压，重压缩链在协调器侧）
             }
           }

@@ -84,7 +84,8 @@ export interface LoopOptions {
    */
   autocompact?: {
     evaluate(usedTokens: number, turn: number): { shouldCompact: boolean; level: string; reason?: string };
-    perform?(turn: number): Promise<{ ok: boolean; postCompactTokens: number }>;
+    /** WP-04：压缩执行体（9 段摘要）；返回新历史（缺省=清空，WP-04 前占位）。 */
+    perform?(turn: number): Promise<{ ok: boolean; postCompactTokens: number; messages?: LLMMessage[] }>;
   };
   /** 恢复链⑧：单 turn 内工具轮数上限（默认 25，[自定]）。 */
   maxToolRounds?: number;
