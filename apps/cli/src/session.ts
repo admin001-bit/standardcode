@@ -1,11 +1,14 @@
 // 会话状态与 L5 装配（v2.8 §5.1 L0 消费 L1/L5；§8.3 EXE-001 权限四模式）。
-// [自定] M1 无配置系统（§7.7 属 M2）：provider/模型目录由 env 直读或注入；模型目录为内置最小集
-//（WP-01 边界：不做模型目录全集），数值取 v2.8 MDL-001 注记（claude-sonnet-4-6=32000/128000、claude-opus-5=64000/128000，_695.js 实测），
+// M2 WP-01：M1"env 直读"偏差清偿——启动装配经 platform/settings 五来源合并（§7.7）；
+// STANDARD_CODE_* env 为保留逃逸舱（MDL-010~013），优先级 env > settings > 默认（ADR-0030）。
+// 模型目录为内置最小集（WP-01 边界：不做模型目录全集），数值取 v2.8 MDL-001 注记
+//（claude-sonnet-4-6=32000/128000、claude-opus-5=64000/128000，_695.js 实测），
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
+import { applySettingsEnv, loadSettings, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
 export { PERMISSION_MODES as PERMISSION_CYCLE } from "@standardcode/harness";
@@ -33,6 +36,13 @@ export interface Session {
   exitRequested: boolean;
   /** 进行中 turn 的中断控制器（Ctrl+C → abort；§8.4 中断不变量的 L0 触发点）。 */
   activeAbort: AbortController | null;
+  /** 五来源合并结果（WP-01；/config 展示与 /reload 重载的消费点，WP-11）。 */
+  settings: LoadedSettings;
+}
+
+/** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
+export function settingsEnvInjectedOf(handle: SettingsEnvHandle): ReadonlySet<string> {
+  return handle.injected;
 }
 
 export interface SessionInit {
@@ -42,10 +52,19 @@ export interface SessionInit {
   catalog?: readonly string[];
   model?: string;
   cwd?: string;
-  /** env 直读时的替身（测试）。 */
+  /** env 逃逸舱（MDL-010~013）读取得替身（测试）。 */
   env?: NodeJS.ProcessEnv;
-  /** 权限规则（M1 env 直读配置的一部分；持久化落 local 层属 M2）。 */
+  /** 权限规则（M1 注入通道保留；settings permissions.* 持久化落 local 层=WP-07）。 */
   rules?: Partial<Ruleset>;
+  /** settings 装配参数（WP-01）：projectRoot 定位项目 local/共享层；home/programData/platform 供测试替换。 */
+  projectRoot?: string;
+  home?: string;
+  programData?: string;
+  platform?: NodeJS.Platform;
+  /** 命令行 flag 源（优先级仅低于 managed，§7.7）。 */
+  flagOverrides?: Record<string, unknown>;
+  /** 跨会话粘滞登记（settings 注入 env 不可 unset；省略则本会话新建）。 */
+  settingsEnv?: SettingsEnvHandle;
 }
 
 const ANTHROPIC_ENTRIES: Record<string, AnthropicModelEntry> = {
@@ -64,8 +83,21 @@ const ANTHROPIC_ENTRIES: Record<string, AnthropicModelEntry> = {
 };
 
 export function createSession(init: SessionInit = {}): Session {
-  const env = init.env ?? process.env;
-  let providerName = (init.providerName ?? env.STANDARD_CODE_PROVIDER ?? "anthropic").toLowerCase();
+  // env 逃逸舱为独立副本（settings 注入不外泄污染调用方；凭据/override 语义不变）
+  const env: Record<string, string | undefined> = { ...(init.env ?? process.env) };
+  // settings 五来源（§7.7）：managed > flag > 项目 local > 项目共享 > 用户；env.* 注入粘滞（ADR-0030）
+  const settings = loadSettings({
+    projectRoot: init.projectRoot ?? init.cwd ?? process.cwd(),
+    ...(init.home !== undefined ? { home: init.home } : {}),
+    ...(init.programData !== undefined ? { programData: init.programData } : {}),
+    ...(init.platform !== undefined ? { platform: init.platform } : {}),
+    ...(init.flagOverrides !== undefined ? { flagOverrides: init.flagOverrides } : {}),
+  });
+  const settingsEnv: SettingsEnvHandle = init.settingsEnv ?? { injected: new Set() };
+  applySettingsEnv(settings, env, settingsEnv);
+
+  const providerDefault = settingsValue<string>(settings, "providers.default");
+  let providerName = (init.providerName ?? env.STANDARD_CODE_PROVIDER ?? providerDefault ?? "anthropic").toLowerCase();
   let provider: ProviderAdapter;
   let catalog: readonly string[];
   if (init.provider) {
@@ -76,16 +108,17 @@ export function createSession(init: SessionInit = {}): Session {
     const apiKey = providerName === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error(
-        `missing API key: set ${providerName === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（M1 env 直读，配置文件系统属 M2 §7.7）`,
+        `missing API key: set ${providerName === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（env 或 settings 的 env.<KEY> 注入，键位见 ADR-0030）`,
       );
     }
-    const opts: ProviderOptions = { apiKey, ...(env.STANDARD_CODE_BASE_URL ? { baseUrl: env.STANDARD_CODE_BASE_URL } : {}) };
+    const baseUrl = env.STANDARD_CODE_BASE_URL ?? settingsValue<string>(settings, `providers.${providerName}.baseUrl`);
+    const opts: ProviderOptions = { apiKey, ...(baseUrl ? { baseUrl } : {}) };
     if (providerName === "anthropic") {
       provider = new AnthropicAdapter(ANTHROPIC_ENTRIES, opts);
       catalog = init.catalog ?? Object.keys(ANTHROPIC_ENTRIES);
     } else if (providerName === "openai") {
-      const models = parseCatalogEnv(env.STANDARD_CODE_MODELS);
-      if (!models) throw new Error("openai provider requires STANDARD_CODE_MODELS (comma-separated model names)——M1 不内置 OpenAI 模型目录（WP-01 边界：不做模型目录全集）");
+      const models = parseCatalogEnv(env.STANDARD_CODE_MODELS) ?? settingsValue<string[]>(settings, "providers.openai.models") ?? null;
+      if (!models) throw new Error("openai provider requires a model catalog: STANDARD_CODE_MODELS env or settings providers.openai.models（不内置 OpenAI 目录；键位见 ADR-0030）");
       const entries: Record<string, OpenAIModelEntry> = {};
       for (const m of models) entries[m] = { contextWindow: 128_000, maxOutputTokens: { default: 32_000, upper: 32_000 }, thinking: "none", input: ["text"] };
       provider = new OpenAIChatAdapter(entries, opts);
@@ -95,8 +128,9 @@ export function createSession(init: SessionInit = {}): Session {
     }
   }
   catalog = init.catalog ?? catalog;
-  const model = init.model ?? env.STANDARD_CODE_MODEL ?? catalog[0];
-  if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL");
+  const modelDefault = settingsValue<string>(settings, "model.default");
+  const model = init.model ?? env.STANDARD_CODE_MODEL ?? modelDefault ?? catalog[0];
+  if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL or settings model.default");
   return {
     provider,
     providerName,
@@ -109,6 +143,7 @@ export function createSession(init: SessionInit = {}): Session {
     broker: createPermissionBroker({ rules: init.rules }),
     exitRequested: false,
     activeAbort: null,
+    settings,
   };
 }
 
