@@ -24,9 +24,9 @@ function fakeProvider(): ProviderAdapter {
   };
 }
 
-describe("M1 五命令（§8.2 最小集）", () => {
-  it("registry 恰五命令（B-03：之外不注册）", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission"]);
+describe("命令注册（M1 最小集+M2 WP-09 增量；§8.2 分期，B-03 只注册本里程碑命令）", () => {
+  it("registry 恰七命令（M1 五+M2 /rewind /diff；WP-10/11 再增）", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission", "rewind", "diff"]);
   });
 
   it("/help 列全表", () => {
