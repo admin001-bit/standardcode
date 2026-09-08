@@ -31,7 +31,7 @@ describe("DoD① reactive：prompt-too-long 触发面+tokenGap 指标", () => {
     ];
     const r = cleanupToolResults(msgs);
     expect(r.cleaned).toBe(1);
-    expect(r.freedTokens).toBeGreaterThan(0);
+    expect(r.freedChars).toBeGreaterThan(0); // R2 修复：freedTokens→freedChars（字符口径，名实一致）
     const cleaned = r.messages[0]!.content[0] as Extract<LLMMessage["content"][number], { type: "tool_result" }>;
     expect(cleaned.content).toContain("[tool_result truncated: original 20000 chars]");
     expect(msgs[0]!.content[0] as { content: string }).toBeTruthy(); // 原数组未变（新数组）
@@ -45,7 +45,7 @@ describe("DoD① reactive：prompt-too-long 触发面+tokenGap 指标", () => {
     ];
     const r = contextCollapse(msgs);
     expect(r.dropped).toBe(1);
-    expect(r.freedTokens).toBe("deep thoughts".length);
+    expect(r.freedChars).toBe("deep thoughts".length);
     expect(r.messages[0]!.content).toEqual([{ type: "text", text: "answer" }]);
   });
 });
@@ -73,6 +73,8 @@ describe("DoD③ /context 输出与 usage meter 对账（复用 M1 WP-05 口径�
     expect(grid.freeSpace).toBe(200_000 - (2_000 + 3_000 + 0 + 1_000 + 0 + grid.sections[5]!.tokens) - 33_000);
     const text = renderContextGrid(grid);
     expect(text).toContain("usage(api): in=10000 out=500 cache_w=100 cache_r=2000 total=12600");
+    expect(text).toContain("estimate vs api:"); // O1：误差标注尾行（ADR-0027 决策 3 MUST）
+    expect(text).toContain("API usage is authoritative");
     const rec = reconcileGrid(grid);
     expect(rec.actualInput).toBe(10_000);
     expect(rec.errorRatio).not.toBeNull();

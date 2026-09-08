@@ -46,6 +46,9 @@ export type DoneReason =
   | "filtered"
   | "error";
 
+/** WP-05（CTX-037）reactive 瀑布步名。口径唯一权威=packages/context reactive.ts ReactiveStep（同名字面，结构等价，无依赖引入）。 */
+export type ReactiveStepName = "tool-result-cleanup" | "context-collapse" | "auto-compact";
+
 export type AgentEvent =
   | { type: "turn_start" }
   | { type: "text_delta"; text: string }
@@ -61,6 +64,8 @@ export type AgentEvent =
   | { type: "context_exhausted" }
   /** WP-03（CTX-101 交接）：压缩协调器放行且执行体成功（摘要替换历史）。 */
   | { type: "compact_decided"; level: string; postCompactTokens: number }
+  /** WP-05（CTX-037）：reactive 瀑布步升级（tokenGap=used−window，报告 `gap=${tokenGap}` 口径）。 */
+  | { type: "reactive_step"; attempt: number; tokenGap: number; step: ReactiveStepName }
   | { type: "done"; reason: DoneReason };
 
 export interface LoopOptions {
@@ -86,6 +91,18 @@ export interface LoopOptions {
     evaluate(usedTokens: number, turn: number): { shouldCompact: boolean; level: string; reason?: string };
     /** WP-04：压缩执行体（9 段摘要）；返回新历史（缺省=清空，WP-04 前占位）。 */
     perform?(turn: number): Promise<{ ok: boolean; postCompactTokens: number; messages?: LLMMessage[] }>;
+  };
+  /**
+   * WP-05（CTX-037）：reactive 兜底瀑布（prompt-too-long 触发；A 级报告 §2.4 锚点）。提供时先于
+   * autocompact 路由执行：decide=步升级状态机（前一步未解决才升级，packages/context nextReactiveStep 同构）；
+   * apply=步动作（返回收缩后的新历史；null=该步无事可做，视作未解决继续升级）。auto-compact 级
+   * apply 必须返回 null（exhausted）——落下方既有 autocompact 路由，不在此处二次压缩。
+   */
+  reactive?: {
+    /** 模型上下文窗口（tokenGap=used−window；无 usage 快照时 used 取 0，gap 为负=无计量哨兵）。 */
+    modelWindow: number;
+    decide(current: ReactiveStepName | null): { next: ReactiveStepName; exhausted: boolean };
+    apply(step: ReactiveStepName, messages: LLMMessage[]): LLMMessage[] | null;
   };
   /** 恢复链⑧：单 turn 内工具轮数上限（默认 25，[自定]）。 */
   maxToolRounds?: number;

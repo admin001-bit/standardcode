@@ -8,7 +8,7 @@ import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, type FileHistoryStore } from "@standardcode/platform";
-import { buildContextGrid, renderContextGrid } from "@standardcode/context";
+import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction } from "@standardcode/context";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
@@ -111,6 +111,23 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
         // WP-06（CTX-020）：thinking 配置随每 turn 请求（缺省关闭不发）
         thinking: s.thinking,
+        // WP-05（CTX-037）：reactive 瀑布接线（R1 修复——原版零生产接线为 V 退回）。
+        // 前两级就地收缩历史；auto-compact 级 apply 返回 null（exhausted）→ 落下方 autocompact 路由（WP-04 perform）。
+        reactive: {
+          modelWindow: s.provider.capabilities(s.model).contextWindow,
+          decide: (current) => nextReactiveStep(current),
+          apply: (step, messages) => {
+            if (step === "tool-result-cleanup") {
+              const r = cleanupToolResults(messages);
+              return r.cleaned > 0 ? r.messages : null;
+            }
+            if (step === "context-collapse") {
+              const r = contextCollapse(messages);
+              return r.dropped > 0 ? r.messages : null;
+            }
+            return null; // auto-compact：交还协调器路由
+          },
+        },
         // WP-04：AutoCompact 执行体接线（协调器=WP-03 装配；CTX-101 交接终点）
         autocompact: {
           evaluate: (used, turn) => s.autocompact.evaluate(used, turn),

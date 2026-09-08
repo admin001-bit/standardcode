@@ -2,7 +2,8 @@
 // CTX-037 原文：reactive 兜底（prompt-too-long 触发，tokenGap 指标）；多级瀑布：tool result 清理 → context collapse → auto-compact。
 // 锚点（A 级报告 §2.4 一手）：reactive=依赖 API prompt-too-long 错误再压（`hit prompt-too-long (gap=${tokenGap} → mode step)`），
 //   tokenGap 指标+多级 step 升级；context collapse=压缩头空间被系统占用时不再倒计时。
-// context collapse 无独立 [CC] 锚点细节 → §12.6 未覆盖级：本文件给最小 mini-ADR 式设计注记（行为=丢弃可丢弃大块后重试）。
+// context collapse 无独立 [CC] 锚点细节 → §12.6 未覆盖级：设计裁决已补登 docs/adr/0036-context-collapse.md
+//   （2026-09-09 V 退回 R2：原"mini-ADR 式注记"不满足先 ADR 后代码义务）。
 // CTX-038：/context schema 对齐 `_670.js`；附录 A 网格要点：Autocompact buffer 33k 与 CTX-033 常量 13000+20000 互证；
 //   分类占用 System prompt/System tools/Custom agents/Memory files/Skills/Messages/Free space（M2 无 agents/skills → 该两类=0 占位）。
 // 对账：/context 输出与 usage meter 四列对账（复用 M1 WP-05 ADR-0027 口径：API usage 对账为准）。
@@ -28,18 +29,23 @@ export interface ReactiveState {
   step: ReactiveStep;
 }
 
+/** 清理触发阈值与占位保留头长 [自定]（无 [CC] 锚点；ADR-0036 相邻机制节登记）。 */
+export const CLEANUP_THRESHOLD_CHARS = 10_000;
+export const CLEANUP_KEEP_CHARS = 200;
+
 export interface ToolResultCleanupResult {
   messages: LLMMessage[];
   /** 被清理（替换为占位）的 tool_result 数。 */
   cleaned: number;
-  freedTokens: number;
+  /** 释放字符数（字符口径非 token 估算——V 观察 O3 勘误，原字段名 freedTokens 名实不符）。 */
+  freedChars: number;
 }
 
 /**
  * 瀑布① tool result 清理：把最旧的 tool_result 大块（>threshold 字符）替换为截断占位（追加式纪律不破——
  * 历史不可改写 [B-14]，此处为压缩路径上的显式收缩操作，[自定] 与 CTX-005 关系登记于结果页）。
  */
-export function cleanupToolResults(messages: LLMMessage[], thresholdChars = 10_000): ToolResultCleanupResult {
+export function cleanupToolResults(messages: LLMMessage[], thresholdChars = CLEANUP_THRESHOLD_CHARS, keepChars = CLEANUP_KEEP_CHARS): ToolResultCleanupResult {
   let cleaned = 0;
   let freed = 0;
   const out = messages.map((m) => {
@@ -48,15 +54,15 @@ export function cleanupToolResults(messages: LLMMessage[], thresholdChars = 10_0
     const content = m.content.map((b) => {
       if (b.type === "tool_result" && b.content.length > thresholdChars) {
         cleaned++;
-        freed += b.content.length - 200;
+        freed += b.content.length - keepChars;
         touched = true;
-        return { ...b, content: `[tool_result truncated: original ${b.content.length} chars]${b.content.slice(0, 200)}` };
+        return { ...b, content: `[tool_result truncated: original ${b.content.length} chars]${b.content.slice(0, keepChars)}` };
       }
       return b;
     });
     return touched ? { ...m, content } : m;
   });
-  return { messages: out, cleaned, freedTokens: freed };
+  return { messages: out, cleaned, freedChars: freed };
 }
 
 /**
@@ -64,7 +70,7 @@ export function cleanupToolResults(messages: LLMMessage[], thresholdChars = 10_0
  * thinking 块（无签名回传价值，CTX-020①的压缩路径例外；登记 M5 复验一致性）与 [REDACTED]/truncated 占位内容。
  * 与 CTX-020②不冲突：压缩请求继承 thinking 配置是请求构造层；此处是历史收缩层。
  */
-export function contextCollapse(messages: LLMMessage[]): { messages: LLMMessage[]; dropped: number; freedTokens: number } {
+export function contextCollapse(messages: LLMMessage[]): { messages: LLMMessage[]; dropped: number; freedChars: number } {
   let dropped = 0;
   let freed = 0;
   const out = messages.map((m) => {
@@ -83,7 +89,7 @@ export function contextCollapse(messages: LLMMessage[]): { messages: LLMMessage[
       .filter((b): b is NonNullable<typeof b> => b !== null);
     return touched ? { ...m, content } : m;
   });
-  return { messages: out, dropped, freedTokens: freed };
+  return { messages: out, dropped, freedChars: freed };
 }
 
 export interface ReactiveDecision {
@@ -157,7 +163,7 @@ export function buildContextGrid(input: BuildContextGridInput): ContextGrid {
   };
 }
 
-/** /context 渲染（附录 A 网格形态 [自定]；四列 usage 对账行）。 */
+/** /context 渲染（附录 A 网格形态 [自定]；四列 usage 对账行+误差标注尾行=ADR-0027 决策 3 MUST）。 */
 export function renderContextGrid(g: ContextGrid): string {
   const lines: string[] = ["context:", ...g.sections.map((s) => `  ${s.name.padEnd(16)} ${String(s.tokens).padStart(8)}`)];
   lines.push(`  ${"Autocompact buffer".padEnd(16)} ${String(g.autocompactBuffer).padStart(8)}`);
@@ -165,6 +171,12 @@ export function renderContextGrid(g: ContextGrid): string {
   if (g.usage) {
     const total = g.usage.inputTokens + g.usage.outputTokens + g.usage.cacheCreationTokens + g.usage.cacheReadTokens;
     lines.push(`  usage(api): in=${g.usage.inputTokens} out=${g.usage.outputTokens} cache_w=${g.usage.cacheCreationTokens} cache_r=${g.usage.cacheReadTokens} total=${total}`);
+    // ADR-0027 决策 3：本地估算展示 MUST 携带误差标注（API usage 为权威）
+    const rec = reconcileGrid(g);
+    if (rec.errorRatio !== null) {
+      const pct = Math.round(rec.errorRatio * 10000) / 100;
+      lines.push(`  estimate vs api: ${rec.estimatedInput} vs ${rec.actualInput} (Δ ${pct}% — local estimate; API usage is authoritative, ADR-0027)`);
+    }
   }
   return lines.join("\n");
 }

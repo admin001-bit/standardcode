@@ -1,7 +1,8 @@
 // L1 主循环（v2.8 §5.1 ARCH-005、§5.4 请求生命周期与九级恢复链）。
 // 结构：单进程 async 生成器 + 单 while 大循环 + turn 状态对象递推；禁递归 turn（ARCH-005）。
 // 恢复链（§5.4 九级，M1 最小集——卡边界）：
-//   ②prompt-too-long → CTX-101 交接（WP-03）：catch 路径改接压缩协调器；流级路径暂无条件 context_exhausted（WP-04 补接）
+//   ②prompt-too-long → CTX-101 交接（WP-03）+ reactive 瀑布（WP-05，CTX-037）：catch 路径先 reactive（逐级升级）
+//     后压缩协调器；流级路径暂无条件 context_exhausted（流级接闸登记未解决）
 //   ③max_tokens 续写（限 maxContinuations，默认 3）
 //   ⑤畸形工具调用重试（限 maxMalformedRounds，默认 3；预算耗尽 fail-closed）
 //   ⑧max-turns（工具轮数上限，默认 25）
@@ -48,6 +49,10 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
   const maxContinuations = opts.maxContinuations ?? DEFAULTS.maxContinuations;
   const maxMalformedRounds = opts.maxMalformedRounds ?? DEFAULTS.maxMalformedRounds;
   const assertInvariants = opts.assertInvariants ?? true;
+  // WP-05（CTX-037）：reactive 瀑布步升级水位与尝试计数（函数局部——跨轮升级由实现方在 decide 内闭包持有）
+  const reactive = opts.reactive;
+  let reactiveStep: import("./types.ts").ReactiveStepName | null = null;
+  let reactiveAttempts = 0;
 
   yield { type: "turn_start" };
 
@@ -96,21 +101,46 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       } catch (err) {
         if (signal?.aborted) break;
         if (isContextLength(err)) {
-          // 恢复链②（CTX-101 交接，WP-03）：路由改接压缩协调器——四道闸放行且有执行体才压缩；
-          // 未提供 perform（WP-04 前）或闸拒 → 维持 context_exhausted 交还用户
-          const gate = opts.autocompact?.evaluate(state.usage?.inputTokens ?? 0, state.toolRounds);
-          if (gate?.shouldCompact && opts.autocompact?.perform) {
-            const r = await opts.autocompact.perform(state.toolRounds);
-            if (r.ok) {
-              yield { type: "compact_decided", level: gate.level, postCompactTokens: r.postCompactTokens };
-              // WP-04：摘要替换历史（perform 返回新消息；缺省清空=占位）
-              state.messages = r.messages ?? [];
-              continue; // 下轮重试原请求（压缩后仍超阈值→下轮再压，重压缩链在协调器侧）
+          // 恢复链②（CTX-101 交接，WP-03）× WP-05（CTX-037）：reactive 瀑布先走（prompt-too-long 触发，
+          // tokenGap=used−window 记录于 reactive_step 事件）；每触发升一级（decide 状态机），前一步未解决
+          // 才升级；auto-compact 级（exhausted）落下方既有压缩协调器路由（四道闸+perform）。
+          const usedTokens = state.usage?.inputTokens ?? 0;
+          let exhausted = !reactive;
+          if (reactive) {
+            for (let i = 0; i < 8; i++) {
+              const d = reactive.decide(reactiveStep);
+              reactiveStep = d.next;
+              reactiveAttempts++;
+              yield { type: "reactive_step", attempt: reactiveAttempts, tokenGap: usedTokens - reactive.modelWindow, step: d.next };
+              if (d.exhausted) {
+                exhausted = true; // auto-compact 级：交还协调器路由（不在此处二次压缩）
+                break;
+              }
+              const applied = reactive.apply(d.next, state.messages);
+              if (applied !== null) {
+                state.messages = applied;
+                break; // 收缩生效：重试原请求（仍超长则再触发本 catch，水位继续升级）
+              }
+              // 该步无事可做：继续升级
             }
+            if (reactiveAttempts >= 8) exhausted = true; // 防御上限（decide 实现异常时兜底）
           }
-          yield { type: "context_exhausted" };
-          yield { type: "done", reason: "context_exhausted" };
-          return state;
+          if (exhausted) {
+            const gate = opts.autocompact?.evaluate(usedTokens, state.toolRounds);
+            if (gate?.shouldCompact && opts.autocompact?.perform) {
+              const r = await opts.autocompact.perform(state.toolRounds);
+              if (r.ok) {
+                yield { type: "compact_decided", level: gate.level, postCompactTokens: r.postCompactTokens };
+                // WP-04：摘要替换历史（perform 返回新消息；缺省清空=占位）
+                state.messages = r.messages ?? [];
+                continue; // 下轮重试原请求（压缩后仍超阈值→下轮再压，重压缩链在协调器侧）
+              }
+            }
+            yield { type: "context_exhausted" };
+            yield { type: "done", reason: "context_exhausted" };
+            return state;
+          }
+          continue; // reactive 收缩生效：重试原请求
         }
         throw err;
       }

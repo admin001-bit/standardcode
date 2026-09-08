@@ -45,6 +45,11 @@ export async function renderTurn(
       case "recovery":
         write(`\n[recovery] ${ev.chain} (round ${ev.round})\n`);
         break;
+      case "reactive_step":
+        // WP-05（CTX-037）：reactive 瀑布步升级上屏（tokenGap 指标可见）
+        write(`\n[reactive] step ${ev.step} (gap ${ev.tokenGap})\n`);
+        sawText = false;
+        break;
       case "interrupted":
         write(`\n[interrupted: ${ev.phase}]\n`);
         break;
