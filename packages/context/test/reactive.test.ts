@@ -23,7 +23,7 @@ describe("DoD② 瀑布序三级（前者未解决才走后者）", () => {
   });
 });
 
-describe("DoD① reactive：prompt-too-long 触发面+tokenGap 指标", () => {
+describe("瀑布动作纯函数面（cleanup/collapse；生产触发面=packages/harness reactive-route.test.ts）", () => {
   it("瀑布① cleanup：大 tool_result 截断占位+freed 统计；小结果不动", () => {
     const msgs: LLMMessage[] = [
       { role: "user", content: [{ type: "tool_result", toolUseId: "t1", content: "x".repeat(20_000) }] },

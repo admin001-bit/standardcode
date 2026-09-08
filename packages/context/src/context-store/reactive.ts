@@ -66,8 +66,9 @@ export function cleanupToolResults(messages: LLMMessage[], thresholdChars = CLEA
 }
 
 /**
- * 瀑布② context collapse（§12.6 未覆盖级——mini-ADR 注记）：丢弃"可再生物质"——
- * thinking 块（无签名回传价值，CTX-020①的压缩路径例外；登记 M5 复验一致性）与 [REDACTED]/truncated 占位内容。
+ * 瀑布② context collapse（§12.6 未覆盖级——设计裁决=ADR-0036）：丢弃"可再生物质"——
+ * 当前实现仅 thinking 块（CTX-020①的压缩路径例外；登记 M5 复验一致性）；[REDACTED]/truncated
+ * 占位内容为 ADR-0036 保留扩展位，当前未启用。
  * 与 CTX-020②不冲突：压缩请求继承 thinking 配置是请求构造层；此处是历史收缩层。
  */
 export function contextCollapse(messages: LLMMessage[]): { messages: LLMMessage[]; dropped: number; freedChars: number } {

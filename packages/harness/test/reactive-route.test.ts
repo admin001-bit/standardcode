@@ -149,3 +149,77 @@ describe("WP-05 R1 reactive 兜底生产接线（CTX-037）", () => {
     expect(events[events.length - 1]).toMatchObject({ type: "done", reason: "context_exhausted" });
   });
 });
+
+// 复验建议补例（2026-09-09 原核验员临时探针验证的三条边界分支，落为正式回归）。
+describe("reactive 边界分支（复验补例）", () => {
+  it("apply 返回 null → 同一触发内继续升级（不重试），直到有步生效或耗尽", async () => {
+    const p = tooLongThenOkProvider(1);
+    const events = await collect(
+      runAgentLoop({
+        provider: p,
+        model: "m",
+        messages: MSGS,
+        reactive: {
+          modelWindow: 200_000,
+          decide: (current) =>
+            current === null ? { next: "tool-result-cleanup", exhausted: false } : { next: "context-collapse", exhausted: true },
+          apply: () => null, // cleanup 无事可做
+        },
+      }),
+    );
+    expect(reactiveSteps(events).map((e: any) => e.step)).toEqual(["tool-result-cleanup", "context-collapse"]);
+    expect(p.rounds).toBe(1); // 升级全程在同触发内完成，未重试；collapse exhausted 且无 autocompact → 立即 context_exhausted
+    expect(events.some((e) => e.type === "context_exhausted")).toBe(true);
+  });
+
+  it("apply 返回值真实替换请求历史：重试请求收到收缩后消息", async () => {
+    const SHRUNK: LLMMessage[] = [{ role: "user", content: [{ type: "text", text: "shrunken-history" }] }];
+    const seen: LLMRequest["messages"][] = [];
+    let rounds = 0;
+    const p: ProviderAdapter = {
+      capabilities: () => {
+        throw new Error("not used");
+      },
+      countTokens: async () => 0,
+      async *stream(req: LLMRequest) {
+        seen.push(structuredClone(req.messages));
+        rounds++;
+        if (rounds === 1) throw new ProviderError("context_length", "prompt is too long");
+        yield { type: "text_delta", text: "ok" } as LLMEvent;
+        yield { type: "finish", reason: "completed", raw: "end_turn" } as LLMEvent;
+      },
+    };
+    await collect(
+      runAgentLoop({
+        provider: p,
+        model: "m",
+        messages: [{ role: "user", content: [{ type: "text", text: "original-long-history" }] }],
+        reactive: {
+          modelWindow: 200_000,
+          decide: () => ({ next: "tool-result-cleanup", exhausted: false }),
+          apply: () => structuredClone(SHRUNK), // 交给 loop 的数组会被收尾 push（快照语义），克隆隔离
+        },
+      }),
+    );
+    expect(seen[0]![0]).toMatchObject({ content: [{ type: "text", text: "original-long-history" }] });
+    expect(seen[1]).toEqual(SHRUNK); // 收缩后历史进请求
+  });
+
+  it("reactive exhausted 且未配 autocompact → context_exhausted（不误压、不误走）", async () => {
+    const p = tooLongThenOkProvider(5);
+    const events = await collect(
+      runAgentLoop({
+        provider: p,
+        model: "m",
+        messages: MSGS,
+        reactive: {
+          modelWindow: 200_000,
+          decide: () => ({ next: "auto-compact", exhausted: true }),
+          apply: () => null,
+        },
+      }),
+    );
+    expect(events).toContainEqual({ type: "context_exhausted" });
+    expect(events[events.length - 1]).toMatchObject({ type: "done", reason: "context_exhausted" });
+  });
+});

@@ -14,4 +14,4 @@
 - 定义：prompt-too-long（ProviderError.kind=context_length）在 catch 路径先走 reactive 瀑布（LoopOptions.reactive：decide=nextReactiveStep 状态机、apply=cleanup/collapse 收缩闭包，auto-compact 级 exhausted 落 autocompact 路由），事件 reactive_step（tokenGap=used−window）逐级上屏；瀑布解决则不压缩。
 - 锚点：CTX-037（v2.8:327）+A 级报告 §2.4 reactive 行；ADR-0036（collapse 未覆盖级）。
 - 测试：packages/harness/test/reactive-route.test.ts（5 例：触发+tokenGap/升级序/exhausted 落协调器/瀑布先于 auto-compact/未配置原行为）。
-- 未解决：流级 streamError 路径（agent-loop:225-233）仍无条件 context_exhausted——reactive 未接（WP-05 边界登记，留 G 门）。
+- 未解决：流级 streamError 路径（agent-loop.ts:255-263【勘误 2026-09-09：原文 225-233 因同提交插入 30 行漂移，复验勘误③】）仍无条件 context_exhausted——reactive 未接（WP-05 边界登记，留 G 门）。
