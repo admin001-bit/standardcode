@@ -1,4 +1,4 @@
-// DoD②：五命令注册与行为（/help 列全表、/model 经目录切换、/permission EXE-001 循环、/clear、/exit）；B-03 五命令之外不注册。
+// DoD：命令注册与行为（M1 五命令+/rewind /diff=M2 WP-09；§8.2 分期，B-03 之外不注册）。
 import { describe, expect, it } from "vitest";
 import type { ProviderAdapter } from "@standardcode/providers";
 import { CLI_COMMANDS } from "../src/commands.ts";

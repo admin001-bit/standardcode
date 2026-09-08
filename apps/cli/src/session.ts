@@ -9,7 +9,7 @@ import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
-import { carryThinkingConfig, detectProjectWorkspace, loadMemory, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
+import { detectProjectWorkspace, loadMemory, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */

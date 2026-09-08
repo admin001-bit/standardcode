@@ -35,7 +35,7 @@ export interface FileHistoryStore {
   records(): Promise<SnapshotRecord[]>;
   /** 写盘前快照：读取现有内容入档（不存在=登记 existed=false）。返回 seq。 */
   snapshot(tool: SnapshotRecord["tool"], filePath: string, sessionId?: string): Promise<number>;
-  /** /rewind N：回滚 seq>N 的全部快照（后进先出），返回撤销条数。 */
+  /** /rewind N：撤销 seq≥N 的全部快照（恢复到第 N 次写盘前状态，EXE-040；见实现注释），返回撤销条数。 */
   rewindTo(seq: number): Promise<{ undone: number; files: string[] }>;
 }
 
@@ -110,8 +110,11 @@ export class FileHistoryStoreImpl implements FileHistoryStore {
     try {
       const content = await readFile(filePath);
       await writeFile(path.join(this.dir, storedAs), content);
-    } catch {
-      existed = false; // ENOENT=写盘前不存在（新建场景）
+    } catch (err) {
+      // 仅 ENOENT=写盘前不存在（新建场景）；其他读失败（如 EACCES）按快照失败上抛
+      // →工具调用合成 error tool_result（ADR-0032 决策 5：无快照宁可拒绝执行，防 rewind 误删）
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") existed = false;
+      else throw err;
     }
     const rec: SnapshotRecord = {
       schemaVersion: FILE_HISTORY_SCHEMA_VERSION,
@@ -128,38 +131,31 @@ export class FileHistoryStoreImpl implements FileHistoryStore {
   }
 
   async rewindTo(targetSeq: number): Promise<{ undone: number; files: string[] }> {
-    // 语义（EXE-040 "/rewind N"）：恢复到第 N 快照**之前**的项目状态。
-    // 按文件取 ≤N 的最近快照内容为目标态；该文件在 >N 无快照=未被动过，跳过。
-    const records = await this.records();
-    const byFile = new Map<string, SnapshotRecord[]>();
-    for (const r of records) {
-      const list = byFile.get(r.filePath) ?? [];
-      list.push(r);
-      byFile.set(r.filePath, list);
-    }
+    // 语义（EXE-040 "/rewind N"）：撤销 seq≥N 的全部快照（后进先出），即恢复到**第 N 次写盘前**的项目状态。
+    // 【勘误 2026-09-08】初版边界取 seq>N 使 /rewind maxSeq（撤销最近一步）必然 no-op（V 复现缺陷）——
+    // 快照 N 的存档内容恰是"第 N 次写盘前"的该文件状态，故 N 本身必须包含在撤销集内。
+    // 索引只追加不改写（历史保留）。
+    const records = (await this.records()).filter((r) => r.seq >= targetSeq).reverse(); // 后进先出
     const undoneFiles: string[] = [];
-    for (const [filePath, list] of byFile) {
-      const leN = list.filter((r) => r.seq <= targetSeq);
-      const gtN = list.filter((r) => r.seq > targetSeq);
-      if (gtN.length === 0) continue; // N 之后未动
-      const restoreRec = leN.length > 0 ? leN[leN.length - 1]! : gtN[0]!;
-      // gtN[0] 是该文件在 N 后的首次写：其快照内容=首次写前态。若 ≤N 无快照且 existed=false → 文件系 N 后新建 → 删除；
-      // existed=true → 内容即 N 时点状态 → 恢复。
+    for (const rec of records) {
+      const snapPath = path.join(this.dir, rec.storedAs);
       let content: Buffer | null = null;
       try {
-        content = await readFile(path.join(this.dir, restoreRec.storedAs));
+        content = await readFile(snapPath);
       } catch {
         content = null;
       }
       if (content !== null) {
-        await mkdir(path.dirname(filePath), { recursive: true });
-        await writeFile(filePath, content);
-      } else if (leN.length === 0 && gtN[0]!.existed === false) {
-        await rmForce(filePath);
+        await mkdir(path.dirname(rec.filePath), { recursive: true });
+        await writeFile(rec.filePath, content);
+      } else if (!rec.existed) {
+        // 快照前不存在=快照期间新建 → rewind 删除
+        await rmForce(rec.filePath);
       } else {
-        continue; // 存档缺失且不可判定 → 不动作（保守）
+        // existed=true 但存档缺失（快照目录损坏）：跳过不动作，保守
+        continue;
       }
-      undoneFiles.push(filePath);
+      undoneFiles.push(rec.filePath);
     }
     return { undone: undoneFiles.length, files: undoneFiles };
   }

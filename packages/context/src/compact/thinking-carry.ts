@@ -1,7 +1,7 @@
 // WP-06（CTX-020 工程不变量②）接缝件：压缩请求继承会话 thinking 配置。
 // 压缩摘要请求构造（WP-04 compact）MUST 将会话当前 thinking 配置经本函数带入压缩请求的
 // LLMRequest.thinking 字段——[CC] 2.1.198 起"compact 请求继承 thinking 配置"（v2.8 §7.5 原文）。
-// 本卡先立接缝+断言；WP-04 消费。§12.5 接缝登记：thinking × AutoCompact × prompt cache。
+// 本卡先立接缝+断言；WP-04 消费。【勘误 2026-09-08】§12.5 首批清单②实为 cacheScope×AutoCompact×TTL 双通道；本接缝为该清单的**新增登记项**（thinking×AutoCompact×prompt cache），非首批②。
 
 import type { LLMRequest } from "@standardcode/providers";
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   loadMemory,
   detectProjectWorkspace,
+  matchGlob,
   MEMORY_IMPORT_MAX_DEPTH,
 } from "../src/memory-loader/memory.ts";
 
@@ -120,6 +121,34 @@ describe("WP-02 记忆用户轨", () => {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("R1 复验回归：用户级 compat 读家目录顶层 ~/.claude ~/.codex（非 ~/.standardcode 内）", () => {
+    const home = tmp();
+    const cwd = tmp();
+    wf(path.join(home, ".standardcode"), "AGENTS.md", "USER-NATIVE");
+    wf(path.join(home, ".claude"), "CLAUDE.md", "USER-CLAUDE-COMPAT");
+    const r = loadMemory({ cwd, home, inProject: false });
+    expect(r.text).toContain("USER-NATIVE");
+    expect(r.text).toContain("USER-CLAUDE-COMPAT");
+    // 旧错误位置（~/.standardcode/.claude/）不再读取
+    wf(path.join(home, ".standardcode", ".claude"), "CLAUDE.md", "WRONG-PLACE");
+    const r2 = loadMemory({ cwd, home, inProject: false });
+    expect(r2.text).not.toContain("WRONG-PLACE");
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("matchGlob 直测（V O2）：**/**/ 单星/问号/链序缺陷回归", () => {
+    expect(matchGlob("src/**", "src/foo.ts")).toBe(true);
+    expect(matchGlob("src/**", "src/a/b.ts")).toBe(true);
+    expect(matchGlob("**/x.md", "docs/deep/x.md")).toBe(true);
+    expect(matchGlob("**/x.md", "x.md")).toBe(true); // 零段
+    expect(matchGlob("src/*.ts", "src/a.ts")).toBe(true);
+    expect(matchGlob("src/*.ts", "src/a/b.ts")).toBe(false); // 单星不跨段
+    expect(matchGlob("a?c.md", "abc.md")).toBe(true);
+    expect(matchGlob("a?c.md", "ac.md")).toBe(false);
+    expect(matchGlob("docs/**", "docs")).toBe(false); // 无尾内容不匹配（保守）
   });
 
   it("DoD⑥ MEM-043：inProject=false 跳过项目层；detectProjectWorkspace 标记检测", () => {

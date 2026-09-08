@@ -213,20 +213,20 @@ interface DirMains {
   compatPath: string | null;
 }
 
-function scanDirMains(dir: string, state: WalkerState): DirMains {
+function scanDirMains(dir: string, state: WalkerState, compatCandidates?: ReadonlyArray<string>): DirMains {
   const claude = readIfPresent(path.join(dir, "CLAUDE.md"), state.readFile);
   const agents = readIfPresent(path.join(dir, "AGENTS.md"), state.readFile);
   let compat: string | null = null;
   let compatPath: string | null = null;
-  for (const [sub, name] of [
-    [".claude", "CLAUDE.md"],
-    [".codex", "AGENTS.md"],
-  ] as const) {
-    const p = path.join(dir, sub, name);
-    const t = readIfPresent(p, state.readFile);
+  // compat 候选：缺省=目录内 .claude/.codex（项目/managed 层惯例）；用户层显式传家目录顶层（MEM-041 既有约定）
+  for (const cand of compatCandidates ?? [
+    path.join(dir, ".claude", "CLAUDE.md"),
+    path.join(dir, ".codex", "AGENTS.md"),
+  ] as ReadonlyArray<string>) {
+    const t = readIfPresent(cand, state.readFile);
     if (t !== null) {
       compat = t;
-      compatPath = p;
+      compatPath = cand;
       break;
     }
   }
@@ -297,9 +297,12 @@ export function loadMemory(opts: LoadMemoryOptions): LoadedMemory {
     const mains = scanDirMains(opts.managedDir, state);
     pushMain("managed", opts.managedDir, mergeDualRead(mains, precedence));
   }
-  // ② User（~/.standardcode；compat ~/.claude/CLAUDE.md、~/.codex/AGENTS.md 经 mergeDualRead 尾位）
+  // ② User（~/.standardcode 双主文件；compat=家目录顶层 ~/.claude/CLAUDE.md、~/.codex/AGENTS.md——MEM-041 既有约定位置）
   {
-    const mains = scanDirMains(path.join(home, ".standardcode"), state);
+    const mains = scanDirMains(path.join(home, ".standardcode"), state, [
+      path.join(home, ".claude", "CLAUDE.md"),
+      path.join(home, ".codex", "AGENTS.md"),
+    ]);
     const text = mergeDualRead(mains, precedence);
     if (text.trim() !== "") files.push({ scope: "user", kind: "memory", path: path.join(home, ".standardcode"), raw: expandImports(text, path.join(home, ".standardcode"), 0, state) });
   }

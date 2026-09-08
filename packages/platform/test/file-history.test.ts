@@ -23,7 +23,7 @@ describe("WP-09 file-history", () => {
     writeFileSync(a, "v2");
     // Bash 重定向启发式（三类中的 Bash 写盘）
     expect(bashWriteTargets("echo hi > out.txt")).toEqual(["out.txt"]);
-    expect(bashWriteTargets("echo hi >> log.txt && cmd 2> err.txt")).toEqual(["log.txt"]); // 2> 非"写文件"边界——err.txt 因 2 前缀不匹配
+    expect(bashWriteTargets("echo hi >> log.txt && cmd 2> err.txt")).toEqual(["log.txt"]); // 2> 实为写盘但启发式漏（前缀数字无边界）——偏差②形状外漏示例
     expect(bashWriteTargets("tee -a append.txt")).toEqual(["append.txt"]);
     expect(bashWriteTargets("cat < in.txt")).toEqual([]); // 输入重定向不写盘
     const b = path.join(proj, "b.txt");
@@ -56,13 +56,15 @@ describe("WP-09 file-history", () => {
     writeFileSync(tfile, '{"schemaVersion":1,"seq":1}\n', "utf8");
     const before = await readTranscript(tfile);
 
-    const r3 = await store.rewindTo(3); // 无可撤
-    expect(r3.undone).toBe(0);
-    const r2 = await store.rewindTo(2); // 撤 3：new.txt 删除
-    expect(r2.undone).toBe(1);
+    const r3 = await store.rewindTo(3); // 撤 seq3：new.txt 删除（LIFO≥N 语义）
+    expect(r3.undone).toBe(1);
+    expect(existsSync(path.join(proj, "new.txt"))).toBe(false);
+    const r2 = await store.rewindTo(2); // LIFO≥N：撤 3、2 → a←seq3 存档(v1)、new.txt 删（无存档 existed=false）
+    expect(r2.undone).toBe(2);
     expect(existsSync(path.join(proj, "new.txt"))).toBe(false);
     expect(readFileSync(a, "utf8")).toBe("v1");
-    const r1 = await store.rewindTo(1); // 撤 3、2：a→v0
+    const r1 = await store.rewindTo(1); // LIFO≥N：撤 3、2、1（seq≥1 全集——索引不消费，重复撤销幂等）
+    expect(r1.undone).toBe(3);
     expect(readFileSync(a, "utf8")).toBe("v0");
     expect(existsSync(path.join(proj, "new.txt"))).toBe(false);
     const after = await readTranscript(tfile);
@@ -71,6 +73,33 @@ describe("WP-09 file-history", () => {
     writeFileSync(a, "v9");
     const seq = await store.snapshot("Write", a);
     expect(seq).toBe(4);
+    rmSync(base, { recursive: true, force: true });
+    rmSync(proj, { recursive: true, force: true });
+  });
+
+  it("DoD② 正路径（V 复现缺陷回归）：单写后 /rewind 1 恢复写前值；交叉写回第 N 时点", async () => {
+    const base = tmp();
+    const proj = tmp();
+    const a = path.join(proj, "a.txt");
+    writeFileSync(a, "v0");
+    const store = await FileHistoryStoreImpl.create(proj, base);
+    await store.snapshot("Write", a); // seq1 存档 v0
+    writeFileSync(a, "v1"); // 真实写盘
+    const r1 = await store.rewindTo(1);
+    expect(r1.undone).toBe(1); // 此前 LIFO 口径=0（缺陷）
+    expect(readFileSync(a, "utf8")).toBe("v0");
+    // 场景2：a 写于 1、3，b 写于 2；/rewind 2 → a=第 2 时点值 v1、b=b0
+    writeFileSync(a, "v1");
+    const b = path.join(proj, "b.txt");
+    writeFileSync(b, "b0");
+    await store.snapshot("Edit", b); // seq2 存档 b0
+    writeFileSync(b, "b1");
+    await store.snapshot("Bash", a); // seq3 存档 v1（真实流程每写必有快照，此处不插入未跟踪写盘）
+    writeFileSync(a, "a3");
+    const r2 = await store.rewindTo(2); // 撤 3、2：a←seq3 存档 v1，b←seq2 存档 b0
+    expect(r2.undone).toBe(2);
+    expect(readFileSync(a, "utf8")).toBe("v1");
+    expect(readFileSync(b, "utf8")).toBe("b0");
     rmSync(base, { recursive: true, force: true });
     rmSync(proj, { recursive: true, force: true });
   });
