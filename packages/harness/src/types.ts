@@ -73,6 +73,8 @@ export interface LoopOptions {
   permission?: PermissionGate;
   /** guard-path 护栏（WP-09，platform 实现）：stop 硬停/confirm 强制确认（S-9 Auto 不豁免）。 */
   guard?: { check(toolName: string, input: unknown): { action: "stop" | "confirm" | "pass"; rule?: string; detail?: string } };
+  /** file-history 快照钩子（WP-09，EXE-040）：每次工具写盘前触发。 */
+  fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
   /** 恢复链⑧：单 turn 内工具轮数上限（默认 25，[自定]）。 */
   maxToolRounds?: number;
   /** 恢复链③/④：续写预算（默认 3，§5.4 ③限 3 次）。 */

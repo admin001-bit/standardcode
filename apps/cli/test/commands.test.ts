@@ -1,7 +1,7 @@
 // DoD②：五命令注册与行为（/help 列全表、/model 经目录切换、/permission EXE-001 循环、/clear、/exit）；B-03 五命令之外不注册。
 import { describe, expect, it } from "vitest";
 import type { ProviderAdapter } from "@standardcode/providers";
-import { M1_COMMANDS } from "../src/commands.ts";
+import { CLI_COMMANDS } from "../src/commands.ts";
 import { createSession, PERMISSION_CYCLE, PERMISSION_LABEL } from "../src/session.ts";
 import { createCommandContext, type ReplDeps } from "../src/repl.ts";
 
@@ -26,22 +26,22 @@ function fakeProvider(): ProviderAdapter {
 
 describe("M1 五命令（§8.2 最小集）", () => {
   it("registry 恰五命令（B-03：之外不注册）", () => {
-    expect(M1_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission"]);
+    expect(CLI_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission"]);
   });
 
   it("/help 列全表", () => {
     const { ctx, out } = fixture();
-    M1_COMMANDS[0]!.execute("", ctx);
-    for (const c of M1_COMMANDS) expect(out.join("\n")).toContain(`/${c.name}`);
+    CLI_COMMANDS[0]!.execute("", ctx);
+    for (const c of CLI_COMMANDS) expect(out.join("\n")).toContain(`/${c.name}`);
   });
 
   it("/model 无参列目录并标当前；有参切换；未知报错", () => {
     const { ctx, out, session } = fixture();
-    M1_COMMANDS[3]!.execute("", ctx);
+    CLI_COMMANDS[3]!.execute("", ctx);
     expect(out.join("\n")).toContain("* m-a");
-    M1_COMMANDS[3]!.execute("m-b", ctx);
+    CLI_COMMANDS[3]!.execute("m-b", ctx);
     expect(session.model).toBe("m-b");
-    expect(() => M1_COMMANDS[3]!.execute("m-nope", ctx)).toThrow(/unknown model: m-nope/);
+    expect(() => CLI_COMMANDS[3]!.execute("m-nope", ctx)).toThrow(/unknown model: m-nope/);
     expect(session.model).toBe("m-b"); // 切换失败保持原值
   });
 
@@ -49,23 +49,23 @@ describe("M1 五命令（§8.2 最小集）", () => {
     const { ctx, out, session } = fixture();
     expect(session.broker.mode()).toBe("default");
     for (const expected of ["acceptEdits", "plan", "bypassPermissions", "default"]) {
-      M1_COMMANDS[4]!.execute("", ctx);
+      CLI_COMMANDS[4]!.execute("", ctx);
       expect(session.broker.mode()).toBe(expected);
     }
     expect(out.join("\n")).toContain(PERMISSION_LABEL.plan);
-    M1_COMMANDS[4]!.execute("plan", ctx);
+    CLI_COMMANDS[4]!.execute("plan", ctx);
     expect(session.broker.mode()).toBe("plan");
-    expect(() => M1_COMMANDS[4]!.execute("auto", ctx)).toThrow(/unknown mode/);
+    expect(() => CLI_COMMANDS[4]!.execute("auto", ctx)).toThrow(/unknown mode/);
     expect(PERMISSION_CYCLE).toEqual(["default", "acceptEdits", "plan", "bypassPermissions"]);
   });
 
   it("/clear 清历史；/exit 置退出标志", () => {
     const { ctx, session } = fixture();
     session.messages.push({ role: "user", content: [{ type: "text", text: "x" }] });
-    M1_COMMANDS[1]!.execute("", ctx);
+    CLI_COMMANDS[1]!.execute("", ctx);
     expect(session.messages).toHaveLength(0);
     expect(session.exitRequested).toBe(false);
-    M1_COMMANDS[2]!.execute("", ctx);
+    CLI_COMMANDS[2]!.execute("", ctx);
     expect(session.exitRequested).toBe(true);
   });
 });

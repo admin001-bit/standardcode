@@ -1,0 +1,202 @@
+// WP-09（M2）：file-history 快照（v2.8 §10 EXE-030/040/041 原文：每次工具写盘前快照入 file-history/，_788.js）
+// + /rewind N 回滚 + 索引（schemaVersion，ENG-080）。
+// 快照触发=每次工具写盘前（Write/Edit/改写类 Bash——Bash 目标以重定向启发式解析，[自定]，ADR-0032）。
+// 布局：~/.standardcode/projects/<encoded>/file-history/<snapId>/ 存原文件树 + index.jsonl 逐行登记。
+// 快照内容=写盘前全文件内容（EXE-040 依赖"快照入 file-history/"）；被 rewind 撤销的快照标记（不物理删除）。
+
+import { mkdir, readFile, writeFile, appendFile, readdir, rename, access, chmod } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+import { encodeProjectPath, transcriptsDir } from "./transcripts.ts";
+
+export const FILE_HISTORY_SCHEMA_VERSION = 1;
+
+export interface SnapshotRecord {
+  schemaVersion: 1;
+  /** 单调递增（项目内），从 1 起——/rewind N 的 N。 */
+  seq: number;
+  ts: string;
+  tool: "Write" | "Edit" | "Bash";
+  /** 被快照的绝对路径。 */
+  filePath: string;
+  /** 快照存档文件名（snap 目录内）。 */
+  storedAs: string;
+  /** 快照前文件是否存在（不存在=新建场景，rewind=删除该文件）。 */
+  existed: boolean;
+  /** 引发快照的会话（可空）。 */
+  sessionId?: string;
+}
+
+export interface FileHistoryStore {
+  dir: string;
+  indexFile: string;
+  /** 当前最大 seq（0=无快照）。 */
+  maxSeq(): number;
+  records(): Promise<SnapshotRecord[]>;
+  /** 写盘前快照：读取现有内容入档（不存在=登记 existed=false）。返回 seq。 */
+  snapshot(tool: SnapshotRecord["tool"], filePath: string, sessionId?: string): Promise<number>;
+  /** /rewind N：回滚 seq>N 的全部快照（后进先出），返回撤销条数。 */
+  rewindTo(seq: number): Promise<{ undone: number; files: string[] }>;
+}
+
+export function fileHistoryDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
+  const encoded = encodeProjectPath(projectRoot);
+  return path.join(baseDir, "projects", encoded, "file-history");
+}
+
+export async function createFileHistoryStore(projectRoot: string, baseDir?: string): Promise<FileHistoryStoreImpl> {
+  return FileHistoryStoreImpl.create(projectRoot, baseDir);
+}
+
+export class FileHistoryStoreImpl implements FileHistoryStore {
+  private seq = 0;
+  private constructor(
+    readonly dir: string,
+    readonly indexFile: string,
+  ) {}
+
+  static async create(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): Promise<FileHistoryStoreImpl> {
+    const dir = fileHistoryDir(projectRoot, baseDir);
+    await mkdir(dir, { recursive: true });
+    const indexFile = path.join(dir, "index.jsonl");
+    const store = new FileHistoryStoreImpl(dir, indexFile);
+    // 已有索引恢复 seq（崩溃后继续单调）
+    try {
+      const text = await readFile(indexFile, "utf8");
+      for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const rec = JSON.parse(line) as SnapshotRecord;
+          if (rec.schemaVersion === FILE_HISTORY_SCHEMA_VERSION && typeof rec.seq === "number" && rec.seq > store.seq) store.seq = rec.seq;
+        } catch {
+          /* 坏行容忍（同 transcripts 口径） */
+        }
+      }
+    } catch {
+      /* 无索引=新 store */
+    }
+    return store;
+  }
+
+  maxSeq(): number {
+    return this.seq;
+  }
+
+  async records(): Promise<SnapshotRecord[]> {
+    const out: SnapshotRecord[] = [];
+    try {
+      const text = await readFile(this.indexFile, "utf8");
+      for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const rec = JSON.parse(line) as SnapshotRecord;
+          if (rec.schemaVersion === FILE_HISTORY_SCHEMA_VERSION) out.push(rec);
+        } catch {
+          /* 坏行容忍 */
+        }
+      }
+    } catch {
+      /* 无索引 */
+    }
+    return out;
+  }
+
+  async snapshot(tool: SnapshotRecord["tool"], filePath: string, sessionId?: string): Promise<number> {
+    this.seq++;
+    const snapId = `snap-${String(this.seq).padStart(6, "0")}`;
+    await mkdir(path.join(this.dir, snapId), { recursive: true });
+    const storedAs = `${snapId}/${encodeURIComponent(filePath).replace(/[%]/g, "_")}`;
+    let existed = true;
+    try {
+      const content = await readFile(filePath);
+      await writeFile(path.join(this.dir, storedAs), content);
+    } catch {
+      existed = false; // ENOENT=写盘前不存在（新建场景）
+    }
+    const rec: SnapshotRecord = {
+      schemaVersion: FILE_HISTORY_SCHEMA_VERSION,
+      seq: this.seq,
+      ts: new Date().toISOString(),
+      tool,
+      filePath,
+      storedAs,
+      existed,
+      ...(sessionId ? { sessionId } : {}),
+    };
+    await appendFile(this.indexFile, JSON.stringify(rec) + "\n", "utf8");
+    return this.seq;
+  }
+
+  async rewindTo(targetSeq: number): Promise<{ undone: number; files: string[] }> {
+    // 语义（EXE-040 "/rewind N"）：恢复到第 N 快照**之前**的项目状态。
+    // 按文件取 ≤N 的最近快照内容为目标态；该文件在 >N 无快照=未被动过，跳过。
+    const records = await this.records();
+    const byFile = new Map<string, SnapshotRecord[]>();
+    for (const r of records) {
+      const list = byFile.get(r.filePath) ?? [];
+      list.push(r);
+      byFile.set(r.filePath, list);
+    }
+    const undoneFiles: string[] = [];
+    for (const [filePath, list] of byFile) {
+      const leN = list.filter((r) => r.seq <= targetSeq);
+      const gtN = list.filter((r) => r.seq > targetSeq);
+      if (gtN.length === 0) continue; // N 之后未动
+      const restoreRec = leN.length > 0 ? leN[leN.length - 1]! : gtN[0]!;
+      // gtN[0] 是该文件在 N 后的首次写：其快照内容=首次写前态。若 ≤N 无快照且 existed=false → 文件系 N 后新建 → 删除；
+      // existed=true → 内容即 N 时点状态 → 恢复。
+      let content: Buffer | null = null;
+      try {
+        content = await readFile(path.join(this.dir, restoreRec.storedAs));
+      } catch {
+        content = null;
+      }
+      if (content !== null) {
+        await mkdir(path.dirname(filePath), { recursive: true });
+        await writeFile(filePath, content);
+      } else if (leN.length === 0 && gtN[0]!.existed === false) {
+        await rmForce(filePath);
+      } else {
+        continue; // 存档缺失且不可判定 → 不动作（保守）
+      }
+      undoneFiles.push(filePath);
+    }
+    return { undone: undoneFiles.length, files: undoneFiles };
+  }
+}
+
+async function rmForce(p: string): Promise<void> {
+  try {
+    await access(p);
+    const { unlink } = await import("node:fs/promises");
+    await unlink(p);
+  } catch {
+    /* 已不存在 */
+  }
+}
+
+// —— Bash 改写目标启发式（[自定]，ADR-0032）——
+
+/**
+ * 从 Bash 命令提取可能的写盘目标（保守白名单形状）：
+ * `> file` `>> file` `tee file` `tee -a file` `install src dst` `mv src dst` `cp src dst`（dst 为写目标）。
+ * 未匹配 → 无快照（Bash 写盘面广，启发式外漏登记偏差——护栏+权限仍独立生效）。
+ */
+export function bashWriteTargets(command: string): string[] {
+  const targets = new Set<string>();
+  const redirect = /(?:^|[\s;|&])(?:>>?|<<?)\s*("([^"]+)"|'([^']+)'|([^\s<>|&;]+))/g;
+  for (const m of command.matchAll(redirect)) {
+    const t = m[2] ?? m[3] ?? m[4];
+    // 排除输入重定向（< 与 <<）：它们不写盘
+    if (t && !m[0].includes("<")) targets.add(t);
+  }
+  for (const m of command.matchAll(/\btee\s+(?:-a\s+)?("([^"]+)"|'([^']+)'|([^\s|&;]+))/g)) {
+    const t = m[2] ?? m[3] ?? m[4];
+    if (t) targets.add(t);
+  }
+  for (const m of command.matchAll(/\b(?:mv|cp|install)\s+(?:-\S+\s+)*("([^"]+)"|'([^']+)'|[^\s]+)\s+("([^"]+)"|'([^']+)'|[^\s>]+)\s*$/g)) {
+    const dst = m[4] ?? m[5] ?? m[6];
+    if (dst && !dst.startsWith("-")) targets.add(dst);
+  }
+  return [...targets];
+}

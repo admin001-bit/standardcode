@@ -3,7 +3,8 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
-import { M1_COMMANDS } from "./commands.ts";
+import { CLI_COMMANDS } from "./commands.ts";
+import { FileHistoryStoreImpl } from "@standardcode/platform";
 
 const VERSION = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -23,9 +24,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1;
     return;
   }
+  // WP-09：file-history store（快照+/rewind 数据面；缺席仅降级提示）
+  let fileHistory;
+  try {
+    fileHistory = await FileHistoryStoreImpl.create(session.cwd);
+  } catch {
+    process.stdout.write("[file-history] store unavailable — /rewind disabled\n");
+  }
   const rl = createInterface({
     input: process.stdin,
-    completer: completerFor(M1_COMMANDS), // UI-001
+    completer: completerFor(CLI_COMMANDS), // UI-001
   });
   // EXE-001 shift+tab 切换（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）
   if (process.stdin.isTTY) {
@@ -49,5 +57,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   await runRepl({
     session,
     io: { lines: rl, write: (s) => process.stdout.write(s), close: () => rl.close() },
+    fileHistory,
   });
 }

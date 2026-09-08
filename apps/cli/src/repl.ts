@@ -6,7 +6,8 @@ import { runAgentLoop } from "@standardcode/harness";
 import { checkToolInput as guardCheck } from "@standardcode/platform";
 import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { M1_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
+import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
+import { bashWriteTargets, type FileHistoryStore } from "@standardcode/platform";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
@@ -22,6 +23,8 @@ export interface ReplDeps {
   session: Session;
   io: ReplIo;
   commands?: readonly SlashCommand[];
+  /** file-history store（WP-09；main.ts 装配；缺席=/rewind 报错、工具写盘不快照）。 */
+  fileHistory?: FileHistoryStore;
 }
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
@@ -44,12 +47,18 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     requestExit: () => {
       s.exitRequested = true;
     },
+    workingDir: () => s.cwd,
+    snapshotCount: () => deps.fileHistory?.maxSeq() ?? 0,
+    rewind: async (seq) => {
+      if (!deps.fileHistory) throw new Error("file-history unavailable（/rewind 需要 file-history store）");
+      return deps.fileHistory.rewindTo(seq);
+    },
     write: deps.io.write,
   };
 }
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
-  const commands = new Map((deps.commands ?? M1_COMMANDS).map((c) => [c.name, c]));
+  const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
   for await (const raw of deps.io.lines) {
     const line = raw.trim();
     if (line === "") continue;
@@ -84,6 +93,21 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
         // WP-06（CTX-020）：thinking 配置随每 turn 请求（缺省关闭不发）
         thinking: s.thinking,
+        // WP-09（EXE-030/040）：写盘前快照（Write/Edit 取 file_path；Bash 重定向启发式，[自定]）
+        fileHistory: deps.fileHistory
+          ? {
+              beforeTool: async (name, input) => {
+                const rec = input as { file_path?: unknown; command?: unknown };
+                if ((name === "Write" || name === "Edit") && typeof rec.file_path === "string") {
+                  await deps.fileHistory!.snapshot(name as "Write" | "Edit", resolve(s.cwd, rec.file_path));
+                } else if (name === "Bash" && typeof rec.command === "string") {
+                  for (const t of bashWriteTargets(rec.command)) {
+                    await deps.fileHistory!.snapshot("Bash", resolve(s.cwd, t));
+                  }
+                }
+              },
+            }
+          : undefined,
         messages: s.messages,
         tools: s.tools,
         // WP-09：guard-path 护栏（platform 实现；stop 硬停/confirm 升 ask——S-9 Auto 不豁免）

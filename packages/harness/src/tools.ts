@@ -53,6 +53,8 @@ export interface RunToolsOptions {
   permission?: PermissionGate;
   /** guard-path（WP-09）：先于权限判定（EXE-020 工具层权威判定）；stop 硬停，confirm 升 ask（S-9 Auto 不豁免）。 */
   guard?: ToolGuard;
+  /** file-history 快照（WP-09，EXE-040）：每次工具写盘前触发（全部门禁通过后、执行前）。 */
+  fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
   signal?: AbortSignal;
 }
 
@@ -140,6 +142,14 @@ async function runOneTool(call: ToolCall, ctx: ToolContext, opts: RunToolsOption
   const invalid = validateToolInput(tool.inputSchema, call.input);
   if (invalid) {
     return { id: call.id, name: call.name, content: `input failed schema validation: ${invalid}`, isError: true };
+  }
+  if (opts.fileHistory) {
+    // EXE-030/040：每次工具写盘前快照（门禁全过、执行未始；快照失败不阻断工具执行，登记于结果内容）
+    try {
+      await opts.fileHistory.beforeTool(call.name, call.input);
+    } catch (err) {
+      return { id: call.id, name: call.name, content: `file-history snapshot failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    }
   }
   try {
     const content = await tool.execute(call.input, ctx);

@@ -197,7 +197,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       ];
       if (pending.length > 0) {
         // 未执行的调用合成 error tool_result（无悬空 tool_use，硬不变量）
-        const outcomes = await runTools(pending, { registry, permission: opts.permission, guard: opts.guard, signal });
+        const outcomes = await runTools(pending, { registry, permission: opts.permission, guard: opts.guard, fileHistory: opts.fileHistory, signal });
         const resultBlocks: ContentBlock[] = outcomes.map((o) => ({ type: "tool_result", toolUseId: o.id, content: o.content, isError: true }));
         for (const o of outcomes) yield { type: "tool_result", ...o, isError: true };
         state.messages.push({ role: "user", content: resultBlocks });
@@ -284,6 +284,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       registry,
       permission: opts.permission,
       guard: opts.guard,
+      fileHistory: opts.fileHistory,
       signal,
     });
     const outcomeById = new Map(outcomes.map((o) => [o.id, o]));
