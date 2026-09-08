@@ -4,6 +4,10 @@ import type { ProviderAdapter } from "@standardcode/providers";
 import { CLI_COMMANDS } from "../src/commands.ts";
 import { createSession, PERMISSION_CYCLE, PERMISSION_LABEL } from "../src/session.ts";
 import { createCommandContext, type ReplDeps } from "../src/repl.ts";
+import { FileHistoryStoreImpl } from "@standardcode/platform";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 function fixture() {
   const session = createSession({ provider: fakeProvider(), catalog: ["m-a", "m-b"], model: "m-a" });

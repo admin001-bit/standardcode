@@ -7,7 +7,7 @@ import { checkToolInput as guardCheck } from "@standardcode/platform";
 import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
-import { bashWriteTargets, type FileHistoryStore } from "@standardcode/platform";
+import { bashWriteTargets, sessionDiff, type FileHistoryStore } from "@standardcode/platform";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
@@ -49,6 +49,10 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     },
     workingDir: () => s.cwd,
     snapshotCount: () => deps.fileHistory?.maxSeq() ?? 0,
+    sessionDiff: async () => {
+      if (!deps.fileHistory) return { output: "", changed: 0, scanned: 0, skipped: [] };
+      return sessionDiff(deps.fileHistory);
+    },
     rewind: async (seq) => {
       if (!deps.fileHistory) throw new Error("file-history unavailable（/rewind 需要 file-history store）");
       return deps.fileHistory.rewindTo(seq);

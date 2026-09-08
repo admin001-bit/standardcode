@@ -1,7 +1,7 @@
 // L1 主循环（v2.8 §5.1 ARCH-005、§5.4 请求生命周期与九级恢复链）。
 // 结构：单进程 async 生成器 + 单 while 大循环 + turn 状态对象递推；禁递归 turn（ARCH-005）。
 // 恢复链（§5.4 九级，M1 最小集——卡边界）：
-//   ②prompt-too-long → CTX-101：M1 一律"新会话"，不发压缩请求（done: context_exhausted）
+//   ②prompt-too-long → CTX-101 交接（WP-03）：catch 路径改接压缩协调器；流级路径暂无条件 context_exhausted（WP-04 补接）
 //   ③max_tokens 续写（限 maxContinuations，默认 3）
 //   ⑤畸形工具调用重试（限 maxMalformedRounds，默认 3；预算耗尽 fail-closed）
 //   ⑧max-turns（工具轮数上限，默认 25）
@@ -223,7 +223,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     // —— 流级错误（非中断）——
     if (streamError && !finish) {
       if (isContextLength(streamError)) {
-        // 同恢复链②（WP-03 路由接缝；未配 autocompact 时维持原行为）
+        // 流级路径：无条件 context_exhausted（闸门在 catch 路径；流级接闸随 WP-04 执行体一并处理）【勘误 2026-09-08：原注释称"同恢复链②"失实】
         yield { type: "context_exhausted" };
         yield { type: "done", reason: "context_exhausted" };
         return state;

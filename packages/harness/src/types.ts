@@ -79,8 +79,8 @@ export interface LoopOptions {
   fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
   /**
    * WP-03（CTX-101 交接）：恢复链②context_length 路由改接压缩协调器（阈值+四道闸，packages/context）。
-   * evaluate=门判定（compact/blocked）；perform=压缩执行体（9 段摘要，WP-04 交付；未提供时路由
-   * 暴露 compact_decided 事件后维持 context_exhausted 行为——登记偏差）。
+   * evaluate=门判定（compact/blocked）；perform=压缩执行体（9 段摘要，WP-04 交付；未提供时直接
+   * 维持 context_exhausted，不发 compact_decided——【勘误 2026-09-08】原注释"暴露事件后维持"失实）。
    */
   autocompact?: {
     evaluate(usedTokens: number, turn: number): { shouldCompact: boolean; level: string; reason?: string };

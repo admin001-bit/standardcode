@@ -1,8 +1,7 @@
 // M1 五命令（v2.8 §8.2 M1 最小集）+ M2 增量（§8.2 M2 分期，B-03 只注册本里程碑命令）：
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-10/11 增其余。
-import { spawnSync } from "node:child_process";
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
-import { redactSecrets } from "@standardcode/platform";
+import { sessionDiff, redactSecrets } from "@standardcode/platform";
 
 export interface CommandContext {
   catalog(): readonly string[];
@@ -12,6 +11,8 @@ export interface CommandContext {
   rewind(seq: number): Promise<{ undone: number; files: string[] }>;
   /** 当前快照数（/rewind 空参展示）。 */
   snapshotCount(): number;
+  /** 会话文件变更面 diff（WP-09 rework：自实现引擎 over file-history；store 缺席=空结果）。 */
+  sessionDiff(): Promise<{ output: string; changed: number; scanned: number; skipped: string[] }>;
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -109,24 +110,18 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "diff",
-    description: "show uncommitted changes (git diff HEAD, ADR-0032; S-10 redaction applied)",
-    execute(args, ctx) {
-      const argsParts = args.trim();
-      const gitArgs = argsParts ? ["diff", ...argsParts.split(/\s+/)] : ["diff", "HEAD"];
-      const r = spawnSync("git", gitArgs, { cwd: ctx.workingDir(), encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
-      if (r.error || (r.status !== 0 && r.status !== 1)) {
-        const why = (r.stderr ?? "").trim().slice(0, 500) || "not a git repository?";
-        ctx.write(`[diff] git unavailable or failed: ${why}\n发生了什么：git diff 执行失败；为什么：/diff 复用系统 git（ADR-0032）；建议动作：确认目录为 git 仓库且 git 在 PATH。`);
+    description: "show session file changes vs pre-write snapshots (self-implemented unified diff, ADR-0032 rework; S-10 redaction)",
+    async execute(args, ctx) {
+      // ADR-0032 决策 1【勘误 2026-09-08】：用户裁决改自实现——/diff 语义=会话文件变更面（file-history 快照基线 vs 当前）
+      const r = await ctx.sessionDiff();
+      if (r.changed === 0) {
+        ctx.write(r.scanned === 0 ? "[diff] no file-history snapshots in this session" : "[diff] no changes vs session start");
         return;
       }
-      let out = r.stdout ?? "";
-      if (out.trim() === "") {
-        ctx.write("[diff] no uncommitted changes");
-        return;
-      }
-      out = redactSecrets(out); // S-10：diff 内容可能含密钥
+      let out = redactSecrets(r.output); // S-10：diff 内容可能含密钥
       if (out.length > 30_000) out = out.slice(0, 30_000) + "\n[output truncated]";
-      ctx.write(out.endsWith("\n") ? out : out + "\n");
+      const tail = out.endsWith("\n") ? out : out + "\n";
+      ctx.write(`[diff] ${r.changed} file(s) changed (${r.scanned} scanned${r.skipped.length > 0 ? `, ${r.skipped.length} skipped: ${r.skipped.join(", ")}` : ""})\n${tail}`);
     },
   },
 ];
