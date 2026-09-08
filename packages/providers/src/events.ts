@@ -24,8 +24,14 @@ export interface TokenUsage {
 export type LLMEvent =
   | { type: "message_start"; id: string | null; model: string }
   | { type: "text_delta"; text: string }
-  /** M1 仅透传 thinking 增量；签名原样回传属 M2（CTX-020）。 */
+  /** M2 CTX-020：thinking 增量透传（harness 同时累积，块停时以 thinking_end 回传签名）。 */
   | { type: "thinking_delta"; thinking: string }
+  /**
+   * M2 CTX-020 工程不变量①：thinking 块完整收束——thinking/thinkingSignature 原样回传
+   * （压缩/续传时签名丢失会被 API 拒绝）。signature 语义=Provider 原文字节，不做任何加工。
+   * 无签名方言（OpenAI 兼容 reasoning）=signature 省略。
+   */
+  | { type: "thinking_end"; thinking: string; thinkingSignature?: string }
   | { type: "tool_start"; id: string; name: string }
   | { type: "tool_input_delta"; id: string; jsonPartial: string }
   | { type: "tool_end"; id: string }

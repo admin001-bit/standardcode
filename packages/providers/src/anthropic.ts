@@ -93,6 +93,10 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
   let inputUsage: TokenUsage | null = null;
   // content block index → tool_use id（input_json_delta 按 index 关联）
   const blockTools = new Map<number, string>();
+  // WP-06（CTX-020 工程不变量①）：thinking 块 index→文本/签名增量累积（signature_delta 多帧拼接，原样）
+  const blockThinking = new Set<number>();
+  const blockThinkingText = new Map<number, string>();
+  const blockSignatures = new Map<number, string>();
   for await (const frame of parseSse(body)) {
     let ev: any;
     try {
@@ -119,6 +123,8 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
         if (c?.type === "tool_use") {
           blockTools.set(ev.index, c.id);
           yield { type: "tool_start", id: c.id, name: c.name };
+        } else if (c?.type === "thinking") {
+          blockThinking.add(ev.index);
         }
         break;
       }
@@ -127,12 +133,15 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
         if (d?.type === "text_delta") {
           yield { type: "text_delta", text: d.text };
         } else if (d?.type === "thinking_delta") {
+          if (blockThinking.has(ev.index)) blockThinkingText.set(ev.index, (blockThinkingText.get(ev.index) ?? "") + d.thinking);
           yield { type: "thinking_delta", thinking: d.thinking };
+        } else if (d?.type === "signature_delta") {
+          // WP-06（CTX-020 工程不变量①）：签名增量原样累积（多帧拼接，无加工）
+          blockSignatures.set(ev.index, (blockSignatures.get(ev.index) ?? "") + (d.signature ?? ""));
         } else if (d?.type === "input_json_delta") {
           const id = blockTools.get(ev.index);
           if (id !== undefined) yield { type: "tool_input_delta", id, jsonPartial: d.partial_json ?? "" };
         }
-        // signature_delta：M1 忽略（thinking 签名原样回传属 M2，CTX-020）
         break;
       }
       case "content_block_stop": {
@@ -140,6 +149,15 @@ async function* decodeAnthropicStream(body: ReadableStream<Uint8Array>): AsyncGe
         if (id !== undefined) {
           yield { type: "tool_end", id };
           blockTools.delete(ev.index);
+        }
+        if (blockThinking.has(ev.index)) {
+          // WP-06（CTX-020 工程不变量①）：thinking 块收束——文本与 signature 原样回传（无 signature_delta=无签名）
+          blockThinking.delete(ev.index);
+          const text = blockThinkingText.get(ev.index) ?? "";
+          blockThinkingText.delete(ev.index);
+          const sig = blockSignatures.get(ev.index);
+          blockSignatures.delete(ev.index);
+          yield sig === undefined ? { type: "thinking_end", thinking: text } : { type: "thinking_end", thinking: text, thinkingSignature: sig };
         }
         break;
       }
@@ -203,6 +221,14 @@ export class AnthropicAdapter implements ProviderAdapter {
       stream: true,
     };
     if (req.tools?.length) body.tools = encodeToolsAnthropic(req.tools);
+    // WP-06（CTX-020 工程不变量②）：扩展思维请求配置透传；缺省不发（M1 行为兼容）。
+    // adaptive→{type:"enabled"}（无 budget_tokens 锚点，[自定] 登记偏差）；budget→enabled+budget_tokens。
+    if (req.thinking) {
+      body.thinking =
+        req.thinking.type === "adaptive"
+          ? { type: "enabled" }
+          : { type: "enabled", budget_tokens: req.thinking.budgetTokens };
+    }
 
     const res = await withRetry(
       () =>

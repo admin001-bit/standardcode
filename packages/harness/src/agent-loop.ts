@@ -64,6 +64,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
     const req: LLMRequest = {
       model: opts.model,
       ...(opts.system ? { system: opts.system } : {}),
+      ...(opts.thinking ? { thinking: opts.thinking } : {}),
       messages: state.messages,
       tools: opts.tools?.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
       signal,
@@ -71,6 +72,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
 
     // —— L5 流式消费（iterator + abort 竞速：挂起的流也能被打断）——
     const blocks: ContentBlock[] = [];
+    let partialThinking = "";
     const toolCalls: ToolCall[] = [];
     const toolInputs = new Map<string, string>();
     const toolNames = new Map<string, string>();
@@ -109,7 +111,19 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           yield { type: "text_delta", text: ev.text };
           break;
         case "thinking_delta":
+          partialThinking += ev.thinking;
           yield { type: "thinking_delta", thinking: ev.thinking };
+          break;
+        case "thinking_end":
+          // WP-06（CTX-020 工程不变量①）：thinking 块入历史，signature 原样保留（签名丢失会被 API 拒绝）。
+          // adapter 未发 thinking_delta 的方言下 ev.thinking 自足承载全块文本；有 delta 流则取累积。
+          blocks.push({
+            type: "thinking",
+            thinking: ev.thinking || partialThinking,
+            ...(ev.thinkingSignature ? { signature: ev.thinkingSignature } : {}),
+          });
+          partialThinking = "";
+          yield { type: "thinking_end", thinking: ev.thinking, ...(ev.thinkingSignature ? { thinkingSignature: ev.thinkingSignature } : {}) };
           break;
         case "tool_start":
           toolNames.set(ev.id, ev.name);

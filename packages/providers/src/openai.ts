@@ -96,6 +96,15 @@ async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: Op
   const openTools = new Set<string>();
   const indexTools = new Map<number, string>();
   let reasoningSeen: "reasoning_content" | "reasoning" | null = null;
+  // WP-06（CTX-020）：reasoning 增量累积，块边界（首个内容/工具或 finish）发 thinking_end（无签名方言）
+  let reasoningText = "";
+  let reasoningOpen = false;
+  const closeThinking = function* (): Generator<LLMEvent> {
+    if (reasoningOpen) {
+      reasoningOpen = false;
+      yield { type: "thinking_end", thinking: reasoningText };
+    }
+  };
   for await (const frame of parseSse(body)) {
     if (frame.data === "[DONE]") break;
     let ev: any;
@@ -122,6 +131,7 @@ async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: Op
       yield { type: "message_start", id: ev.id ?? null, model: ev.model ?? "" };
     }
     const delta = choice.delta ?? {};
+    if ((delta.content || delta.tool_calls) && reasoningOpen) yield* closeThinking();
     if (delta.content) yield { type: "text_delta", text: delta.content };
     const useKey: "reasoning_content" | "reasoning" | null =
       dialect === "auto"
@@ -130,7 +140,11 @@ async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: Op
     if (dialect === "auto") reasoningSeen = useKey;
     const reasoning =
       useKey === "reasoning_content" ? delta.reasoning_content : useKey === "reasoning" ? delta.reasoning : undefined;
-    if (reasoning) yield { type: "thinking_delta", thinking: reasoning };
+    if (reasoning) {
+      reasoningOpen = true;
+      reasoningText += reasoning;
+      yield { type: "thinking_delta", thinking: reasoning };
+    }
     if (delta.tool_calls) {
       for (const tc of delta.tool_calls) {
         // 流式增量只带 index 不带 id：index→id 映射归因（与 Anthropic 侧 blockTools 同构）
@@ -151,6 +165,7 @@ async function* decodeOpenAIStream(body: ReadableStream<Uint8Array>, dialect: Op
       }
     }
     if (choice.finish_reason) {
+      yield* closeThinking();
       sawFinish = true;
       for (const id of openTools) yield { type: "tool_end", id };
       openTools.clear();

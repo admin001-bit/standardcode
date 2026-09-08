@@ -7,7 +7,8 @@
 
 1. **两族键位**：
    - **settings.json 族**（层级文件内，嵌套对象）：`schemaVersion`（信封，ENG-080）、`permissions.{allow,deny,ask}`（列表）、`additionalDirectories`（列表）、`providers.openai.models`（列表）、`providers.{anthropic,openai}.baseUrl`、`providers.default`、`model.default`、`memory.precedence`（MEM-044）、`memory.autoRead`（MEM-042/043）、`env.<NAME>`（注入进程 env）。M2 各卡消费到哪个键、该键即随卡进入实现；本 ADR 登记键位命名空间与语义，**不做前向虚构全集**。
-   - **`STANDARD_CODE_*` env 族**（§7.7 MDL-010~013 保留通道）：`STANDARD_CODE_MODEL` / `STANDARD_CODE_MODELS` / `STANDARD_CODE_PROVIDER` / `STANDARD_CODE_BASE_URL` / `STANDARD_CODE_SHELL` / `STANDARD_CODE_RIPGREP_PATH` / `STANDARD_CODE_AUTOCOMPACT_PCT_OVERRIDE`（WP-03 落地）。
+   - **`STANDARD_CODE_*` env 族**（§7.7 MDL-010~013 保留通道）：`STANDARD_CODE_MODEL` / `STANDARD_CODE_MODELS` / `STANDARD_CODE_PROVIDER` / `STANDARD_CODE_BASE_URL` / `STANDARD_CODE_SHELL` / `STANDARD_CODE_RIPGREP_PATH` / `STANDARD_CODE_AUTOCOMPACT_PCT_OVERRIDE`（WP-03 落地）/ `STANDARD_CODE_THINKING`（WP-06，值形 `adaptive` | `budget` | `budget:<tokens>` | `off`）。
+   - settings 族增补（WP-06 消费）：`model.thinking`（值形同上，env 逃逸舱同名覆盖）。
 2. **合并语义**：叶子键最高来源胜出（自末尾遍历首中即返，_704.js 同构）；**列表键跨层合并**（高→低拼接去重）；`env.*` 键注入进程 env 后**粘滞**——进程存活期不可 unset（省略/null 均不解除），同键更新允许（§7.7 原文的可操作化）。
 3. **managed 路径 Linux 档**：Q-3 只给 Windows/macOS，Linux 取 `/etc/standardcode/managed-settings.json`（POSIX 系统级配置惯例）`[自定]`。
 4. **容错**：坏 JSON / schemaVersion 不符 → 该来源跳过 + 告警，启动不拒（企业下发坏文件不应瘫痪 CLI，fail-open 限单文件、fail-closed 限安全语义——安全键消费方各自校验）。

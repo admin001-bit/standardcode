@@ -50,6 +50,8 @@ export type AgentEvent =
   | { type: "turn_start" }
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; thinking: string }
+  /** WP-06（CTX-020 工程不变量①）：thinking 块收束（signature 原样回传；harness 已将其入历史）。 */
+  | { type: "thinking_end"; thinking: string; thinkingSignature?: string }
   | { type: "tool_start"; id: string; name: string }
   | { type: "tool_result"; id: string; name: string; content: string; isError: boolean }
   | { type: "usage"; usage: TokenUsage }
@@ -63,6 +65,8 @@ export interface LoopOptions {
   provider: ProviderAdapter;
   model: string;
   system?: string;
+  /** WP-06（CTX-020）：扩展思维请求配置；缺省不发。 */
+  thinking?: { type: "adaptive" } | { type: "budget"; budgetTokens: number };
   messages: LLMMessage[];
   tools?: Tool[];
   /** 权限闸（WP-08）；缺省全放行。 */

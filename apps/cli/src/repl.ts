@@ -82,6 +82,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         model: s.model,
         // WP-02：记忆用户轨进 system（§7.1 Memory 段；loader 拼接文本原样传递）
         system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
+        // WP-06（CTX-020）：thinking 配置随每 turn 请求（缺省关闭不发）
+        thinking: s.thinking,
         messages: s.messages,
         tools: s.tools,
         // WP-09：guard-path 护栏（platform 实现；stop 硬停/confirm 升 ask——S-9 Auto 不豁免）

@@ -55,6 +55,11 @@ export interface LLMRequest {
   tools?: ToolDef[];
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * M2 WP-06：扩展思维请求配置（工程不变量②：压缩请求继承会话 thinking 配置——压缩构造方
+   * 原样带本字段即满足继承）。缺省=不向 Provider 发送 thinking 字段（与 M1 行为兼容）。
+   */
+  thinking?: { type: "adaptive" } | { type: "budget"; budgetTokens: number };
 }
 
 // §5.3(1) ProviderAdapter 接口三方法
