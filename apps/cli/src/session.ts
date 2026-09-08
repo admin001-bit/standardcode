@@ -8,7 +8,9 @@ import { AnthropicAdapter, OpenAIChatAdapter, type AnthropicModelEntry, type LLM
 import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
-import { applySettingsEnv, loadSettings, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { detectProjectWorkspace, loadMemory, type LoadedMemory, type MemoryPrecedence } from "@standardcode/context";
+import path from "node:path";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
 export { PERMISSION_MODES as PERMISSION_CYCLE } from "@standardcode/harness";
@@ -38,6 +40,8 @@ export interface Session {
   activeAbort: AbortController | null;
   /** 五来源合并结果（WP-01；/config 展示与 /reload 重载的消费点，WP-11）。 */
   settings: LoadedSettings;
+  /** 记忆用户轨（M2 WP-02：MEM-011 加载序+MEM-044 双读+@import；text 进 prompt-layout memory 分段）。 */
+  memory: LoadedMemory;
 }
 
 /** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
@@ -65,6 +69,8 @@ export interface SessionInit {
   flagOverrides?: Record<string, unknown>;
   /** 跨会话粘滞登记（settings 注入 env 不可 unset；省略则本会话新建）。 */
   settingsEnv?: SettingsEnvHandle;
+  /** 记忆加载覆写（测试/特殊装配）：inProject 缺省=MEM-043 检测（cwd 祖先链有 .git/.standardcode）。 */
+  memoryOptions?: { inProject?: boolean; relevantPaths?: string[] };
 }
 
 const ANTHROPIC_ENTRIES: Record<string, AnthropicModelEntry> = {
@@ -95,6 +101,18 @@ export function createSession(init: SessionInit = {}): Session {
   });
   const settingsEnv: SettingsEnvHandle = init.settingsEnv ?? { injected: new Set() };
   applySettingsEnv(settings, env, settingsEnv);
+
+  // 记忆用户轨（WP-02）：precedence/autoRead 自 settings（ADR-0030 memory.* 键）；MEM-043 项目工作区检测
+  const sessionCwd = init.cwd ?? process.cwd();
+  const memory = loadMemory({
+    cwd: sessionCwd,
+    ...(init.home !== undefined ? { home: init.home } : {}),
+    managedDir: path.dirname(managedSettingsPath(init.platform ?? process.platform, init.programData)),
+    inProject: init.memoryOptions?.inProject ?? detectProjectWorkspace(sessionCwd),
+    rulesEnabled: settingsValue<boolean>(settings, "memory.autoRead") ?? true,
+    precedence: (settingsValue<MemoryPrecedence>(settings, "memory.precedence") ?? "claude-first"),
+    ...(init.memoryOptions?.relevantPaths ? { relevantPaths: init.memoryOptions.relevantPaths } : {}),
+  });
 
   const providerDefault = settingsValue<string>(settings, "providers.default");
   let providerName = (init.providerName ?? env.STANDARD_CODE_PROVIDER ?? providerDefault ?? "anthropic").toLowerCase();
@@ -144,6 +162,7 @@ export function createSession(init: SessionInit = {}): Session {
     exitRequested: false,
     activeAbort: null,
     settings,
+    memory,
   };
 }
 
