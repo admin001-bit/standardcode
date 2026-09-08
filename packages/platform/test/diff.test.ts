@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { diffLines, unifiedDiff, sessionDiff } from "../src/diff.ts";
 import { FileHistoryStoreImpl } from "../src/file-history.ts";
 
@@ -12,25 +13,25 @@ function tmp(): string {
 
 describe("diffLines（LCS）", () => {
   it("纯增/纯删/相同→空差异；交错变更 hunk 正确", () => {
-    expect(diffLines([], ["a"])).toEqual([{ op: "add", text: "a" }]);
-    expect(diffLines(["a"], [])).toEqual([{ op: "del", text: "a" }]);
+    expect(diffLines([], ["a"])).toEqual([{ op: "add", text: "a", bIdx: 0 }]);
+    expect(diffLines(["a"], [])).toEqual([{ op: "del", text: "a", aIdx: 0 }]);
     expect(diffLines(["a", "b"], ["a", "b"])).toEqual([
-      { op: "ctx", text: "a" },
-      { op: "ctx", text: "b" },
+      { op: "ctx", text: "a", aIdx: 0, bIdx: 0 },
+      { op: "ctx", text: "b", aIdx: 1, bIdx: 1 },
     ]);
     const d = diffLines(["a", "x", "c"], ["a", "y", "c"]);
     expect(d).toEqual([
-      { op: "ctx", text: "a" },
-      { op: "del", text: "x" },
-      { op: "add", text: "y" },
-      { op: "ctx", text: "c" },
+      { op: "ctx", text: "a", aIdx: 0, bIdx: 0 },
+      { op: "del", text: "x", aIdx: 1 },
+      { op: "add", text: "y", bIdx: 1 },
+      { op: "ctx", text: "c", aIdx: 2, bIdx: 2 },
     ]);
   });
 
   it("公共前后缀削减：中间变更不影响首尾 ctx", () => {
     const d = diffLines(["h1", "h2", "old", "t1"], ["h1", "h2", "new", "t1"]);
-    expect(d[0]).toEqual({ op: "ctx", text: "h1" });
-    expect(d[d.length - 1]).toEqual({ op: "ctx", text: "t1" });
+    expect(d[0]).toMatchObject({ op: "ctx", text: "h1", aIdx: 0, bIdx: 0 });
+    expect(d[d.length - 1]).toMatchObject({ op: "ctx", text: "t1", aIdx: 3, bIdx: 3 });
   });
 });
 
@@ -51,6 +52,70 @@ describe("unifiedDiff", () => {
     expect(add).toContain("+l1");
     const del = unifiedDiff("d.txt", "x\n", "d.txt", "");
     expect(del).toContain("-x");
+  });
+});
+
+describe("unifiedDiff hunk 组装回归（V 第二轮退回三形态）", () => {
+  it("T8 常见形态：20 行文件改末行 → 单 hunk @@ -17,4 +17,4 @@", () => {
+    const a = Array.from({ length: 20 }, (_, i) => `L${i + 1}`).join("\n");
+    const b = a.replace("L20", "XX");
+    const out = unifiedDiff("f.txt", a, "f.txt", b);
+    expect(out).toContain("@@ -17,4 +17,4 @@");
+    expect(out).not.toContain("@@ -29"); // 行号越界（初版缺陷）
+    expect((out.match(/^@@/gm) ?? []).length).toBe(1); // 单 hunk（初版 5 个伪 hunk）
+    expect(out).toContain("-L20");
+    expect(out).toContain("+XX");
+    expect(out).toContain(" L17");
+  });
+
+  it("M1 变更间恰 7 行 ctx → 两 hunk 无重叠（各含 3 行边界 ctx）", () => {
+    const a = ["c1", "old", ...Array.from({ length: 7 }, (_, i) => `g${i + 1}`), "old2", "c9"].join("\n");
+    const b = a.replace("old", "new").replace("old2", "new2");
+    const out = unifiedDiff("f.txt", a, "f.txt", b);
+    const heads = (out.match(/@@ -\d+,\d+ \+\d+,\d+ @@/g) ?? []);
+    expect(heads.length).toBe(2);
+    // 行号解析无重叠：hunk2 起点在 hunk1 终点之后
+    const [h1a, h2a] = heads.map((h) => Number(/@@ -(\d+)/.exec(h)![1]!));
+    const [h1n] = [Number(/@@ -\d+,(\d+)/.exec(heads[0]!)![1]!)];
+    expect(h2a).toBeGreaterThanOrEqual(h1a + h1n);
+  });
+
+  it("T2 尾随 ctx >3 → 保留恰 3 行（初版整段丢失）", () => {
+    const a = ["old", "l1", "l2", "l3", "l4", "l5", "l6", "l7"].join("\n");
+    const b = ["new", "l1", "l2", "l3", "l4", "l5", "l6", "l7"].join("\n");
+    const out = unifiedDiff("f.txt", a, "f.txt", b);
+    expect(out).toContain(" l1");
+    expect(out).toContain(" l2");
+    expect(out).toContain(" l3");
+    expect(out).not.toContain(" l4"); // 尾随 ctx cap=3（l1..l3）：l4..l7 丢弃
+  });
+
+  it("git --no-index oracle 对质（三形态 body 一致；无 git 环境跳过）", () => {
+    const g = spawnSync("git", ["--version"], { encoding: "utf8" });
+    if (g.status !== 0) return; // 无 git 环境跳过
+    const dir = tmp();
+    const NL = String.fromCharCode(10);
+    try {
+      const cases: Array<{ name: string; a: string; b: string }> = [
+        { name: "t8", a: Array.from({ length: 20 }, (_, i) => `L${i + 1}`).join(NL) + NL, b: Array.from({ length: 20 }, (_, i) => (i === 19 ? "XX" : `L${i + 1}`)).join(NL) + NL },
+        { name: "gap7", a: ["c1", "old", "g1", "g2", "g3", "g4", "g5", "g6", "g7", "old2", "c9"].join(NL) + NL, b: ["c1", "new", "g1", "g2", "g3", "g4", "g5", "g6", "g7", "new2", "c9"].join(NL) + NL },
+        { name: "tail3", a: ["old", "l1", "l2", "l3", "l4", "l5", "l6", "l7"].join(NL) + NL, b: ["new", "l1", "l2", "l3", "l4", "l5", "l6", "l7"].join(NL) + NL },
+      ];
+      for (const c of cases) {
+        const fa = path.join(dir, `${c.name}-a.txt`);
+        const fb = path.join(dir, `${c.name}-b.txt`);
+        writeFileSync(fa, c.a, "utf8");
+        writeFileSync(fb, c.b, "utf8");
+        const r = spawnSync("git", ["diff", "--no-index", "--", fa, fb], { encoding: "utf8" });
+        const gitBody = (r.stdout ?? "").split(NL).map((l) => l.replace(/\r$/, "")).filter((l) => !/^(diff --git|index |--- |\+\+\+ )/.test(l)).join(NL).trim();
+        const ours = unifiedDiff(fa, c.a, fb, c.b).split(NL).slice(2).join(NL).trim();
+        // git 的 hunk 头带"变更前一行"函数上下文（@@ ... @@ L16）；[CC] 口径，我们无此前缀——对质剥 git 的函数上下文
+        const gitNorm = gitBody.replace(/^(@@ [^@]*@@).*$/gm, "$1");
+        expect(ours).toBe(gitNorm); // 逐字对质（@@ 头剥函数上下文后 + body）
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

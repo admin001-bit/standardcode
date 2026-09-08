@@ -73,3 +73,38 @@ describe("命令注册（M1 最小集+M2 WP-09 增量；§8.2 分期，B-03 只�
     expect(session.exitRequested).toBe(true);
   });
 });
+
+describe("/diff（WP-09 rework：自实现引擎 over file-history）", () => {
+  it("有变更→unified 输出含 ±行；无快照→提示（S-10 脱敏保留）", async () => {
+    const base = mkdtempSync(path.join(tmpdir(), "sc-diffcmd-"));
+    const proj = mkdtempSync(path.join(tmpdir(), "sc-diffproj-"));
+    try {
+      const f = path.join(proj, "a.txt");
+      writeFileSync(f, "v0\n", "utf8");
+      const store = await FileHistoryStoreImpl.create(proj, base);
+      await store.snapshot("Write", f);
+      writeFileSync(f, "my key sk-abc123def456ghij\nv1\n", "utf8");
+      const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: proj });
+      const out: string[] = [];
+      const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (x) => out.push(x), close: () => {} }, fileHistory: store };
+      const ctx = createCommandContext(deps);
+      const diffCmd = CLI_COMMANDS.find((c) => c.name === "diff")!;
+      await diffCmd.execute("", ctx);
+      const joined = out.join("\n");
+      expect(joined).toContain("-v0");
+      expect(joined).toContain("+v1");
+      expect(joined).toContain("[REDACTED]"); // S-10
+      expect(joined).not.toContain("sk-abc123def456ghij");
+      // 无快照会话
+      const store2 = await FileHistoryStoreImpl.create(mkdtempSync(path.join(tmpdir(), "sc-diffcmd2-")), mkdtempSync(path.join(tmpdir(), "sc-diffproj2-")));
+      const out2: string[] = [];
+      const deps2: ReplDeps = { session, io: { lines: (async function* () {})(), write: (x) => out2.push(x), close: () => {} }, fileHistory: store2 };
+      await createCommandContext(deps2).sessionDiff();
+      await diffCmd.execute("", createCommandContext(deps2));
+      expect(out2.join("\n")).toContain("no file-history snapshots");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+});
