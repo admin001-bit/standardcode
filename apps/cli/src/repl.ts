@@ -8,6 +8,7 @@ import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, type FileHistoryStore } from "@standardcode/platform";
+import { buildContextGrid, renderContextGrid } from "@standardcode/context";
 import { runCompaction } from "@standardcode/context";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
@@ -53,6 +54,18 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     sessionDiff: async () => {
       if (!deps.fileHistory) return { output: "", changed: 0, scanned: 0, skipped: [] };
       return sessionDiff(deps.fileHistory);
+    },
+    contextGrid: () => {
+      const caps = s.provider.capabilities(s.model);
+      const grid = buildContextGrid({
+        window: caps.contextWindow,
+        systemChars: s.memory.text.length,
+        toolsChars: s.tools.reduce((acc, t) => acc + t.description.length, 0),
+        memoryChars: s.memory.files.reduce((acc, f) => acc + f.raw.length, 0),
+        messages: s.messages,
+        usage: s.meter.snapshot(),
+      });
+      return { text: renderContextGrid(grid) };
     },
     rewind: async (seq) => {
       if (!deps.fileHistory) throw new Error("file-history unavailable（/rewind 需要 file-history store）");

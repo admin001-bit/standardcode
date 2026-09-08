@@ -2,6 +2,7 @@
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-10/11 增其余。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import { sessionDiff, redactSecrets } from "@standardcode/platform";
+import { buildContextGrid, renderContextGrid } from "@standardcode/context";
 
 export interface CommandContext {
   catalog(): readonly string[];
@@ -13,6 +14,8 @@ export interface CommandContext {
   snapshotCount(): number;
   /** 会话文件变更面 diff（WP-09 rework：自实现引擎 over file-history；store 缺席=空结果）。 */
   sessionDiff(): Promise<{ output: string; changed: number; scanned: number; skipped: string[] }>;
+  /** /context 网格数据（WP-05 CTX-038：分类占用+33k buffer+usage 四列对账）。 */
+  contextGrid(): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -106,6 +109,13 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
       const r = await ctx.rewind(n);
       const files = r.undone > 0 ? "\n  " + r.files.join("\n  ") : "";
       ctx.write(`[rewind] restored to before snapshot ${n}: ${r.undone} file(s) reverted${files}`);
+    },
+  },
+  {
+    name: "context",
+    description: "show context window breakdown with real usage reconciliation (CTX-038; ADR-0027)",
+    execute(_args, ctx) {
+      ctx.write(ctx.contextGrid().text);
     },
   },
   {
