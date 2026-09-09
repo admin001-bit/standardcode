@@ -1,5 +1,5 @@
 // M1 五命令（v2.8 §8.2 M1 最小集）+ M2 增量（§8.2 M2 分期，B-03 只注册本里程碑命令）：
-// WP-09 增 /rewind /diff（EXE-030/040/041）；WP-10/11 增其余。
+// WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增其余。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import { sessionDiff, redactSecrets } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
@@ -25,6 +25,12 @@ export interface CommandContext {
   setPermissionMode(mode: PermissionMode): void;
   clearHistory(): void;
   requestExit(): void;
+  /** WP-10（CTX-101 交接终点）：开新会话，旧 transcript 完好可 /resume。 */
+  newSession(): Promise<void>;
+  /** WP-10（UI-030）：会话选择器（搜索+预览+重命名），恢复选中的会话；返回是否恢复。 */
+  resumeSession(): Promise<boolean>;
+  /** WP-10：当前会话重命名（sidecar 标题；/resume 列表即时反映）。 */
+  renameSession(title: string): Promise<void>;
   write(line: string): void;
 }
 
@@ -132,6 +138,30 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
       if (out.length > 30_000) out = out.slice(0, 30_000) + "\n[output truncated]";
       const tail = out.endsWith("\n") ? out : out + "\n";
       ctx.write(`[diff] ${r.changed} file(s) changed (${r.scanned} scanned${r.skipped.length > 0 ? `, ${r.skipped.length} skipped: ${r.skipped.join(", ")}` : ""})\n${tail}`);
+    },
+  },
+  {
+    name: "new",
+    description: "start a new session (previous transcript stays intact and resumable, CTX-101)",
+    async execute(_args, ctx) {
+      await ctx.newSession();
+    },
+  },
+  {
+    name: "resume",
+    usage: "[query]",
+    description: "pick a past session (search + preview) and restore it (UI-030)",
+    async execute(_args, ctx) {
+      await ctx.resumeSession();
+    },
+  },
+  {
+    name: "rename",
+    usage: "<title>",
+    description: "rename the current session (shows in /resume list)",
+    async execute(args, ctx) {
+      await ctx.renameSession(args);
+      ctx.write(`[rename] session renamed`);
     },
   },
 ];

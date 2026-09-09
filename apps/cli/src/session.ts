@@ -25,6 +25,8 @@ export const PERMISSION_LABEL: Record<PermissionMode, string> = {
 };
 
 export interface Session {
+  /** 当前会话 ID（WP-10：转录文件名+锁键+/resume 目标；repl 初始化时赋 UUID）。 */
+  id: string;
   provider: ProviderAdapter;
   providerName: string;
   /** /model 可切目录（WP-01 adapter 模型目录投影）。 */
@@ -210,6 +212,7 @@ export function createSession(init: SessionInit = {}): Session {
   const model = init.model ?? env.STANDARD_CODE_MODEL ?? modelDefault ?? catalog[0];
   if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL or settings model.default");
   return {
+    id: "",
     provider,
     providerName,
     catalog,

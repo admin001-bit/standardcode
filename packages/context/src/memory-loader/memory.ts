@@ -371,10 +371,19 @@ export function loadMemory(opts: LoadMemoryOptions): LoadedMemory {
   return { text: paras.join("\n\n"), files: kept, deniedImports: state.denied, warnings: state.warnings };
 }
 
-/** MEM-043 检测：cwd 及祖先存在 .git 或 .standardcode → 项目工作区。 */
+/**
+ * MEM-043 检测：cwd 及祖先存在 .git 或 .standardcode → 项目工作区。
+ * 【勘误 2026-09-09 WP-10 会话探针】扫描止于用户家目录（含 home、不含其上）：~/.standardcode 是用户级
+ * 布局常驻目录（§9.1），若把 home 之上的祖先继续扫（Windows temp 常在 home 外盘符根下不适用，但
+ * home 位于链内时 home 的 .standardcode 会污染其下所有 cwd 的判定）→ home 层只认 .git 标记，
+ * home 之上不扫。cwd=home 时亦仅 .git 生效。
+ */
 export function detectProjectWorkspace(cwd: string, readFile: typeof readFileSync = readFileSync): boolean {
-  for (const dir of ancestorChain(cwd)) {
-    for (const marker of [".git", ".standardcode"]) {
+  const home = path.resolve(homedir());
+  for (const dir of [...ancestorChain(cwd)].reverse()) {
+    // 自 cwd 向上；home 层只认 .git（~/.standardcode=用户级布局非项目标记），home 之上不扫
+    const markers = dir === home ? ([".git"] as const) : ([".git", ".standardcode"] as const);
+    for (const marker of markers) {
       try {
         readdirSync(path.join(dir, marker));
         return true;
@@ -382,6 +391,7 @@ export function detectProjectWorkspace(cwd: string, readFile: typeof readFileSyn
         /* 不存在 */
       }
     }
+    if (dir === home) break;
     void readFile;
   }
   return false;

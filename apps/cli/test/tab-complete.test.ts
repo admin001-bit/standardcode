@@ -12,7 +12,7 @@ describe("completeInput (UI-001)", () => {
 
   it("多义前缀 → 候选列表；单命令前缀 → 唯一补全", () => {
     const c = completeInput("/", CLI_COMMANDS);
-    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff"]);
+    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff", "/new", "/resume", "/rename"]);
     const c2 = completeInput("/e", CLI_COMMANDS); // 恰一命令以 e 开头
     expect(c2.insert).toBe("/exit ");
     expect(c2.candidates).toEqual([]);

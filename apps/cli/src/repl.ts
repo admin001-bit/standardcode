@@ -1,9 +1,13 @@
 // L0 REPL（§5.1 L0：输入模式分发 · 渲染 · 中断；四模式见 input-modes.ts，五命令见 commands.ts）。
+// WP-10：会话命令 /new /resume /rename + WP-08 设施真实接入（SessionLock+ResilientTranscriptWriter——
+// 该两件 WP-08 复验登记"零生产消费者，真实接入=WP-10"）。
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runAgentLoop } from "@standardcode/harness";
 import { checkToolInput as guardCheck } from "@standardcode/platform";
+import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
 import type { Session } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
@@ -30,12 +34,75 @@ export interface ReplDeps {
   fileHistory?: FileHistoryStore;
   /** 确认 UI（WP-07；main.ts TTY 装配/测试注入；缺席=ask 保持 fail-closed 拒绝，SEC-020）。 */
   confirm?: ConfirmPrompt;
+  /** ~/.standardcode 基目录覆写（测试隔离；缺省真实家目录）。 */
+  baseDir?: string;
+  /** /resume 选择器（WP-10；测试注入桩/非交互=不可用报错）。 */
+  sessionPicker?: SessionPicker;
+}
+
+/** UI-030 会话选择器最小接口（列表→用户选择；搜索/预览/重命名交互在 picker 实现内）。 */
+export interface SessionPicker {
+  pick(entries: SessionIndexEntry[]): Promise<SessionIndexEntry | null>;
+}
+
+/** 会话资产（WP-08 设施真实接入：锁+脱敏转录 writer；/new /resume 时随会话切换）。 */
+interface SessionAssets {
+  sessionId: string;
+  lock: SessionLock;
+  writer: ResilientTranscriptWriter;
+}
+
+/** 会话资产存放（模块级 WeakMap 按deps.session 实例跟踪；switchSession 原位换 deps.session 内容）。 */
+const sessionAssets = new WeakMap<object, SessionAssets>();
+
+function currentSessionMeta(deps: ReplDeps): { sessionId: string } {
+  const assets = sessionAssets.get(deps.session);
+  return { sessionId: assets?.sessionId ?? deps.session.id };
+}
+
+/** 开新会话资产（锁+writer）；失败不阻断（转录降级为无落盘会话，告警一次）。 */
+async function createSessionAssets(deps: ReplDeps, sessionId: string): Promise<SessionAssets | null> {
+  try {
+    const baseDirArgs = deps.baseDir ? [deps.baseDir] : [];
+    const lock = await SessionLock.acquire(deps.session.cwd, sessionId, ...baseDirArgs);
+    const writer = await ResilientTranscriptWriter.create(deps.session.cwd, sessionId, ...baseDirArgs);
+    return { sessionId, lock, writer };
+  } catch (err) {
+    deps.io.write(`[session] transcript unavailable (${err instanceof Error ? err.message : String(err)}) — session continues without persistence\n`);
+    return null;
+  }
+}
+
+/**
+ * 会话切换（/new：全新；/resume：恢复历史并接续追加）。
+ * 实现=原位改写 deps.session 的可变字段（identity 不换——runRepl 闭包持有同一对象）；旧锁释放、旧 writer 弃用。
+ * resume 用既有 transcript 文件（sessionId 复用=接续追加；skipResumeWrite=恢复消息不重写回转录）。
+ */
+async function switchSession(deps: ReplDeps, opts?: { sessionId: string; messages?: Session["messages"]; skipResumeWrite?: boolean }): Promise<void> {
+  const s = deps.session;
+  const old = sessionAssets.get(s);
+  if (old) await old.lock.release().catch(() => {});
+  s.messages = opts?.messages ? [...opts.messages] : [];
+  s.exitRequested = false;
+  s.meter = new (Object.getPrototypeOf(s.meter).constructor)();
+  const sessionId = opts?.sessionId ?? randomUUID();
+  const assets = await createSessionAssets(deps, sessionId);
+  if (assets) sessionAssets.set(s, assets);
+  if (!opts?.skipResumeWrite && assets && s.messages.length === 0) {
+    // /new：新会话开场记录（首条 user 由后续 turn 追加）
+  }
+}
+
+/** 转录追加（fire-and-forget；写入失败已由 Resilient 层降级，不阻断会话）。 */
+function transcriptAppend(deps: ReplDeps, rec: Parameters<ResilientTranscriptWriter["append"]>[0]): void {
+  const assets = sessionAssets.get(deps.session);
+  if (!assets) return;
+  void assets.writer.append(rec).catch(() => {});
 }
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
   const s = deps.session;
-  return {
-    catalog: () => s.catalog,
+  return {    catalog: () => s.catalog,
     currentModel: () => s.model,
     switchModel: (name) => {
       if (!s.catalog.includes(name)) throw new Error(`unknown model: ${name}（可用：${s.catalog.join(", ")}）`);
@@ -74,11 +141,47 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       if (!deps.fileHistory) throw new Error("file-history unavailable（/rewind 需要 file-history store）");
       return deps.fileHistory.rewindTo(seq);
     },
+    // —— WP-10 会话命令（CTX-101 交接终点/UI-030）——
+    newSession: () => {
+      // 旧 transcript 完好（append-only 不动）；锁随旧会话释放；新 sessionId 新 writer 新锁
+      return switchSession(deps);
+    },
+    resumeSession: async () => {
+      const { sessions } = await listSessions(deps.session.cwd, deps.baseDir);
+      if (sessions.length === 0) {
+        deps.io.write("[resume] no sessions recorded for this project\n");
+        return false;
+      }
+      if (!deps.sessionPicker) {
+        deps.io.write("[resume] interactive picker unavailable（非交互环境；索引如下）\n");
+        for (const e of sessions) deps.io.write(`  ${e.sessionId.slice(0, 8)}  ${e.title || "(no title)"}  (${e.messageCount} msgs, last ${e.lastActivityAt ?? "?"})\n`);
+        return false;
+      }
+      const chosen = await deps.sessionPicker.pick(sessions);
+      if (!chosen) {
+        deps.io.write("[resume] cancelled\n");
+        return false;
+      }
+      const r = await resumeFrom(chosen.filePath);
+      await switchSession(deps, { sessionId: chosen.sessionId, messages: r.messages, skipResumeWrite: true });
+      deps.io.write(`[resume] ${chosen.sessionId.slice(0, 8)} — ${chosen.title || "(no title)"}：${r.messages.length} message(s) restored${r.lastReason ? `（上次终态 ${r.lastReason}）` : ""}\n`);
+      return true;
+    },
+    renameSession: async (title) => {
+      const session = currentSessionMeta(deps);
+      if (!title.trim()) throw new Error("/rename <title>: title required");
+      await renameSessionTitle(deps.session.cwd, session.sessionId, title, deps.baseDir);
+    },
     write: deps.io.write,
   };
 }
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
+  // WP-10：会话资产初始化（锁+转录；新会话在此建立——/resume 前的默认会话亦有落盘）
+  const s0 = deps.session;
+  s0.id = randomUUID();
+  const assets = await createSessionAssets(deps, s0.id);
+  if (assets) sessionAssets.set(s0, assets);
   const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
   for await (const raw of deps.io.lines) {
     const line = raw.trim();
@@ -94,17 +197,23 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
       await runSlash(deps, commands, parsed.name, parsed.args);
     }
     if (deps.session.exitRequested) {
+      const old = sessionAssets.get(deps.session);
+      if (old) await old.lock.release().catch(() => {});
       deps.io.close();
       return;
     }
   }
+  const old = sessionAssets.get(deps.session);
+  if (old) await old.lock.release().catch(() => {});
   deps.io.close();
 }
 
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
+  transcriptAppend(deps, { kind: "user_message", message: { role: "user", content: [{ type: "text", text }] } });
   s.activeAbort = new AbortController();
+  let doneReason: string | null = null;
   try {
     const final = await renderTurn(
       runAgentLoop({
@@ -195,9 +304,16 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       }),
       deps.io.write,
       s.meter,
+      { onDone: (reason) => (doneReason = reason) },
     );
     s.messages = final.messages;
+    // WP-10：assistant 消息与 done 终态入转录（最后一对 user/assistant 之后的全部 assistant 块）
+    for (const m of final.messages) {
+      if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
+    }
+    transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
   } catch (err) {
+    transcriptAppend(deps, { kind: "done", reason: "error" });
     deps.io.write(`\n[error] ${err instanceof Error ? err.message : String(err)}\n`);
   } finally {
     s.activeAbort = null;

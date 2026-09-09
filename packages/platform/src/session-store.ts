@@ -6,7 +6,7 @@
 // 磁盘满降级（§13 行 10 统一矩阵的落盘路径切片）：ENOSPC/EDQUOT → 写失败不抛、降级内存缓冲+告警一次，
 // 会话继续（transcript 缺口登记于 writer.degraded）。
 
-import { open, mkdir, readdir, readFile, chmod, unlink } from "node:fs/promises";
+import { open, mkdir, readdir, readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { readTranscript, transcriptsDir, SCHEMA_VERSION } from "./transcripts.ts";
@@ -123,7 +123,10 @@ export interface SessionIndexEntry {
   lastReason: string | null;
 }
 
-/** 枚举同项目全部转录（/resume 列表；坏文件跳过计数）。 */
+/**
+ * 枚举同项目全部转录（/resume 列表；坏文件跳过计数）。
+ * 标题优先级：rename sidecar（<sessionId>.meta.json，WP-10 /rename 写入）> 首条 user 前 80 字。
+ */
 export async function listSessions(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): Promise<{ sessions: SessionIndexEntry[]; skippedMalformed: number }> {
   const dir = transcriptsDir(projectRoot, baseDir);
   let names: string[];
@@ -143,10 +146,19 @@ export async function listSessions(projectRoot: string, baseDir = path.join(home
     const firstUser = records.find((r) => r.kind === "user_message");
     const titleText = firstUser?.message?.content.find((b) => b.type === "text");
     const doneRecs = records.filter((r) => r.kind === "done");
+    const sessionId = name.slice(0, -".jsonl".length);
+    let title = (titleText && titleText.type === "text" ? titleText.text : "").slice(0, 80);
+    const sidecar = path.join(dir, `${sessionId}.meta.json`);
+    try {
+      const meta = JSON.parse(await readFile(sidecar, "utf8")) as { title?: unknown };
+      if (typeof meta.title === "string" && meta.title.trim() !== "") title = meta.title.trim();
+    } catch {
+      // 无 sidecar=用推导标题（常态）
+    }
     sessions.push({
-      sessionId: name.slice(0, -".jsonl".length),
+      sessionId,
       filePath,
-      title: (titleText && titleText.type === "text" ? titleText.text : "").slice(0, 80),
+      title,
       startedAt: records[0]!.ts,
       lastActivityAt: records[records.length - 1]!.ts,
       messageCount: msgs.length,
@@ -154,6 +166,13 @@ export async function listSessions(projectRoot: string, baseDir = path.join(home
     });
   }
   return { sessions, skippedMalformed };
+}
+
+/** WP-10 /rename：标题写 sidecar（append-only 转录不改写；sidecar 覆盖式=标题唯一权威）。 */
+export async function renameSessionTitle(projectRoot: string, sessionId: string, title: string, baseDir = path.join(homedir(), ".standardcode")): Promise<void> {
+  const dir = transcriptsDir(projectRoot, baseDir);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, `${sessionId}.meta.json`), JSON.stringify({ title: title.trim() }) + "\n", "utf8");
 }
 
 // —— 脱敏写入器（TranscriptWriter 组合层）——

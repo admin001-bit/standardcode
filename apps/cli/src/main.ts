@@ -4,16 +4,35 @@ import { readFileSync } from "node:fs";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
 import { CLI_COMMANDS } from "./commands.ts";
-import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink } from "@standardcode/platform";
+import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink, type SessionIndexEntry } from "@standardcode/platform";
 import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
 
 const VERSION = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
-/** WP-07：一次一行提问（rl 复用 REPL 输入流；TUI 化随 WP-11 矩阵 [自定]）。 */
-async function askLine(rl: import("node:readline").Interface, question: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => resolve(answer));
-  });
+/**
+ * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
+ * waiter 队列优先消费，提问答案不进命令流（rl.question 与 async iterator 并挂会双吃的坑）。
+ */
+function createLineRouter(rl: import("node:readline").Interface) {
+  const waiters: ((line: string) => void)[] = [];
+  return {
+    askLine(question: string): Promise<string> {
+      process.stdout.write(question);
+      return new Promise((resolve) => {
+        waiters.push((line) => resolve(line));
+      });
+    },
+    lines: (async function* () {
+      for await (const raw of rl) {
+        const w = waiters.shift();
+        if (w) {
+          w(raw);
+          continue;
+        }
+        yield raw;
+      }
+    })(),
+  };
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -22,19 +41,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1;
     return;
   }
+  const rl = createInterface({
+    input: process.stdin,
+    completer: completerFor(CLI_COMMANDS), // UI-001
+  });
+  const router = createLineRouter(rl);
   // WP-07（UI-061）：启动信任对话框——非 TTY/已信任跳过；接受以 git 仓库根为密钥写 trust store。
-  const rlPre = createInterface({ input: process.stdin });
   if (process.stdin.isTTY) {
     const workdir = process.cwd();
     if (!isTrusted(workdir)) {
       const repoRoot = findGitRoot(workdir);
       const symlinkFlagged = isNativeDirSymlink(workdir);
-      const answer = await askLine(rlPre, trustQuestion(workdir, repoRoot, symlinkFlagged));
+      const answer = await router.askLine(trustQuestion(workdir, repoRoot, symlinkFlagged));
       if (parseTrustAnswer(answer)) acceptTrust(workdir);
       else process.stdout.write("[trust] proceeding without trust — shared settings stay gated (deny/ask still apply)\n");
     }
   }
-  rlPre.close();
   let session;
   try {
     session = createSession();
@@ -52,16 +74,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   } catch {
     process.stdout.write("[file-history] store unavailable — /rewind disabled\n");
   }
-  const rl = createInterface({
-    input: process.stdin,
-    completer: completerFor(CLI_COMMANDS), // UI-001
-  });
-  // WP-07 确认 UI 最小流：ask → 行内三选（y/a/n）；非 TTY 无 confirm（ask 保持 fail-closed 拒绝，SEC-020）。
+  // WP-07 确认 UI 最小流 + WP-10 /resume 选择器：共用行路由（提问答案不进命令流）。
   const ttyConfirm = process.stdin.isTTY
     ? {
         async confirm(toolLabel: string, detail: string): Promise<ConfirmChoice> {
-          const answer = await askLine(rl, confirmQuestion(toolLabel, detail));
-          return parseConfirmAnswer(answer);
+          return parseConfirmAnswer(await router.askLine(confirmQuestion(toolLabel, detail)));
+        },
+      }
+    : undefined;
+  const sessionPicker = process.stdin.isTTY
+    ? {
+        async pick(entries: SessionIndexEntry[]): Promise<SessionIndexEntry | null> {
+          if (entries.length === 0) return null;
+          entries.forEach((e, i) => process.stdout.write(`  ${i + 1}. ${e.title || "(no title)"}  (${e.messageCount} msgs, last ${e.lastActivityAt ?? "?"})\n`));
+          const raw = await router.askLine("resume # (1-based, empty to cancel): ");
+          const n = Number(raw.trim());
+          if (!Number.isInteger(n) || n < 1 || n > entries.length) return null;
+          return entries[n - 1]!;
         },
       }
     : undefined;
@@ -86,8 +115,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   process.stdout.write(`standardcode ${VERSION} — /help 查看命令，/exit 退出\n`);
   await runRepl({
     session,
-    io: { lines: rl, write: (s) => process.stdout.write(s), close: () => rl.close() },
+    io: { lines: router.lines, write: (s) => process.stdout.write(s), close: () => rl.close() },
     fileHistory,
     confirm: ttyConfirm,
+    sessionPicker,
   });
 }

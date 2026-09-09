@@ -7,6 +7,7 @@ export async function renderTurn(
   events: AsyncGenerator<AgentEvent, TurnState, unknown>,
   write: (s: string) => void,
   meter: UsageMeter,
+  hooks?: { onDone?(reason: string): void },
 ): Promise<TurnState> {
   const it = events[Symbol.asyncIterator]();
   let sawText = false;
@@ -57,6 +58,7 @@ export async function renderTurn(
         write("\n[context exhausted — start a new session (CTX-101)]\n");
         break;
       case "done":
+        hooks?.onDone?.(ev.reason); // WP-10：终态入转录（resume 等价断言面）
         if (ev.reason !== "end") write(`[done: ${ev.reason}]\n`);
         break;
       default:
