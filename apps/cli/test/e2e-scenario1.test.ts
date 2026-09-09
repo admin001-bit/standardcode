@@ -143,7 +143,7 @@ describe("E2E ① 20+ 文件重构中途装依赖（无后台任务等价断言�
     for (const e of events) expect(["turn_start", "text_delta", "tool_start", "tool_result", "usage", "finish", "done"]).toContain(e.type);
 
     // ② 无悬空 tool_use（协议硬不变量，全程开启）——基于 loop 终态历史全量核对（E2E③ countDangling 同口径）
-    const toolUseIds = finalMessages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((c): c is { type: "tool_use"; id: string } => (c as { type: string }).type === "tool_use").map((c) => c.id) : []));
+    const toolUseIds = finalMessages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((c): c is Extract<typeof c, { type: "tool_use" }> => (c as { type: string }).type === "tool_use").map((c) => c.id) : []));
     const resultIds = new Set(results.map((r) => r.id));
     expect(toolUseIds).toHaveLength(FILE_COUNT + 1); // 22 Write+1 Bash
     for (const id of toolUseIds) expect(resultIds.has(id)).toBe(true);
