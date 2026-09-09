@@ -311,11 +311,14 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       { onDone: (reason) => (doneReason = reason) },
     );
     s.messages = final.messages;
-    // WP-10 R1 修复（V 退回 2026-09-09）：仅追加本轮新增的 assistant 块（原版全量遍历→第 N 轮重复写 N 条
-    // assistant，转录重建≠活体终态）。压缩发生（长度回缩）时本轮无新增可记——转录缺口登记于 done 前。
+    // WP-10 R1 修复（V 退回 2026-09-09）：仅追加本轮新增的消息块（原版全量遍历→第 N 轮重复写 N 条
+    // assistant，转录重建≠活体终态）。压缩发生（长度回缩）时本轮无新增可记。
+    // R3 修复（复验发现）：user(tool_result) 同样入转录——缺失即悬空 tool_use（协议硬不变量），
+    // 含工具会话 /resume 后首 turn 必抛；M1 E2E③ 先例形制（tool_result 写入转录）。
     if (final.messages.length >= preTurnLength) {
       for (const m of final.messages.slice(preTurnLength)) {
         if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
+        else if (m.role === "user") transcriptAppend(deps, { kind: "user_message", message: m });
       }
     }
     transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
