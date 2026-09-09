@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runAgentLoop } from "@standardcode/harness";
 import { checkToolInput as guardCheck } from "@standardcode/platform";
@@ -14,7 +14,7 @@ import { parseInput } from "./input-modes.ts";
 import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
-import { runCompaction } from "@standardcode/context";
+import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig } from "@standardcode/context";
 import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
 import { isTrusted } from "@standardcode/platform";
 import { createStandardTools } from "@standardcode/capabilities";
@@ -87,9 +87,9 @@ async function createSessionAssets(deps: ReplDeps, sessionId: string): Promise<S
 /**
  * 会话切换（/new：全新；/resume：恢复历史并接续追加）。
  * 实现=原位改写 deps.session 的可变字段（identity 不换——runRepl 闭包持有同一对象）；旧锁释放、旧 writer 弃用。
- * resume 用既有 transcript 文件（sessionId 复用=接续追加；skipResumeWrite=恢复消息不重写回转录）。
+ * resume 用既有 transcript 文件（sessionId 复用=接续追加；恢复消息只入内存，无回写路径）。
  */
-async function switchSession(deps: ReplDeps, opts?: { sessionId: string; messages?: Session["messages"]; skipResumeWrite?: boolean }): Promise<void> {
+async function switchSession(deps: ReplDeps, opts?: { sessionId: string; messages?: Session["messages"] }): Promise<void> {
   const s = deps.session;
   const old = sessionAssets.get(s);
   if (old) await old.chain.catch(() => {}); // 旧会话尾部先落盘（drain 串行链）
@@ -180,7 +180,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       // R2 修复（V 退回 2026-09-09）：选择器内重命名（附录 A 要素三）——picker 侧对历史会话设标题后重新枚举
       await deps.sessionPicker.rename(chosen, deps.session.cwd);
       const r = await resumeFrom(chosen.filePath);
-      await switchSession(deps, { sessionId: chosen.sessionId, messages: r.messages, skipResumeWrite: true });
+      await switchSession(deps, { sessionId: chosen.sessionId, messages: r.messages });
       deps.io.write(`[resume] ${chosen.sessionId.slice(0, 8)} — ${chosen.title || "(no title)"}：${r.messages.length} message(s) restored${r.lastReason ? `（上次终态 ${r.lastReason}）` : ""}\n`);
       return true;
     },
@@ -192,13 +192,11 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— WP-11（§8.2 M2 余量；ENG-043/S-10/ENG-080/MDL-010~013/CTX-036）——
     compact: async (window, partialIdx) => {
       const s = deps.session;
-      // 手动窗口（CTX-036"手动窗口 100k–1M"）：指定时重建协调器（窗口解析链同 WP-03 手动窗语义）
+      // 手动窗口（CTX-036"手动窗口 100k–1M"）：指定时重建协调器（V R1 修复：显式 config 直建，不经
+      // env 字符串二次解析——裸数 k 启发式是 WP-03 解析器语义，命令参数处已按 [100000,1000000] 数值校验）
       if (window !== undefined) {
-        s.autocompact = new (Object.getPrototypeOf(s.autocompact).constructor)(
-          await (async () => {
-            const { createCompactionCoordinator, resolveAutocompactConfig } = await import("@standardcode/context");
-            return createCompactionCoordinator(resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }));
-          })(),
+        s.autocompact = createCompactionCoordinator(
+          resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
         );
       }
       const r = await runCompaction({
@@ -253,8 +251,28 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       // ① settings 可读性（WP-01 loadSettings 告警=坏 JSON/schemaVersion）
       for (const w of s.settings.warnings) lines.push(`  [warn] settings ${w.source} (${w.path}): ${w.reason}`);
       if (s.settings.warnings.length === 0) lines.push("  [ok] settings sources readable");
-      // ② 目录权限：项目 .standardcode 可写（写探针；S-10 语义面）
-      lines.push("  [ok] directories writable");
+      // ② 目录权限+自修复最小集（ENG-043）：缺失才创建并 [fix] 上屏（自修复如实登记）；写删探针文件验可写
+      //（V O3 修复=原版硬编码 [ok] 无探针、无条件 mkdir、catch 把失败谎报为 "restored"）
+      const stdDir = join(s.cwd, ".standardcode");
+      if (!existsSync(stdDir)) {
+        try {
+          mkdirSync(stdDir, { recursive: true });
+          fixed.push("created missing project .standardcode");
+          lines.push("  [fix] created missing project .standardcode");
+        } catch (err) {
+          lines.push(`  [warn] project .standardcode missing and could not be created: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (existsSync(stdDir)) {
+        try {
+          const probe = join(stdDir, `.doctor-probe-${process.pid}`);
+          writeFileSync(probe, "probe", "utf8");
+          rmSync(probe, { force: true });
+          lines.push("  [ok] directories writable");
+        } catch (err) {
+          lines.push(`  [warn] project .standardcode not writable: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       // ③ transcript 清理提示（S-10）：枚举转录+体积
       const { sessions } = await listSessions(s.cwd, deps.baseDir);
       let totalBytes = 0;
@@ -269,12 +287,6 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       // ④ frontmatter/迁移提示（ENG-080）：settings 文件缺 schemaVersion 计数
       const noSchema = Object.entries(s.settings.docs).filter(([, d]) => d !== null && (d as Record<string, unknown>).schemaVersion === undefined).length;
       if (noSchema > 0) lines.push(`  [warn] ${noSchema} settings file(s) missing schemaVersion (ENG-080: migration hint)`);
-      // ⑤ 自修复最小集：项目 .standardcode 缺失则创建（写探针）
-      try {
-        mkdirSync(join(s.cwd, ".standardcode"), { recursive: true });
-      } catch {
-        fixed.push("project settings dir restored");
-      }
       if (fixed.length === 0) lines.push("  [ok] no self-repair needed");
       return { text: lines.join("\n"), fixed };
     },

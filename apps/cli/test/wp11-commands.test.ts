@@ -72,10 +72,27 @@ describe("DoD② /compact：手动压缩触发 WP-04 流程+手动窗口边界",
     expect(out).toContain("[compact]");
     expect(session.messages.length).toBeLessThanOrEqual(2); // 摘要替换历史（newMessages=[user summary]）
     expect(session.messages.some((m) => JSON.stringify(m).includes("reply"))).toBe(true);
-    // 手动窗口越界（<100k）
+    // 手动窗口越界（<100k 下界；>1M 上界=O5 补测，同一命令门）
     const { out: out2 } = await runLines(repo, home, baseDir, ["/compact 50000", "/exit"]);
     expect(out2).toContain("[command] /compact failed");
     expect(out2).toContain("100000");
+    const { out: out3 } = await runLines(repo, home, baseDir, ["/compact 1000001", "/exit"]);
+    expect(out3).toContain("[command] /compact failed");
+  });
+
+  it("手动窗口 150000 生效（R1 回归：裸整数解析为绝对值，协调器阈值=150000×0.8=120000）", async () => {
+    const repo = join(dir, "c1b");
+    const home = mkdtempSync(join(dir, "hcb-"));
+    const baseDir = join(dir, "bdb");
+    mkdirSync(repo);
+    gitInit(repo);
+    const { session } = await runLines(repo, home, baseDir, ["q1", "/compact 150000", "/exit"]);
+    // 修复前：parseManualWindow("150000") 按 k 误读 1.5e8 拒 → 静默回落默认窗 200000（compactAt=160000）→ 两断言皆 false
+    const lo = session.autocompact.evaluate(119_999, 99);
+    const hi = session.autocompact.evaluate(120_000, 99);
+    expect(lo.shouldCompact).toBe(false);
+    expect(hi.shouldCompact).toBe(true);
+    expect(hi.level).toBe("compact");
   });
 });
 
@@ -117,6 +134,29 @@ describe("DoD④ /provider：切换下一 turn 生效（MDL-010~013）", () => {
     expect(out).toContain("missing API key");
     expect(session.providerName).toBe("anthropic"); // 切换失败保原值
   });
+
+  it("切换成功路径（V O2 补测）：key+目录 env 注入 → switchProvider 重建 adapter，catalog/model 随新 provider", async () => {
+    const repo = join(dir, "c3b");
+    const home = mkdtempSync(join(dir, "hc3b-"));
+    const baseDir = join(dir, "bdc3b");
+    mkdirSync(repo);
+    gitInit(repo);
+    const scripted = scriptedProvider([REPLY, REPLY]);
+    // 不传 init.catalog：生产装配形态（main.ts createSession 无 catalog 注入），switch 后 catalog 必须取新 provider 目录
+    const session = createSession({
+      provider: scripted,
+      model: "m-a",
+      cwd: repo,
+      home,
+      env: { OPENAI_API_KEY: "sk-test", STANDARD_CODE_MODELS: "gpt-x,gpt-y" },
+    });
+    expect(session.providerName).toBe("anthropic");
+    session.switchProvider("openai");
+    expect(session.providerName).toBe("openai");
+    expect(session.provider).not.toBe(scripted); // adapter 已重建（下一 turn runPromptTurn 现取 s.provider=生效机制）
+    expect([...session.catalog]).toEqual(["gpt-x", "gpt-y"]);
+    expect(session.model).toBe("gpt-x"); // 旧 model 不在新目录 → 回落目录首
+  });
 });
 
 describe("DoD⑤ /doctor：检查项清单落结果页（S-10 提示+迁移提示）+自修复最小集", () => {
@@ -132,6 +172,24 @@ describe("DoD⑤ /doctor：检查项清单落结果页（S-10 提示+迁移提�
     expect(out).toContain("doctor: environment health check");
     expect(out).toContain("[warn] settings projectShared");
     expect(out).toContain("invalid JSON");
+  });
+
+  it("写探针真实现（V O3 修复）：.standardcode 可写→[ok]；自修复=缺失才创建并 [fix] 登记", async () => {
+    const repo = join(dir, "c4b");
+    const home = mkdtempSync(join(dir, "hc4b-"));
+    const baseDir = join(dir, "bdc4b");
+    mkdirSync(repo);
+    gitInit(repo);
+    // 目录缺失 → doctor 创建（自修复真实发生）并上屏 [fix]
+    const { out } = await runLines(repo, home, baseDir, ["/doctor", "/exit"]);
+    expect(out).toContain("[ok] directories writable"); // 写探针=临时文件写删（原硬编码 [ok] 无探针）
+    expect(out).toContain("[fix] created missing project .standardcode");
+    expect(existsSync(join(repo, ".standardcode"))).toBe(true);
+    // 目录已在 → 无 [fix]（自修复不谎报）
+    const { out: out2 } = await runLines(repo, home, baseDir, ["/doctor", "/exit"]);
+    expect(out2).toContain("[ok] directories writable");
+    expect(out2).toContain("[ok] no self-repair needed");
+    expect(out2).not.toContain("[fix]");
   });
 });
 
@@ -162,16 +220,35 @@ describe("DoD⑥ /cd /add-dir：生效且 add-dir 过信任门控", () => {
 });
 
 describe("DoD⑦ /reload：记忆与设置分区重载断言", () => {
-  it("改 AGENTS.md 后 /reload → memory.text 反映新内容", async () => {
+  it("会话启动后改盘再 /reload → 新内容入旧内容出（V O1 判别式修复：原版先写后建会话=/reload no-op 亦过）", async () => {
     const repo = join(dir, "c6");
     const home = mkdtempSync(join(dir, "hc6-"));
     const baseDir = join(dir, "bdc6");
     mkdirSync(repo);
     gitInit(repo);
-    writeFileSync(join(repo, "AGENTS.md"), "RELOADED-MARKER", "utf8");
-    const { out, session } = await runLines(repo, home, baseDir, ["/reload", "/exit"]);
+    // 启动时只有 V1——createSession 初载读到 V1；turn 循环中改盘写 V2，/reload 必须重读盘才可见
+    writeFileSync(join(repo, "AGENTS.md"), "V1-MARKER", "utf8");
+    let flipped = false;
+    const provider = scriptedProvider([REPLY, REPLY]);
+    const session = createSession({ provider, catalog: ["m-a"], model: "m-a", cwd: repo, home });
+    expect(session.memory.text).toContain("V1-MARKER"); // 初载态
+    let out = "";
+    const io: ReplIo = {
+      lines: (async function* () {
+        yield "q1";
+        writeFileSync(join(repo, "AGENTS.md"), "V2-MARKER-RELOADED", "utf8"); // 会话中途改盘
+        flipped = true;
+        yield "/reload";
+        yield "/exit";
+      })(),
+      write: (s) => (out += s),
+      close: () => {},
+    };
+    await runRepl({ session, io, baseDir });
+    expect(flipped).toBe(true);
     expect(out).toContain("[reload]");
-    expect(session.memory.text).toContain("RELOADED-MARKER");
+    expect(session.memory.text).toContain("V2-MARKER-RELOADED"); // 新内容入
+    expect(session.memory.text).not.toContain("V1-MARKER"); // 旧内容出（真重载，非 no-op）
   });
 });
 

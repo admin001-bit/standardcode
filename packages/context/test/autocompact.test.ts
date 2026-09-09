@@ -86,12 +86,12 @@ describe("DoD② 窗口解析优先级链（CTX-034）", () => {
     expect(rej.rejected).toBe("banana");
   });
 
-  it("手动值语法：'auto'/'200k'/'1m'/数字(≥100 视为 k)；界 100k–1M", () => {
+  it("手动值语法：'auto'/'200k'/'1m'/数字（≥100k 绝对值；[100,100k) 视为 k）；界 100k–1M", () => {
     expect(parseManualWindow("auto").value).toBeNull();
     expect(parseManualWindow("200k").value).toBe(200_000);
     expect(parseManualWindow("1m").value).toBe(1_000_000);
-    expect(parseManualWindow(200).value).toBe(200_000);
-    expect(parseManualWindow(5000).value).toBeNull(); // 数字≥100 视为 k → 5m 超 1M 界拒
+    expect(parseManualWindow(200).value).toBe(200_000); // [100,100k) 视为 k
+    expect(parseManualWindow(5000).value).toBeNull(); // 5000→5m 超 1M 界拒
     expect(parseManualWindow("99k").rejected).toBeDefined(); // <100k
     expect(parseManualWindow("2m").rejected).toBeDefined(); // >1m
     expect(MANUAL_WINDOW_MIN).toBe(100_000);
@@ -164,12 +164,13 @@ describe("DoD④/⑤ 手动窗口 100k–1M 与 env/settings 通道（CTX-036/AD
     expect(resolveAutocompactConfig({ modelDefault: 200_000 }).window).toBe(200_000);
   });
 
-  it("DoD⑤ 手动窗口 100k–1M 边界：99999 拒/100000 收/1000000 收/1000001 拒", () => {
-    // 数字 ≥100 视为 k（[CC] 语法）：100 → 100000 收；100000 → 1e8 拒
-    expect(parseManualWindow(100).value).toBe(100_000);
+  it("DoD⑤ 手动窗口 100k–1M 边界：99999 拒/100000 收/1000000 收/1000001 拒（V R1 修复 2026-09-09：裸数 ≥100k 视为绝对值，标题意图直达）", () => {
+    expect(parseManualWindow(100).value).toBe(100_000); // [100,100k) 视为 k
     expect(parseManualWindow(99_999).value).toBeNull(); // → 99.999m 拒
-    expect(parseManualWindow("100000").rejected).toBeDefined(); // → 1e8 拒
-    expect(parseManualWindow(1_000_000).value).toBeNull(); // → 1e9 拒
-    expect(parseManualWindow("1m").value).toBe(1_000_000); // 1M 界内收（语法表达）
+    expect(parseManualWindow("100000").value).toBe(100_000); // 裸数 ≥100k=绝对值（原按 k 误读 1e8 拒=R1 根因）
+    expect(parseManualWindow(1_000_000).value).toBe(1_000_000); // 上界收（原按 k 误读 1e9 拒）
+    expect(parseManualWindow(1_000_001).value).toBeNull(); // >1M 拒
+    expect(parseManualWindow("1m").value).toBe(1_000_000); // 语法表达等价
+    expect(parseManualWindow("150000").value).toBe(150_000); // WP-11 /compact 通道回归锚点
   });
 });

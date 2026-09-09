@@ -6,7 +6,7 @@
 //   警告线 = compactThreshold − 20000；阻断线 = blockingLimit − 3000
 //   三级判定：used≥blockedAt→blocked；enabled&&used≥threshold→compact；used≥warnAt→warn；else ok
 // 窗口解析（CTX-034）：env > settings > clientdata > experiment > model-default > unknown > auto，clamp 到模型窗口；
-//   手动窗口界 100k–1M（THe=1e5/fCt=1e6）；"200k"/"1m"/数字(≥100 视为 k)/"auto"。
+//   手动窗口界 100k–1M（THe=1e5/fCt=1e6）；"200k"/"1m"/数字（≥100k 绝对值；[100,100k) 视为 k）/"auto"。
 // 四道闸（CTX-035）：总开关→熔断器(连续失败≥3)→rapid-refill 防抖(压缩后 3 turn 内又填满且连续≥3 次→blocked)→阈值判定。
 // 重压缩链：willRetriggerNextTurn = postCompactTokens ≥ threshold；turnsSincePreviousCompact 追踪。
 // 环境名映射 [自定]：STANDARD_CODE_AUTOCOMPACT_PCT_OVERRIDE（v2.8 原文名）/STANDARD_CODE_AUTO_COMPACT_WINDOW/
@@ -93,13 +93,19 @@ export interface ResolvedWindow {
   rejected?: string;
 }
 
-/** 手动窗口值解析："auto"/"200k"/"1m"/数字(≥100 视为 k)；界 100k–1M（CTX-036）。 */
+/** 无后缀裸数解释：≥100k 视为绝对 token 数（×1000 必越 1M 上界，k 解释恒拒）；[100,100k) 视为 k（"150"=150k）；<100 原值交界校验。 */
+function bareWindowValue(n: number): number {
+  if (n >= MANUAL_WINDOW_MIN) return n;
+  if (n >= 100) return n * 1000;
+  return n;
+}
+
+/** 手动窗口值解析："auto"/"200k"/"1m"/数字（≥100k 视为绝对值；[100,100k) 视为 k）；界 100k–1M（CTX-036）。 */
 export function parseManualWindow(raw: unknown): { value: number | null; rejected?: string } {
   if (raw === undefined || raw === null) return { value: null };
   if (raw === "auto") return { value: null }; // auto=交回 model-default/自动
   if (typeof raw === "number" && Number.isFinite(raw)) {
-    const v = raw >= 100 ? raw * 1000 : raw;
-    return validateManual(v, String(raw));
+    return validateManual(bareWindowValue(raw), String(raw));
   }
   if (typeof raw === "string") {
     const s = raw.trim().toLowerCase();
@@ -107,7 +113,7 @@ export function parseManualWindow(raw: unknown): { value: number | null; rejecte
     if (m) {
       const n = Number(m[1]);
       if (Number.isFinite(n)) {
-        const v = m[2] === "m" ? n * 1_000_000 : m[2] === "k" ? n * 1000 : n >= 100 ? n * 1000 : n;
+        const v = m[2] === "m" ? n * 1_000_000 : m[2] === "k" ? n * 1000 : bareWindowValue(n);
         return validateManual(v, raw);
       }
     }
