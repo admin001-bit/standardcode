@@ -72,6 +72,37 @@ describe("TranscriptWriter/readTranscript（schema v1）", () => {
     expect((msgs[1].content as Array<{ text: string }>)[0].text).toBe("a1");
   });
 
+  it("compact 记录截断语义（ADR-0038）：丢弃此前消息、以摘要为起点、其后增量保留", async () => {
+    const records = [
+      { schemaVersion: 1 as const, seq: 1, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "old-q" }] } },
+      { schemaVersion: 1 as const, seq: 2, ts: "t", kind: "assistant_message" as const, message: { role: "assistant" as const, content: [{ type: "text" as const, text: "old-a" }] } },
+      { schemaVersion: 1 as const, seq: 3, ts: "t", kind: "compact" as const, mode: "manual" as const, preTokens: 900, postTokens: 100, summary: "SUMMARY-ANCHOR" },
+      { schemaVersion: 1 as const, seq: 4, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "new-q" }] } },
+    ];
+    const msgs = rebuildMessages(records);
+    expect(msgs).toHaveLength(2);
+    expect((msgs[0].content as Array<{ text: string }>)[0].text).toBe("SUMMARY-ANCHOR"); // 摘要=历史起点
+    expect((msgs[1].content as Array<{ text: string }>)[0].text).toBe("new-q"); // 压缩后增量保留
+    expect(JSON.stringify(msgs)).not.toContain("old-q"); // 压缩前全史被丢弃
+  });
+
+  it("compact 多次截断：最后一次生效后增量保留；summary 缺失占位防御", async () => {
+    const records = [
+      { schemaVersion: 1 as const, seq: 1, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "v1" }] } },
+      { schemaVersion: 1 as const, seq: 2, ts: "t", kind: "compact" as const, mode: "auto" as const, preTokens: 500, postTokens: 60, summary: "S1" },
+      { schemaVersion: 1 as const, seq: 3, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "v2" }] } },
+      { schemaVersion: 1 as const, seq: 4, ts: "t", kind: "compact" as const, mode: "manual" as const, preTokens: 300, postTokens: 40, summary: "S2" },
+      { schemaVersion: 1 as const, seq: 5, ts: "t", kind: "assistant_message" as const, message: { role: "assistant" as const, content: [{ type: "text" as const, text: "v3" }] } },
+      { schemaVersion: 1 as const, seq: 6, ts: "t", kind: "compact" as const, mode: "auto" as const, preTokens: 200, postTokens: 30 }, // 缺 summary（兼容防御）
+      { schemaVersion: 1 as const, seq: 7, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "v4" }] } },
+    ];
+    const msgs = rebuildMessages(records);
+    expect(msgs).toHaveLength(2);
+    expect((msgs[0].content as Array<{ text: string }>)[0].text).toBe("(compacted)"); // 占位
+    expect((msgs[1].content as Array<{ text: string }>)[0].text).toBe("v4");
+    expect(JSON.stringify(msgs)).not.toContain("S1");
+  });
+
   it("文件不存在 → 空转录（不抛）", async () => {
     const base = await tmpBase();
     const r = await resumeFrom(path.join(base, "nope.jsonl"));

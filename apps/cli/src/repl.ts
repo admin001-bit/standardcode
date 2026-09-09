@@ -209,6 +209,8 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       });
       s.messages = r.newMessages;
       s.autocompact.recordCompactSuccess(r.postTokens, 0); // 手动压缩=独立轮次（工具轮计数不属于 turn 状态，Session 无 toolRounds）
+      // ADR-0038：压缩落盘 compact 记录（重建截断语义的历史起点；M2 偏差⑤清偿）
+      transcriptAppend(deps, { kind: "compact", mode: "manual", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary });
       return { summary: r.summary, preTokens: r.preTokens, postTokens: r.postTokens };
     },
     config: async (args) => {
@@ -398,6 +400,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             });
             s.messages = r.newMessages;
             s.autocompact.recordCompactSuccess(r.postTokens, turn);
+            // ADR-0038：自动通道压缩落盘 compact 记录（与手动通道同语义）
+            transcriptAppend(deps, { kind: "compact", mode: "auto", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary });
             return { ok: true, postCompactTokens: r.postTokens, messages: r.newMessages };
           },
         },

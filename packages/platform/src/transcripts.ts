@@ -17,7 +17,7 @@ export interface TranscriptRecord {
   /** 单调递增（会话内），从 1 起——resume 时校验连续性。 */
   seq: number;
   ts: string; // ISO 8601
-  kind: "user_message" | "assistant_message" | "interrupt" | "done";
+  kind: "user_message" | "assistant_message" | "interrupt" | "done" | "compact";
   /** kind=assistant_message/user_message 时在位（IR 形状原样落盘）。 */
   message?: LLMMessage;
   /** kind=interrupt：发生阶段。 */
@@ -26,6 +26,14 @@ export interface TranscriptRecord {
   reason?: DoneReason;
   /** kind=done：会话累计 usage（ADR-0027 四列）。 */
   usage?: TokenUsage;
+  /** kind=compact（ADR-0038）：压缩前 token 估算。 */
+  preTokens?: number;
+  /** kind=compact：压缩后 token 估算。 */
+  postTokens?: number;
+  /** kind=compact：触发通道。 */
+  mode?: "manual" | "auto";
+  /** kind=compact：9 段摘要文本（重建截断语义的历史起点锚点）。 */
+  summary?: string;
 }
 
 export function transcriptsDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
@@ -100,11 +108,19 @@ export async function readTranscript(filePath: string): Promise<ReadBackResult> 
   return { records, skippedMalformed };
 }
 
-/** 从转录重建会话消息历史（E2E③"JSONL 可 resume"的程序化恢复；isMeta 注入不含于转录，恢复时无需剥离）。 */
+/** 从转录重建会话消息历史（E2E③"JSONL 可 resume"的程序化恢复；isMeta 注入不含于转录，恢复时无需剥离）。
+ * compact 记录截断语义（ADR-0038）：遇 compact 丢弃此前全部消息、以摘要消息为起点——重建=压缩后活体终态。 */
 export function rebuildMessages(records: TranscriptRecord[]): LLMMessage[] {
-  return records
-    .filter((r) => (r.kind === "user_message" || r.kind === "assistant_message") && r.message)
-    .map((r) => r.message!);
+  const out: LLMMessage[] = [];
+  for (const r of records) {
+    if (r.kind === "compact") {
+      out.length = 0;
+      out.push({ role: "user", content: [{ type: "text", text: r.summary ?? "(compacted)" }] });
+      continue;
+    }
+    if ((r.kind === "user_message" || r.kind === "assistant_message") && r.message) out.push(r.message);
+  }
+  return out;
 }
 
 /** 程序化 resume：读回+重建；返回与中断时等价的消息历史与终态信息。 */
