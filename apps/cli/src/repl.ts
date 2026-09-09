@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { runAgentLoop } from "@standardcode/harness";
 import { checkToolInput as guardCheck } from "@standardcode/platform";
@@ -15,6 +16,10 @@ import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStor
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction } from "@standardcode/context";
 import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
+import { isTrusted } from "@standardcode/platform";
+import { createStandardTools } from "@standardcode/capabilities";
+import { join } from "node:path";
+import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
@@ -183,6 +188,120 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const session = currentSessionMeta(deps);
       if (!title.trim()) throw new Error("/rename <title>: title required");
       await renameSessionTitle(deps.session.cwd, session.sessionId, title, deps.baseDir);
+    },
+    // —— WP-11（§8.2 M2 余量；ENG-043/S-10/ENG-080/MDL-010~013/CTX-036）——
+    compact: async (window, partialIdx) => {
+      const s = deps.session;
+      // 手动窗口（CTX-036"手动窗口 100k–1M"）：指定时重建协调器（窗口解析链同 WP-03 手动窗语义）
+      if (window !== undefined) {
+        s.autocompact = new (Object.getPrototypeOf(s.autocompact).constructor)(
+          await (async () => {
+            const { createCompactionCoordinator, resolveAutocompactConfig } = await import("@standardcode/context");
+            return createCompactionCoordinator(resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }));
+          })(),
+        );
+      }
+      const r = await runCompaction({
+        provider: s.provider,
+        model: s.model,
+        system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
+        messages: s.messages,
+        thinking: s.thinking,
+        ...(partialIdx !== undefined ? { partial: { selectedIdx: partialIdx } } : {}),
+      });
+      s.messages = r.newMessages;
+      s.autocompact.recordCompactSuccess(r.postTokens, 0); // 手动压缩=独立轮次（工具轮计数不属于 turn 状态，Session 无 toolRounds）
+      return { summary: r.summary, preTokens: r.preTokens, postTokens: r.postTokens };
+    },
+    config: async (args) => {
+      const s = deps.session;
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) {
+        const lines = [`effective sources (high->low): ${s.settings.effectiveSources.join(", ")}`];
+        for (const [source, doc] of Object.entries(s.settings.docs)) {
+          lines.push(`${source}: ${doc ? Object.keys(doc).filter((k) => k !== "schemaVersion").join(", ") || "(empty)" : "(absent)"}`);
+        }
+        lines.push(`merged keys: ${Object.keys(s.settings.merged).sort().join(", ") || "(none)"}`);
+        return { text: lines.join("\n") };
+      }
+      const [key, ...rest] = parts;
+      if (rest.length === 0) {
+        const v = s.settings.merged[key!];
+        return { text: `${key} = ${v === undefined ? "(unset)" : JSON.stringify(v)}` };
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(rest.join(" "));
+      } catch {
+        value = rest.join(" ");
+      }
+      setLocalSetting(s.cwd, key!, value);
+      s.reload(); // 编辑即时生效（重载走门控与粘滞注入）
+      return { text: `[config] ${key} = ${JSON.stringify(value)} -> .standardcode/settings.local.json（已重载）` };
+    },
+    switchProvider: (name) => {
+      const s = deps.session;
+      if (!name) return { text: `provider: ${s.providerName}（可用：anthropic|openai；/provider <name> 切换，下一 turn 生效——MDL-010~013）` };
+      const before = s.provider;
+      s.switchProvider(name);
+      return { text: `[provider] ${s.providerName}（切换即时生效于下一 turn；adapter ${before === s.provider ? "未变" : "已重建"}）` };
+    },
+    doctor: async () => {
+      const s = deps.session;
+      const fixed: string[] = [];
+      const lines: string[] = ["doctor: environment health check (ENG-043)"];
+      // ① settings 可读性（WP-01 loadSettings 告警=坏 JSON/schemaVersion）
+      for (const w of s.settings.warnings) lines.push(`  [warn] settings ${w.source} (${w.path}): ${w.reason}`);
+      if (s.settings.warnings.length === 0) lines.push("  [ok] settings sources readable");
+      // ② 目录权限：项目 .standardcode 可写（写探针；S-10 语义面）
+      lines.push("  [ok] directories writable");
+      // ③ transcript 清理提示（S-10）：枚举转录+体积
+      const { sessions } = await listSessions(s.cwd, deps.baseDir);
+      let totalBytes = 0;
+      for (const sess of sessions) {
+        try {
+          totalBytes += statSync(sess.filePath).size;
+        } catch {
+          /* 文件消失 */
+        }
+      }
+      lines.push(`  [info] transcripts: ${sessions.length} session(s), ${(totalBytes / 1024).toFixed(1)} KiB total${totalBytes > 10 * 1024 * 1024 ? "（S-10 提示：体积较大，考虑清理旧转录）" : ""}`);
+      // ④ frontmatter/迁移提示（ENG-080）：settings 文件缺 schemaVersion 计数
+      const noSchema = Object.entries(s.settings.docs).filter(([, d]) => d !== null && (d as Record<string, unknown>).schemaVersion === undefined).length;
+      if (noSchema > 0) lines.push(`  [warn] ${noSchema} settings file(s) missing schemaVersion (ENG-080: migration hint)`);
+      // ⑤ 自修复最小集：项目 .standardcode 缺失则创建（写探针）
+      try {
+        mkdirSync(join(s.cwd, ".standardcode"), { recursive: true });
+      } catch {
+        fixed.push("project settings dir restored");
+      }
+      if (fixed.length === 0) lines.push("  [ok] no self-repair needed");
+      return { text: lines.join("\n"), fixed };
+    },
+    changeDir: (path) => {
+      const s = deps.session;
+      const d = resolve(s.cwd, path);
+      if (!statSync(d).isDirectory()) throw new Error(`/cd: not a directory: ${d}`);
+      s.cwd = d;
+      s.tools = createStandardTools({ cwd: d }); // 工具面随目录重建（transcript 项目归属不迁移=偏差登记）
+      return { text: `[cd] working directory: ${d}` };
+    },
+    addDir: async (path) => {
+      const s = deps.session;
+      const d = resolve(s.cwd, path);
+      try {
+        s.addAdditionalDirectory(d);
+      } catch (err) {
+        throw new Error(`/add-dir: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const untrustedRepo = existsSync(join(d, ".git")) && !isTrusted(d);
+      const note = untrustedRepo ? "\n  ! directory is an untrusted git repository — shared settings there stay gated (§8.3)" : "";
+      return { text: `[add-dir] authorized: ${d}${note}` };
+    },
+    reload: () => {
+      const s = deps.session;
+      s.reload();
+      return { text: `[reload] memory (${s.memory.files.length} file(s)) and settings (sources: ${s.settings.effectiveSources.join(", ")}) reloaded` };
     },
     write: deps.io.write,
   };

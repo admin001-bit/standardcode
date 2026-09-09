@@ -53,8 +53,16 @@ export interface Session {
   trust: TrustGateResult;
   /** 家目录覆写（测试隔离用；"总是允许"落盘路径随之，未传=真实家目录）。 */
   home?: string;
+  /** 已授权附加工作目录（§8.3 additionalDirectories 运行时通道，WP-11 /add-dir；初始自 settings）。 */
+  additionalDirectories: string[];
   /** env 副本快照（WP-07 R-env 修复的断言面：settings env.* 注入经信任门控后落此；只读消费）。 */
   env: Record<string, string | undefined>;
+  /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
+  switchProvider(name: string): void;
+  /** WP-11 /reload：重载记忆与设置（原位更新可变字段）。 */
+  reload(): void;
+  /** WP-11 /add-dir：追加授权目录（过信任门控）。 */
+  addAdditionalDirectory(dir: string): void;
 }
 
 /** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
@@ -187,33 +195,16 @@ export function createSession(init: SessionInit = {}): Session {
     providerName = init.providerName ?? providerName;
     catalog = init.catalog ?? [];
   } else {
-    const apiKey = providerName === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        `missing API key: set ${providerName === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（env 或 settings 的 env.<KEY> 注入，键位见 ADR-0030）`,
-      );
-    }
-    const baseUrl = env.STANDARD_CODE_BASE_URL ?? settingsValue<string>(settings, `providers.${providerName}.baseUrl`);
-    const opts: ProviderOptions = { apiKey, ...(baseUrl ? { baseUrl } : {}) };
-    if (providerName === "anthropic") {
-      provider = new AnthropicAdapter(ANTHROPIC_ENTRIES, opts);
-      catalog = init.catalog ?? Object.keys(ANTHROPIC_ENTRIES);
-    } else if (providerName === "openai") {
-      const models = parseCatalogEnv(env.STANDARD_CODE_MODELS) ?? settingsValue<string[]>(settings, "providers.openai.models") ?? null;
-      if (!models) throw new Error("openai provider requires a model catalog: STANDARD_CODE_MODELS env or settings providers.openai.models（不内置 OpenAI 目录；键位见 ADR-0030）");
-      const entries: Record<string, OpenAIModelEntry> = {};
-      for (const m of models) entries[m] = { contextWindow: 128_000, maxOutputTokens: { default: 32_000, upper: 32_000 }, thinking: "none", input: ["text"] };
-      provider = new OpenAIChatAdapter(entries, opts);
-      catalog = models;
-    } else {
-      throw new Error(`unknown provider: ${providerName}（可选 anthropic|openai）`);
-    }
+    const built = buildProvider(providerName, env, gatedSettings);
+    provider = built.provider;
+    providerName = built.providerName;
+    catalog = built.catalog;
   }
   catalog = init.catalog ?? catalog;
   const modelDefault = settingsValue<string>(settings, "model.default");
   const model = init.model ?? env.STANDARD_CODE_MODEL ?? modelDefault ?? catalog[0];
   if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL or settings model.default");
-  return {
+  const session: Session = {
     id: "",
     provider,
     providerName,
@@ -232,8 +223,75 @@ export function createSession(init: SessionInit = {}): Session {
     autocompact,
     trust,
     env,
+    additionalDirectories: [...(settingsValue<string[]>(gatedSettings, "additionalDirectories") ?? [])],
     ...(init.home !== undefined ? { home: init.home } : {}),
+    // —— WP-11：/provider /reload /add-dir 会话操作面（MDL-010~013 下一 turn 生效；M1 环境重载语义）——
+    switchProvider(name: string) {
+      const n = name.toLowerCase();
+      const built = buildProvider(n, env, gatedSettings);
+      session.provider = built.provider;
+      session.providerName = built.providerName;
+      session.catalog = init.catalog ?? built.catalog;
+      if (!session.catalog.includes(session.model)) session.model = session.catalog[0]!;
+    },
+    reload() {
+      // 设置重载（WP-01）：重新 loadSettings+门控+env 注入（粘滞 handle 延续）+原位替换
+      const fresh = loadSettings({
+        projectRoot: sessionCwd,
+        ...(init.home !== undefined ? { home: init.home } : {}),
+        ...(init.programData !== undefined ? { programData: init.programData } : {}),
+        ...(init.platform !== undefined ? { platform: init.platform } : {}),
+        ...(init.flagOverrides !== undefined ? { flagOverrides: init.flagOverrides } : {}),
+      });
+      const freshTrust = createTrustGate(sessionCwd, fresh, init.trusted ?? isTrusted(sessionCwd, readTrustStore(trustStoreFile)));
+      applySettingsEnv(freshTrust.settings, env, settingsEnv);
+      session.settings = fresh;
+      session.trust = freshTrust;
+      // 记忆重载（WP-02）：同参重载原位替换
+      session.memory = loadMemory({
+        cwd: sessionCwd,
+        ...(init.home !== undefined ? { home: init.home } : {}),
+        managedDir: path.dirname(managedSettingsPath(init.platform ?? process.platform, init.programData)),
+        inProject: init.memoryOptions?.inProject ?? detectProjectWorkspace(sessionCwd),
+        rulesEnabled: settingsValue<boolean>(freshTrust.settings, "memory.autoRead") ?? true,
+        precedence: (settingsValue<MemoryPrecedence>(freshTrust.settings, "memory.precedence") ?? "claude-first"),
+        ...(init.memoryOptions?.relevantPaths ? { relevantPaths: init.memoryOptions.relevantPaths } : {}),
+      });
+    },
+    addAdditionalDirectory(dir: string) {
+      // §8.3 additionalDirectories 属信任门控清单——未信任时拒绝（fail-closed，与共享层同规）
+      if (!session.trust.trusted) throw new Error("add-dir requires workspace trust (accept the trust dialog first, §8.3)");
+      session.additionalDirectories.push(path.resolve(dir));
+    },
   };
+  return session;
+}
+
+/** WP-11 /provider：按名重建 adapter（MDL-010~013 常规入口；缺 key/未知名抛错）。 */
+function buildProvider(
+  name: string,
+  env: Record<string, string | undefined>,
+  settings: LoadedSettings,
+): { provider: ProviderAdapter; providerName: string; catalog: readonly string[] } {
+  const apiKey = name === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      `missing API key: set ${name === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（env 或 settings 的 env.<KEY> 注入，键位见 ADR-0030）`,
+    );
+  }
+  const baseUrl = env.STANDARD_CODE_BASE_URL ?? settingsValue<string>(settings, `providers.${name}.baseUrl`);
+  const opts: ProviderOptions = { apiKey, ...(baseUrl ? { baseUrl } : {}) };
+  if (name === "anthropic") {
+    return { provider: new AnthropicAdapter(ANTHROPIC_ENTRIES, opts), providerName: name, catalog: Object.keys(ANTHROPIC_ENTRIES) };
+  }
+  if (name === "openai") {
+    const models = parseCatalogEnv(env.STANDARD_CODE_MODELS) ?? settingsValue<string[]>(settings, "providers.openai.models") ?? null;
+    if (!models) throw new Error("openai provider requires a model catalog: STANDARD_CODE_MODELS env or settings providers.openai.models（不内置 OpenAI 目录；键位见 ADR-0030）");
+    const entries: Record<string, OpenAIModelEntry> = {};
+    for (const m of models) entries[m] = { contextWindow: 128_000, maxOutputTokens: { default: 32_000, upper: 32_000 }, thinking: "none", input: ["text"] };
+    return { provider: new OpenAIChatAdapter(entries, opts), providerName: name, catalog: models };
+  }
+  throw new Error(`unknown provider: ${name}（可选 anthropic|openai）`);
 }
 
 function parseCatalogEnv(raw: string | undefined): string[] | null {

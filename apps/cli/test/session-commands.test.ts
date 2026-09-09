@@ -220,7 +220,7 @@ describe("DoD③ /rename 更新索引且 /resume 列表即时反映（见上例�
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("resume");
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("rename");
     const c = completeInput("/re", CLI_COMMANDS);
-    expect(c.candidates).toEqual(["/rewind", "/resume", "/rename"]);
+    expect(c.candidates).toEqual(["/rewind", "/resume", "/rename", "/reload"]); // WP-11 /reload 注册
     const r = completeInput("/rename ", CLI_COMMANDS);
     expect(r.insert).toBeNull(); // 参数位不改写行
     expect(r.hint).toContain("<title>");

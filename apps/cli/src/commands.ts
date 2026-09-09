@@ -1,5 +1,5 @@
 // M1 五命令（v2.8 §8.2 M1 最小集）+ M2 增量（§8.2 M2 分期，B-03 只注册本里程碑命令）：
-// WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增其余。
+// WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import { sessionDiff, redactSecrets } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
@@ -16,6 +16,20 @@ export interface CommandContext {
   sessionDiff(): Promise<{ output: string; changed: number; scanned: number; skipped: string[] }>;
   /** /context 网格数据（WP-05 CTX-038：分类占用+33k buffer+usage 四列对账）。 */
   contextGrid(): { text: string };
+  /** WP-11 /compact：手动压缩（窗口=CTX-036 手动窗 100k–1M 或模型窗；空参=模型窗）。 */
+  compact(window?: number, partialIdx?: number): Promise<{ summary: string; preTokens: number; postTokens: number }>;
+  /** WP-11 /config：无参=五来源合并展示（ADR-0030 键位）；有参=写 local 层并回显。 */
+  config(args: string): Promise<{ text: string }>;
+  /** WP-11 /provider：无参列目录；有参切换（MDL-010~013：下一 turn 生效）。 */
+  switchProvider(name?: string): { text: string };
+  /** WP-11 /doctor：环境健康检查与自修复最小集（ENG-043+S-10 提示+ENG-080 迁移提示）。 */
+  doctor(): Promise<{ text: string; fixed: string[] }>;
+  /** WP-11 /cd：切换工作目录（transcript 项目归属随 cwd）。 */
+  changeDir(path: string): { text: string };
+  /** WP-11 /add-dir：追加授权目录（§8.3 additionalDirectories——WP-07 信任门控联动）。 */
+  addDir(path: string): Promise<{ text: string }>;
+  /** WP-11 /reload：重载记忆（WP-02）与设置（WP-01）。 */
+  reload(): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -162,6 +176,82 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     async execute(args, ctx) {
       await ctx.renameSession(args);
       ctx.write(`[rename] session renamed`);
+    },
+  },
+  // —— WP-11：M2 分期余量（§8.2；/context 已于 WP-05 注册）——
+  {
+    name: "compact",
+    usage: "[window | partial <msgIndex>]",
+    description: "manually compact the conversation (9-section summary, CTX-036; window 100k-1M)",
+    async execute(args, ctx) {
+      const a = args.trim();
+      let window: number | undefined;
+      let partialIdx: number | undefined;
+      if (a !== "") {
+        const pm = /^partial\s+(\d+)$/.exec(a);
+        if (pm) {
+          partialIdx = Number(pm[1]);
+        } else {
+          const w = Number(a);
+          if (!Number.isInteger(w) || w < 100_000 || w > 1_000_000) {
+            throw new Error("/compact window: must be integer in [100000, 1000000] (CTX-036 manual window)");
+          }
+          window = w;
+        }
+      }
+      const r = await ctx.compact(window, partialIdx);
+      ctx.write(`[compact] ${r.preTokens} -> ${r.postTokens} tokens（摘要 ${r.summary.length} chars，已替换历史）`);
+    },
+  },
+  {
+    name: "config",
+    usage: "[key [value]]",
+    description: "show merged settings (5-source order, WP-01) or set key into local layer",
+    async execute(args, ctx) {
+      const r = await ctx.config(args);
+      ctx.write(r.text);
+    },
+  },
+  {
+    name: "provider",
+    usage: "[anthropic|openai]",
+    description: "show or switch provider (takes effect next turn, MDL-010~013)",
+    execute(args, ctx) {
+      ctx.write(ctx.switchProvider(args.trim() || undefined).text);
+    },
+  },
+  {
+    name: "doctor",
+    description: "environment health check with minimal self-repair (ENG-043, S-10 hints, ENG-080 migration)",
+    async execute(_args, ctx) {
+      const r = await ctx.doctor();
+      ctx.write(r.text);
+    },
+  },
+  {
+    name: "cd",
+    usage: "<dir>",
+    description: "change the working directory (tools re-created; transcript project follows cwd)",
+    async execute(args, ctx) {
+      if (args.trim() === "") throw new Error("/cd <dir>: directory required");
+      ctx.write(ctx.changeDir(args.trim()).text);
+    },
+  },
+  {
+    name: "add-dir",
+    usage: "<dir>",
+    description: "allow an additional working directory (gated by workspace trust, §8.3)",
+    async execute(args, ctx) {
+      if (args.trim() === "") throw new Error("/add-dir <dir>: directory required");
+      const r = await ctx.addDir(args.trim());
+      ctx.write(r.text);
+    },
+  },
+  {
+    name: "reload",
+    description: "reload memory (WP-02) and settings (WP-01) from disk",
+    execute(_args, ctx) {
+      ctx.write(ctx.reload().text);
     },
   },
 ];
