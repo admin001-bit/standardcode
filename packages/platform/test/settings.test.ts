@@ -44,14 +44,18 @@ function fixture(): Fixture {
   };
 }
 
+/** managed 文件写入（与 loadSettings 同源路径解析：managedSettingsPath(当前平台, f.programData)）——三平台矩阵下读写一致。 */
+function writeManaged(f: Fixture, doc: Record<string, unknown>): void {
+  writeJson(path.dirname(managedSettingsPath(process.platform, f.programData)), "managed-settings.json", doc);
+}
+
 function load(f: Fixture, opts: { flagOverrides?: Record<string, unknown>; platform?: NodeJS.Platform } = {}) {
-  // 本文件 fixture 与断言按 Q-3 Windows managed 路径（盘符+ProgramData）写死——platform 缺省钉 win32，
-  // 否则非 Windows runner 上 managed 层解析为 /etc/standardcode 读不到（CI 三平台 2026-09-09 实测）。
+  // platform 跟随当前 runner（三平台矩阵各自真跑 Q-3 语义）；programData=f.programData 在三平台下均为
+  // managed 基目录（settings.ts 分平台 join 与实际 FS 一致），managed 文件由 fixture 用 managedSettingsPath 写（同源解析）。
   return loadSettings({
     projectRoot: f.root,
     home: f.home,
     programData: f.programData,
-    platform: "win32",
     ...opts,
   });
 }
@@ -63,14 +67,14 @@ describe("settings 五来源合并序（§7.7）", () => {
       writeJson(path.join(f.home, ".standardcode"), "settings.json", { model: { default: "user-m" } });
       writeJson(path.join(f.root, ".standardcode"), "settings.json", { model: { default: "shared-m" } });
       writeJson(path.join(f.root, ".standardcode"), "settings.local.json", { model: { default: "local-m" } });
-      writeJson(path.join(f.programData, "StandardCode"), "managed-settings.json", { model: { default: "managed-m" } });
+      writeManaged(f, { model: { default: "managed-m" } });
       const all = load(f, { flagOverrides: { model: { default: "flag-m" } } });
       expect(settingsValue<string>(all, "model.default")).toBe("managed-m");
       expect(all.effectiveSources).toEqual([...SETTINGS_SOURCE_ORDER].reverse());
       expect(all.docs.flag).toEqual({ model: { default: "flag-m" } });
 
       // 逐层撤除：managed 撤除 → flag 胜；无 flag → projectLocal；local 撤除 → projectShared；shared 撤除 → user
-      rmSync(path.join(f.programData, "StandardCode", "managed-settings.json"));
+      rmSync(managedSettingsPath("win32", f.programData));
       expect(settingsValue<string>(load(f, { flagOverrides: { model: { default: "flag-m" } } }), "model.default")).toBe("flag-m");
       const noFlag = loadSettings({ projectRoot: f.root, home: f.home, programData: f.programData });
       expect(settingsValue<string>(noFlag, "model.default")).toBe("local-m");
@@ -92,9 +96,7 @@ describe("settings 五来源合并序（§7.7）", () => {
       writeJson(path.join(f.root, ".standardcode"), "settings.local.json", {
         permissions: { allow: ["Bash(git status)", "Edit(src/**)"], deny: "not-an-array" },
       });
-      writeJson(path.join(f.programData, "StandardCode"), "managed-settings.json", {
-        permissions: { allow: ["Read(~/.zshrc)"] },
-      });
+      writeManaged(f, { permissions: { allow: ["Read(~/.zshrc)"] } });
       const loaded = load(f);
       expect(settingsValue<string[]>(loaded, "permissions.allow")).toEqual([
         "Read(~/.zshrc)", // managed 最高
@@ -111,12 +113,13 @@ describe("settings 五来源合并序（§7.7）", () => {
   it("DoD③ managed 路径=Q-3 原文（Windows ProgramData/macOS）且用户不可排除（最高覆盖）", () => {
     expect(managedSettingsPath("win32", "D:\\PD")).toBe("D:\\PD\\StandardCode\\managed-settings.json");
     expect(managedSettingsPath("win32", undefined)).toBe("C:\\ProgramData\\StandardCode\\managed-settings.json");
-    expect(managedSettingsPath("darwin")).toBe("/Library/Application Support/StandardCode/managed-settings.json");
+    // darwin/linux 缺省形状：programData 显式 undefined（防 Windows runner 的 process.env.ProgramData 渗入 posix 分支）
+    expect(managedSettingsPath("darwin", undefined)).toBe("/Library/Application Support/StandardCode/managed-settings.json");
     // 用户不可排除：user 与 managed 同键 → managed 胜
     const f = fixture();
     try {
       writeJson(path.join(f.home, ".standardcode"), "settings.json", { providers: { default: "openai" } });
-      writeJson(path.join(f.programData, "StandardCode"), "managed-settings.json", { providers: { default: "anthropic" } });
+      writeManaged(f, { providers: { default: "anthropic" } });
       expect(settingsValue<string>(load(f), "providers.default")).toBe("anthropic");
     } finally {
       f.cleanup();

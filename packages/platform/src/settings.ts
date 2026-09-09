@@ -40,18 +40,21 @@ export interface SourcePaths {
   managed: string;
 }
 
-/** managed-settings.json 落盘路径（Q-3：Windows C:\ProgramData\StandardCode\、macOS /Library/Application Support/StandardCode/）。 */
+/** managed-settings.json 落盘路径（Q-3：Windows C:\ProgramData\StandardCode\、macOS /Library/Application Support/StandardCode/）。
+ * programData=管理层基目录覆写（win32=Q-3 原文通道，缺省读 ProgramData env；darwin/Linux 供测试与部署显式覆写，
+ * 不读 ProgramData env——该 env 仅 Windows 语义，Windows runner 上会渗入 posix 分支，CI 三平台矩阵 2026-09-09 实测）。
+ * join 随 platform 语义（win32→win32.join，其余→posix.join），与实际读写文件系统一致。 */
 export function managedSettingsPath(
   platform: NodeJS.Platform = process.platform,
-  programData = process.env.ProgramData,
+  programData?: string,
 ): string {
   if (platform === "win32") {
-    return path.win32.join(programData ?? "C:\\ProgramData", "StandardCode", "managed-settings.json");
+    return path.win32.join(programData ?? process.env.ProgramData ?? "C:\\ProgramData", "StandardCode", "managed-settings.json");
   }
   if (platform === "darwin") {
-    return path.posix.join("/Library/Application Support/StandardCode", "managed-settings.json");
+    return path.posix.join(programData ?? "/Library/Application Support/StandardCode", "managed-settings.json");
   }
-  return path.posix.join("/etc/standardcode", "managed-settings.json"); // [自定] Q-3 未列 Linux
+  return path.posix.join(programData ?? "/etc/standardcode", "managed-settings.json"); // [自定] Q-3 未列 Linux
 }
 
 export function settingsSourcePaths(
