@@ -74,7 +74,7 @@ describe("settings 五来源合并序（§7.7）", () => {
       expect(all.docs.flag).toEqual({ model: { default: "flag-m" } });
 
       // 逐层撤除：managed 撤除 → flag 胜；无 flag → projectLocal；local 撤除 → projectShared；shared 撤除 → user
-      rmSync(managedSettingsPath("win32", f.programData));
+      rmSync(managedSettingsPath(process.platform, f.programData)); // 撤除=写入同源（writeManaged 同款当前平台解析）
       expect(settingsValue<string>(load(f, { flagOverrides: { model: { default: "flag-m" } } }), "model.default")).toBe("flag-m");
       const noFlag = loadSettings({ projectRoot: f.root, home: f.home, programData: f.programData });
       expect(settingsValue<string>(noFlag, "model.default")).toBe("local-m");
