@@ -1,8 +1,9 @@
 name: ci
 
-# ENG-070 CI 即验收：三平台矩阵必绿。本 workflow 仅 checkout+install+--version（WP-05 边界）；冷启动门禁由 WP-06 追加。
+# ENG-070 CI 即验收：三平台矩阵必绿。WP-05 边界=checkout+install+--version；冷启动门禁由 WP-06 追加。
 # WP-12：actions 钉版方式经提请按推荐档=major tag（可随时改 SHA）；checkout/setup-node/pnpm-action 均升 node24 运行时版本（v5/v5/v6——消 Node20 弃用告警；v6 另匹配本仓 pnpm@11）。
 # WP-12：冷启动阈值在步骤级 env 钉死 400——仓库级 env/vars 无法覆盖（ENG-070：CI 即验收，阈值不可被环境弱化）。
+# WP-13（M2 DoD①④）：全量测试门（vitest run，含 WP-03 压缩阈值表测）与七包 typecheck 门入 CI。
 on:
   push:
     branches: [main]
@@ -34,3 +35,7 @@ jobs:
         run: pnpm run bench:cold-start
         env:
           COLD_START_MAX_MS: 400
+      - name: typecheck gate
+        run: pnpm run typecheck
+      - name: test gate
+        run: pnpm run test
