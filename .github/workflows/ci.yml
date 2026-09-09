@@ -29,6 +29,16 @@ jobs:
           cache: pnpm
       - name: install
         run: pnpm install --frozen-lockfile
+      - name: install ripgrep (Grep 工具运行依赖，ADR-0029；brew/apt/choco=其指引三源)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ripgrep
+          else
+            choco install ripgrep -y --no-progress
+          fi
       - name: version gate
         run: pnpm exec standardcode --version
       - name: cold-start gate

@@ -45,10 +45,13 @@ function fixture(): Fixture {
 }
 
 function load(f: Fixture, opts: { flagOverrides?: Record<string, unknown>; platform?: NodeJS.Platform } = {}) {
+  // 本文件 fixture 与断言按 Q-3 Windows managed 路径（盘符+ProgramData）写死——platform 缺省钉 win32，
+  // 否则非 Windows runner 上 managed 层解析为 /etc/standardcode 读不到（CI 三平台 2026-09-09 实测）。
   return loadSettings({
     projectRoot: f.root,
     home: f.home,
     programData: f.programData,
+    platform: "win32",
     ...opts,
   });
 }

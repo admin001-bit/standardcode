@@ -98,8 +98,16 @@ export function isPersistencePath(target: string): boolean {
  * 4) rename 源/目标祖先链含受保护元数据名 → stop（祖先禁重命名，Codex 同构）。
  * 未信任工作区等更大面（S-8）属 M2 信任门，本模块不越权判定。
  */
+/** Windows 盘符绝对路径识别（跨平台必需）：posix 上 node:path.isAbsolute 对 "C:\..." 返回 false，
+ * 会把盘符路径当相对路径 resolve 掉、高危判定落空（CI 三平台矩阵 2026-09-09 实测抓出）。 */
+function looksLikeWindowsAbsolute(p: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p); // 盘符根或 UNC
+}
+
 export function guardPath(check: GuardCheck): GuardVerdict {
-  const target = isAbsolute(check.target) ? normalize(check.target) : resolve(normalize(check.cwd), normalize(check.target));
+  const target = isAbsolute(check.target) || looksLikeWindowsAbsolute(check.target)
+    ? normalize(check.target)
+    : resolve(normalize(check.cwd), normalize(check.target));
   if (isHighRiskPath(target)) {
     return { action: "stop", rule: "high-risk-path", detail: `target inside high-risk system path: ${target}` };
   }
@@ -112,7 +120,7 @@ export function guardPath(check: GuardCheck): GuardVerdict {
   }
   const sources = check.operation === "rename" && check.source ? [check.source] : [];
   for (const src of sources) {
-    const abs = isAbsolute(src) ? normalize(src) : resolve(normalize(check.cwd), normalize(src));
+    const abs = isAbsolute(src) || looksLikeWindowsAbsolute(src) ? normalize(src) : resolve(normalize(check.cwd), normalize(src));
     if (isProtectedMetadataName(basenameOf(abs)) || ancestryContainsProtected(abs)) {
       return { action: "stop", rule: "metadata-ancestor-rename", detail: `renaming protected metadata (ancestor chain): ${abs}` };
     }
