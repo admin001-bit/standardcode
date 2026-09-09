@@ -4,7 +4,7 @@
 // 模型目录为内置最小集（WP-01 边界：不做模型目录全集），数值取 v2.8 MDL-001 注记
 //（claude-sonnet-4-6=32000/128000、claude-opus-5=64000/128000，_695.js 实测），
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
-import { AnthropicAdapter, OpenAIChatAdapter, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
+import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
@@ -289,6 +289,11 @@ function buildProvider(
     if (!models) throw new Error("openai provider requires a model catalog: STANDARD_CODE_MODELS env or settings providers.openai.models（不内置 OpenAI 目录；键位见 ADR-0030）");
     const entries: Record<string, OpenAIModelEntry> = {};
     for (const m of models) entries[m] = { contextWindow: 128_000, maxOutputTokens: { default: 32_000, upper: 32_000 }, thinking: "none", input: ["text"] };
+    // 线制键（ADR-0039）：wire_api=chat（缺省，M1/M2 行为）| responses（M3 Responses API）
+    const wireApi = parseWireApi(env.STANDARD_CODE_WIRE_API ?? settingsValue<string>(settings, "providers.openai.wire_api"));
+    if (wireApi === "responses") {
+      return { provider: new ResponsesAdapter(entries, opts), providerName: name, catalog: models };
+    }
     return { provider: new OpenAIChatAdapter(entries, opts), providerName: name, catalog: models };
   }
   throw new Error(`unknown provider: ${name}（可选 anthropic|openai）`);

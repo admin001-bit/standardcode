@@ -30,8 +30,10 @@ export class ProviderError extends Error {
   }
 }
 
-// 上下文超限识别（两协议常见措辞）；Anthropic 官方文案 "prompt is too long"
-const CONTEXT_LENGTH_RE = /prompt is too long|context[_ ]length|maximum context length/i;
+// 上下文超限识别（三协议常见措辞）；Anthropic 官方文案 "prompt is too long"；
+// context_length_exceeded=OpenAI（Codex is_context_window_error 实证）；
+// model_context_window_exceeded=§2 行 M3 吸收清单映射词（M3 WP-02 增，chat/responses 两通道共用）。
+const CONTEXT_LENGTH_RE = /prompt is too long|context[_ ]length|context[_ ]window[_ ]exceeded|maximum context length/i;
 
 export async function classifyHttpError(res: Response): Promise<ProviderError> {
   const status = res.status;
