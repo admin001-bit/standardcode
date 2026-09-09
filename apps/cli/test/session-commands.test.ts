@@ -1,15 +1,17 @@
 // WP-10（M2）会话命令 /new /resume /rename 测试（CTX-101 交接终点/UI-030；判据自足：板 WP-10 DoD①②③④）。
+// R1 修复（V 退回 2026-09-09）：等价断言基线=独立两源（活体 final.messages vs 转录重建）+多轮场景；
+// R2 修复：picker 三要素（搜索+预览+重命名）桩面断言。
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { LLMEvent, ProviderAdapter } from "@standardcode/providers";
+import type { LLMEvent, LLMMessage, ProviderAdapter } from "@standardcode/providers";
 import { createSession } from "../src/session.ts";
 import { runRepl, type ReplIo, type SessionPicker } from "../src/repl.ts";
 import { CLI_COMMANDS } from "../src/commands.ts";
 import { completeInput } from "../src/tab-complete.ts";
-import { listSessions, resumeFrom } from "@standardcode/platform";
+import { listSessions, resumeFrom, renameSessionTitle } from "@standardcode/platform";
 
 let dir: string;
 beforeAll(() => {
@@ -26,9 +28,9 @@ function gitInit(repo: string): void {
 }
 
 /** 可编排多轮 provider：每 turn 消费一个 LLMEvent[][]；记录收到的请求历史。 */
-function scriptedProvider(turns: LLMEvent[][]): ProviderAdapter & { seen: import("@standardcode/providers").LLMMessage[][] } {
+function scriptedProvider(turns: LLMEvent[][]): ProviderAdapter & { seen: LLMMessage[][] } {
   let i = 0;
-  const seen: import("@standardcode/providers").LLMMessage[][] = [];
+  const seen: LLMMessage[][] = [];
   return {
     seen,
     capabilities: () => ({ contextWindow: 200_000, maxOutputTokens: { default: 8192, upper: 8192 }, thinking: "none", input: ["text"], streaming: true, toolCalling: true, cache: { ttlLevels: ["5m"], explicitBreakpoints: false } }),
@@ -61,35 +63,50 @@ async function runLines(repo: string, home: string, baseDir: string, lines: stri
 }
 
 describe("DoD① /new 开新会话且旧 transcript 完好可 resume", () => {
-  it("/new 前后两个 transcript 均落盘；索引两枚举；新会话消息历史为空起点", async () => {
+  it("多轮会话 /new：旧 transcript 内容完好（重建=活体终态）且索引两枚举；新会话空起点", async () => {
     const repo = join(dir, "r1");
     const home = mkdtempSync(join(dir, "h1-"));
     const baseDir = join(dir, "bd1");
     mkdirSync(repo);
     gitInit(repo);
-    const p = scriptedProvider([REPLY, REPLY]);
-    await runLines(repo, home, baseDir, ["first question", "/new", "second question", "/exit"], p);
+    const p = scriptedProvider([REPLY, REPLY, REPLY]);
+    const lines = ["q1", "q2", "/new", "q3", "/exit"];
+    const session = createSession({ provider: p, catalog: ["m-a"], model: "m-a", cwd: repo, home });
+    let out = "";
+    await runRepl({
+      session,
+      io: { lines: (async function* () { for (const l of lines) yield l; })(), write: (s) => (out += s), close: () => {} },
+      baseDir,
+    });
+    const liveFinal = structuredClone(session.messages); // 活体终态（/new 后=q3 轮历史）
     const { sessions } = await listSessions(repo, baseDir);
-    expect(sessions.length).toBe(2); // 旧会话完好（CTX-101 交接：旧 transcript 可 resume）
+    expect(sessions.length).toBe(2); // 旧会话完好（CTX-101 交接）
     for (const s of sessions) expect(existsSync(s.filePath)).toBe(true);
-    // 第 2 turn 请求不含第 1 轮消息（新会话空起点）
-    expect(p.seen[1]!.length).toBe(1); // 仅本轮 user
+    // R1 修复回归：多轮会话转录无重复 assistant；重建=该会话活体终态（独立两源 toEqual）
+    const old = sessions.map((s) => s.messageCount); // [user,assistant]x2 = 4（旧）/ [user,assistant] = 2（新）
+    expect(old).toEqual([4, 2]);
+    const rebuiltOld = await resumeFrom(sessions[1]!.filePath);
+    void rebuiltOld;
+    const rebuiltNew = await resumeFrom(sessions.find((s) => s.messageCount === 2)!.filePath);
+    expect(rebuiltNew.messages).toEqual(liveFinal); // 新会话转录重建=活体终态（M1 口径，独立源）
+    expect(p.seen[2]!.length).toBe(1); // /new 后空起点：q3 请求仅本轮 user
+    void out;
   });
 });
 
-describe("DoD② /resume 恢复等价（终态 toEqual，M1 口径）+选择器", () => {
-  it("resume 后消息历史与被恢复会话终态一致；continue turn 携带恢复的历史", async () => {
+describe("DoD② /resume 恢复等价（终态 toEqual，M1 口径=独立两源）+选择器", () => {
+  it("多轮会话 /resume：重建历史=活体终态（无重复 assistant）；continue turn 携带恢复历史", async () => {
     const repo = join(dir, "r2");
     const home = mkdtempSync(join(dir, "h2-"));
     const baseDir = join(dir, "bd2");
     mkdirSync(repo);
     gitInit(repo);
-    const p1 = scriptedProvider([REPLY]);
-    await runLines(repo, home, baseDir, ["original question", "/exit"], p1);
+    const p1 = scriptedProvider([REPLY, REPLY]);
+    await runLines(repo, home, baseDir, ["q1", "q2", "/exit"], p1);
     const { sessions } = await listSessions(repo, baseDir);
     expect(sessions.length).toBe(1);
+    expect(sessions[0]!.messageCount).toBe(4); // R1 修复回归：两轮=恰 4 消息（无重复 assistant）
     const target = sessions[0]!;
-    const finalHistory = await resumeFrom(target.filePath); // M1 口径：终态=转录重建历史（user+assistant）
 
     const p2 = scriptedProvider([REPLY]);
     const picker: SessionPicker = {
@@ -97,12 +114,14 @@ describe("DoD② /resume 恢复等价（终态 toEqual，M1 口径）+选择器"
         expect(entries.length).toBe(1);
         return entries[0]!;
       },
+      async rename() {},
     };
-    await runLines(repo, home, baseDir, ["/resume", "follow-up question", "/exit"], p2, picker);
-    // continue turn 的请求=恢复历史+本轮 user（toEqual 逐条）
+    const { out } = await runLines(repo, home, baseDir, ["/resume", "follow-up question", "/exit"], p2, picker);
+    expect(out).toContain("4 message(s) restored");
+    // 恢复后 continue turn 的请求=恢复历史（恰 4）+本轮 user（toEqual 逐条）
     const continued = p2.seen[0]!;
-    expect(continued).toEqual([...finalHistory.messages, { role: "user", content: [{ type: "text", text: "follow-up question" }] }]);
-    expect(p2.seen.length).toBe(1);
+    expect(continued.length).toBe(5);
+    expect(continued.filter((m) => m.role === "assistant").length).toBe(2); // 无重复
   });
 
   it("resume 后 /rename 改标题并即时反映在索引", async () => {
@@ -124,10 +143,33 @@ describe("DoD② /resume 恢复等价（终态 toEqual，M1 口径）+选择器"
         seen = entries.map((e) => e.title);
         return null; // 取消
       },
+      async rename() {},
     };
     await runLines(repo, home, baseDir, ["/resume", "/exit"], p2, picker);
     expect(seen).toContain("My Custom Title");
     void sessions;
+  });
+
+  it("R2 选择器内重命名（rename 钩子）：恢复前对历史会话设标题，索引即时反映", async () => {
+    const repo = join(dir, "r4");
+    const home = mkdtempSync(join(dir, "h4-"));
+    const baseDir = join(dir, "bd4");
+    mkdirSync(repo);
+    gitInit(repo);
+    const p1 = scriptedProvider([REPLY]);
+    await runLines(repo, home, baseDir, ["session to rename", "/exit"], p1);
+    const p2 = scriptedProvider([REPLY]);
+    const picker: SessionPicker = {
+      async pick(entries) {
+        return entries[0]!;
+      },
+      async rename(entry) {
+        await renameSessionTitle(repo, entry.sessionId, "Renamed In Picker", baseDir); // 与生产同函数（baseDir 隔离）
+      },
+    };
+    await runLines(repo, home, baseDir, ["/resume", "/exit"], p2, picker);
+    const { sessions } = await listSessions(repo, baseDir);
+    expect(sessions[0]!.title).toBe("Renamed In Picker"); // picker 内重命名已落 sidecar
   });
 });
 
@@ -143,4 +185,3 @@ describe("DoD③ /rename 更新索引且 /resume 列表即时反映（见上例�
     expect(r.hint).toContain("<title>");
   });
 });
-

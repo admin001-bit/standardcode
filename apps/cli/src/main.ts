@@ -84,13 +84,49 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     : undefined;
   const sessionPicker = process.stdin.isTTY
     ? {
+        // UI-030/附录 A 三要素（R2 修复）：搜索过滤+预览行+选择器内重命名（/[0-9]+ 可跳选择器直取序号）
         async pick(entries: SessionIndexEntry[]): Promise<SessionIndexEntry | null> {
           if (entries.length === 0) return null;
-          entries.forEach((e, i) => process.stdout.write(`  ${i + 1}. ${e.title || "(no title)"}  (${e.messageCount} msgs, last ${e.lastActivityAt ?? "?"})\n`));
-          const raw = await router.askLine("resume # (1-based, empty to cancel): ");
-          const n = Number(raw.trim());
-          if (!Number.isInteger(n) || n < 1 || n > entries.length) return null;
-          return entries[n - 1]!;
+          const fmt = (e: SessionIndexEntry) => `${e.title || "(no title)"}  (${e.messageCount} msgs, last ${e.lastActivityAt ?? "?"})`;
+          let candidates = entries;
+          for (;;) {
+            candidates.forEach((e, i) => process.stdout.write(`  ${i + 1}. ${fmt(e)}\n`));
+            const raw = await router.askLine("resume # / <search> / r<N> <title> to rename / empty to cancel: ");
+            const s = raw.trim();
+            if (s === "") return null;
+            if (/^\d+$/.test(s)) {
+              const n = Number(s);
+              if (n >= 1 && n <= candidates.length) return candidates[n - 1]!;
+              process.stdout.write(`[resume] out of range: ${n}\n`);
+              continue;
+            }
+            const rm = /^r(\d+)\s+(.+)$/.exec(s); // r<N> <title>：选择器内重命名（附录 A 要素三）
+            if (rm) {
+              const n = Number(rm[1]);
+              if (n >= 1 && n <= candidates.length) {
+                const { renameSessionTitle } = await import("@standardcode/platform");
+                await renameSessionTitle(process.cwd(), candidates[n - 1]!.sessionId, rm[2]!);
+                candidates = await (async () => (await import("@standardcode/platform")).listSessions(process.cwd()).then((r) => r.sessions))();
+                process.stdout.write(`[rename] session renamed\n`);
+                continue;
+              }
+              process.stdout.write(`[resume] out of range: ${n}\n`);
+              continue;
+            }
+            // 搜索：标题/id 子串过滤（附录 A 要素一）
+            const q = s.toLowerCase();
+            const filtered = candidates.filter((e) => e.title.toLowerCase().includes(q) || e.sessionId.toLowerCase().includes(q));
+            if (filtered.length === 0) process.stdout.write(`[resume] no match: ${s}\n`);
+            else candidates = filtered;
+          }
+        },
+        // 选择器内重命名钩子（恢复前对历史会话；空输入跳过）
+        async rename(entry: SessionIndexEntry): Promise<void> {
+          const raw = await router.askLine(`rename this session (empty to keep "${entry.title || "(no title)"}"): `);
+          if (raw.trim() !== "") {
+            const { renameSessionTitle } = await import("@standardcode/platform");
+            await renameSessionTitle(process.cwd(), entry.sessionId, raw.trim());
+          }
         },
       }
     : undefined;

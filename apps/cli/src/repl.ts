@@ -40,9 +40,13 @@ export interface ReplDeps {
   sessionPicker?: SessionPicker;
 }
 
-/** UI-030 会话选择器最小接口（列表→用户选择；搜索/预览/重命名交互在 picker 实现内）。 */
+/**
+ * UI-030 会话选择器（附录 A 三要素：搜索+预览+重命名）。
+ * pick=搜索+预览并返回选中项（null=取消）；rename=对指定会话设标题（选择器内重命名，/rename 只管当前会话）。
+ */
 export interface SessionPicker {
   pick(entries: SessionIndexEntry[]): Promise<SessionIndexEntry | null>;
+  rename(entry: SessionIndexEntry, projectRoot: string): Promise<void>;
 }
 
 /** 会话资产（WP-08 设施真实接入：锁+脱敏转录 writer；/new /resume 时随会话切换）。 */
@@ -88,9 +92,6 @@ async function switchSession(deps: ReplDeps, opts?: { sessionId: string; message
   const sessionId = opts?.sessionId ?? randomUUID();
   const assets = await createSessionAssets(deps, sessionId);
   if (assets) sessionAssets.set(s, assets);
-  if (!opts?.skipResumeWrite && assets && s.messages.length === 0) {
-    // /new：新会话开场记录（首条 user 由后续 turn 追加）
-  }
 }
 
 /** 转录追加（fire-and-forget；写入失败已由 Resilient 层降级，不阻断会话）。 */
@@ -162,6 +163,8 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         deps.io.write("[resume] cancelled\n");
         return false;
       }
+      // R2 修复（V 退回 2026-09-09）：选择器内重命名（附录 A 要素三）——picker 侧对历史会话设标题后重新枚举
+      await deps.sessionPicker.rename(chosen, deps.session.cwd);
       const r = await resumeFrom(chosen.filePath);
       await switchSession(deps, { sessionId: chosen.sessionId, messages: r.messages, skipResumeWrite: true });
       deps.io.write(`[resume] ${chosen.sessionId.slice(0, 8)} — ${chosen.title || "(no title)"}：${r.messages.length} message(s) restored${r.lastReason ? `（上次终态 ${r.lastReason}）` : ""}\n`);
@@ -212,6 +215,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
   transcriptAppend(deps, { kind: "user_message", message: { role: "user", content: [{ type: "text", text }] } });
+  const preTurnLength = s.messages.length; // R1 修复：本轮新增块=final.messages.slice(preTurnLength)——防历史 assistant 重复写入
   s.activeAbort = new AbortController();
   let doneReason: string | null = null;
   try {
@@ -307,9 +311,12 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       { onDone: (reason) => (doneReason = reason) },
     );
     s.messages = final.messages;
-    // WP-10：assistant 消息与 done 终态入转录（最后一对 user/assistant 之后的全部 assistant 块）
-    for (const m of final.messages) {
-      if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
+    // WP-10 R1 修复（V 退回 2026-09-09）：仅追加本轮新增的 assistant 块（原版全量遍历→第 N 轮重复写 N 条
+    // assistant，转录重建≠活体终态）。压缩发生（长度回缩）时本轮无新增可记——转录缺口登记于 done 前。
+    if (final.messages.length >= preTurnLength) {
+      for (const m of final.messages.slice(preTurnLength)) {
+        if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
+      }
     }
     transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
   } catch (err) {
