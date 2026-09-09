@@ -53,6 +53,8 @@ export interface Session {
   trust: TrustGateResult;
   /** 家目录覆写（测试隔离用；"总是允许"落盘路径随之，未传=真实家目录）。 */
   home?: string;
+  /** env 副本快照（WP-07 R-env 修复的断言面：settings env.* 注入经信任门控后落此；只读消费）。 */
+  env: Record<string, string | undefined>;
 }
 
 /** settings 注入 env 的粘滞登记读取点（Session 接口伴生函数；handle 本体由装配方持有）。 */
@@ -128,27 +130,27 @@ export function createSession(init: SessionInit = {}): Session {
     ...(init.platform !== undefined ? { platform: init.platform } : {}),
     ...(init.flagOverrides !== undefined ? { flagOverrides: init.flagOverrides } : {}),
   });
+  // WP-07 R-env 修复（V 退回 2026-09-09）：信任门控 MUST 先于 env 注入——§8.3 L380"多数 env 须先接受
+  // 信任对话框才生效"，env 注入消费门控后 settings（原版先注入后门控，未信任共享层 env.* 漏注入）。
+  // trust store 随 home 覆写（测试隔离；未传=真实家目录）。
+  const sessionCwd = init.cwd ?? process.cwd();
+  const trustStoreFile = init.home ? path.join(init.home, ".standardcode", "trust.json") : undefined;
+  const trust = createTrustGate(sessionCwd, settings, init.trusted ?? isTrusted(sessionCwd, readTrustStore(trustStoreFile)));
+  const gatedSettings = trust.settings;
   const settingsEnv: SettingsEnvHandle = init.settingsEnv ?? { injected: new Set() };
-  applySettingsEnv(settings, env, settingsEnv);
+  applySettingsEnv(gatedSettings, env, settingsEnv);
 
   // 记忆用户轨（WP-02）：precedence/autoRead 自 settings（ADR-0030 memory.* 键）；MEM-043 项目工作区检测
-  const sessionCwd = init.cwd ?? process.cwd();
   const memory = loadMemory({
     cwd: sessionCwd,
     ...(init.home !== undefined ? { home: init.home } : {}),
     managedDir: path.dirname(managedSettingsPath(init.platform ?? process.platform, init.programData)),
     inProject: init.memoryOptions?.inProject ?? detectProjectWorkspace(sessionCwd),
-    rulesEnabled: settingsValue<boolean>(settings, "memory.autoRead") ?? true,
-    precedence: (settingsValue<MemoryPrecedence>(settings, "memory.precedence") ?? "claude-first"),
+    rulesEnabled: settingsValue<boolean>(gatedSettings, "memory.autoRead") ?? true,
+    precedence: (settingsValue<MemoryPrecedence>(gatedSettings, "memory.precedence") ?? "claude-first"),
     ...(init.memoryOptions?.relevantPaths ? { relevantPaths: init.memoryOptions.relevantPaths } : {}),
   });
-  const thinking = resolveThinking(init.thinking, env, settings);
-  // WP-07（S-8/UI-061）：信任门控——未信任时共享层受控键（permissions.allow/additionalDirectories/env.*）
-  // 不参与合并；deny/ask 立即生效。门控后 settings 才进 env 注入与权限规则装配（顺序=门控先于消费）。
-  // trust store 随 home 覆写（测试隔离；未传=真实家目录）。
-  const trustStoreFile = init.home ? path.join(init.home, ".standardcode", "trust.json") : undefined;
-  const trust = createTrustGate(sessionCwd, settings, init.trusted ?? isTrusted(sessionCwd, readTrustStore(trustStoreFile)));
-  const gatedSettings = trust.settings;
+  const thinking = resolveThinking(init.thinking, env, gatedSettings);
   // WP-07：权限规则两源合并（settings 合并序供静态规则——allow 受信任门控与 broker 构造期清洗双重把关；
   // init.rules=程序化注入通道优先）。门控剔除已在 trust.settings 完成（allow/env 不进 merged）。
   const settingsRules: Required<Ruleset> = {
@@ -229,6 +231,7 @@ export function createSession(init: SessionInit = {}): Session {
     thinking,
     autocompact,
     trust,
+    env,
     ...(init.home !== undefined ? { home: init.home } : {}),
   };
 }

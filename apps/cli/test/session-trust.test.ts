@@ -115,12 +115,12 @@ describe("DoD①/② 确认流（ask → y/a/n；总是允许落 local 层）", 
 });
 
 describe("DoD② 仓库共享设置未信任不生效（session 装配级）", () => {
-  it("共享层 allow 未信任不进 broker；deny/ask 进；local 未跟踪 allow 进；接受信任后生效", () => {
+  it("共享层 allow 未信任不进 broker；deny/ask 进；local 未跟踪 allow 进；接受信任后生效；env.* 注入经门控（R-env）", () => {
     const homeC = freshHome();
     const repo = join(dir, "repoC");
     const std = join(repo, ".standardcode");
     mkdirSync(std, { recursive: true });
-    writeFileSync(join(std, "settings.json"), JSON.stringify({ permissions: { allow: ["Bash(git push *)"], deny: ["Bash(rm -rf *)"] } }), "utf8");
+    writeFileSync(join(std, "settings.json"), JSON.stringify({ permissions: { allow: ["Bash(git push *)"], deny: ["Bash(rm -rf *)"] }, "env.TRUST_SEED": "seeded" }), "utf8");
     writeFileSync(join(std, "settings.local.json"), JSON.stringify({ permissions: { allow: ["Bash(echo *)"] } }), "utf8");
     gitInit(repo);
     const session = createSession({ provider: echoProvider(), catalog: ["m-a"], model: "m-a", cwd: repo, home: homeC });
@@ -128,11 +128,14 @@ describe("DoD② 仓库共享设置未信任不生效（session 装配级）", (
     expect(session.broker.evaluate("Bash", { command: "git push origin x" }).decision).toBe("ask"); // 共享 allow 被门控
     expect(session.broker.evaluate("Bash", { command: "rm -rf x" }).decision).toBe("deny"); // deny 立即生效
     expect(session.broker.evaluate("Bash", { command: "echo hi" }).decision).toBe("allow"); // local 免信任保留
-    // 接受信任（store 随 home 覆写）→ 重开 session 共享 allow 生效
+    expect(session.env.TRUST_SEED).toBeUndefined(); // R-env：未信任共享层 env.* 不注入（V 退回面）
+    expect(session.trust.withheld.some((w) => w.key === "env.TRUST_SEED")).toBe(true);
+    // 接受信任（store 随 home 覆写）→ 重开 session 共享 allow 与 env.* 全生效
     acceptTrust(repo, { accepted: {} }, join(homeC, ".standardcode", "trust.json"));
     const s2 = createSession({ provider: echoProvider(), catalog: ["m-a"], model: "m-a", cwd: repo, home: homeC });
     expect(s2.trust.trusted).toBe(true);
     expect(s2.broker.evaluate("Bash", { command: "git push origin x" }).decision).toBe("allow");
+    expect(s2.env.TRUST_SEED).toBe("seeded");
   });
 });
 
