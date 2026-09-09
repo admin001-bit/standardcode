@@ -209,8 +209,8 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       });
       s.messages = r.newMessages;
       s.autocompact.recordCompactSuccess(r.postTokens, 0); // 手动压缩=独立轮次（工具轮计数不属于 turn 状态，Session 无 toolRounds）
-      // ADR-0038：压缩落盘 compact 记录（重建截断语义的历史起点；M2 偏差⑤清偿）
-      transcriptAppend(deps, { kind: "compact", mode: "manual", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary });
+      // ADR-0038：压缩落盘 compact 记录（重建截断语义的历史起点；M2 偏差⑤清偿；keptCount=partial 保留尾部消息数）
+      transcriptAppend(deps, { kind: "compact", mode: "manual", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary, keptCount: r.newMessages.length - 1 });
       return { summary: r.summary, preTokens: r.preTokens, postTokens: r.postTokens };
     },
     config: async (args) => {
@@ -358,6 +358,7 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
   const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
+  let turnCompactBase: number | null = null; // ADR-0038：turn 中压缩水位（perform 置位）——turn 末增量基点改从此位起（preTurnLength 前缀稳定假设被压缩破坏）
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
   s.activeAbort = new AbortController();
   let doneReason: string | null = null;
@@ -391,6 +392,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         autocompact: {
           evaluate: (used, turn) => s.autocompact.evaluate(used, turn),
           perform: async (turn) => {
+            const preCompact = [...s.messages]; // 压缩前快照（ADR-0038 对齐前提：未落盘消息先补写）
             const r = await runCompaction({
               provider: s.provider,
               model: s.model,
@@ -398,10 +400,23 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
               messages: s.messages,
               thinking: s.thinking,
             });
+            // ADR-0038 对齐前提：本 turn 尚未落盘、将被卷入压缩的消息先补写（保证 transcript 与压缩前活体对齐，
+            // compact 截断语义才有确定的重建基点——V 首验 R1：缺此步则压缩后增量 slice 错位、重建≠活体）
+            for (const m of preCompact.slice(preTurnLength)) {
+              transcriptAppend(deps, { kind: m.role === "assistant" ? "assistant_message" : "user_message", message: m });
+            }
             s.messages = r.newMessages;
             s.autocompact.recordCompactSuccess(r.postTokens, turn);
-            // ADR-0038：自动通道压缩落盘 compact 记录（与手动通道同语义）
-            transcriptAppend(deps, { kind: "compact", mode: "auto", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary });
+            // ADR-0038：自动通道压缩落盘 compact 记录（与手动通道同语义；keptCount=保留的尾部消息数，partial>0）
+            turnCompactBase = r.newMessages.length; // 压缩水位：turn 末增量从该位起（覆盖 preTurnLength 前缀稳定假设）
+            transcriptAppend(deps, {
+              kind: "compact",
+              mode: "auto",
+              preTokens: r.preTokens,
+              postTokens: r.postTokens,
+              summary: r.summary,
+              keptCount: r.newMessages.length - 1,
+            });
             return { ok: true, postCompactTokens: r.postTokens, messages: r.newMessages };
           },
         },
@@ -458,9 +473,11 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     s.messages = final.messages;
     // WP-10 R1+R3 修复（V 退回+复验发现）：仅追加本轮新增的消息块（含 prompt user/tool_result user/assistant
     // ——R3：tool_result 缺失即悬空 tool_use 协议硬不变量违例；M1 E2E③ 先例形制）。原版全量遍历→第 N 轮重复。
-    // 压缩发生（长度回缩）时本轮无新增可记。
-    if (final.messages.length >= preTurnLength) {
-      for (const m of final.messages.slice(preTurnLength)) {
+    // ADR-0038（V 首验 R1）：turn 中压缩置 turnCompactBase=压缩后水位——增量基点从水位起（preTurnLength 的
+    // 前缀稳定假设被压缩替换破坏，slice 错位会漏写重试回复）；水位前消息已由 perform 补写，无需重复。
+    const appendBase = turnCompactBase ?? preTurnLength;
+    if (final.messages.length >= appendBase) {
+      for (const m of final.messages.slice(appendBase)) {
         if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
         else if (m.role === "user") transcriptAppend(deps, { kind: "user_message", message: m });
       }

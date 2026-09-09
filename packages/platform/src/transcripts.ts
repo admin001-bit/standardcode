@@ -34,6 +34,8 @@ export interface TranscriptRecord {
   mode?: "manual" | "auto";
   /** kind=compact：9 段摘要文本（重建截断语义的历史起点锚点）。 */
   summary?: string;
+  /** kind=compact：压缩后保留的尾部消息数（newMessages−摘要自身；partial>0 时重建保留该尾部——ADR-0038 R1 修订）。 */
+  keptCount?: number;
 }
 
 export function transcriptsDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
@@ -109,12 +111,15 @@ export async function readTranscript(filePath: string): Promise<ReadBackResult> 
 }
 
 /** 从转录重建会话消息历史（E2E③"JSONL 可 resume"的程序化恢复；isMeta 注入不含于转录，恢复时无需剥离）。
- * compact 记录截断语义（ADR-0038）：遇 compact 丢弃此前全部消息、以摘要消息为起点——重建=压缩后活体终态。 */
+ * compact 记录截断语义（ADR-0038）：遇 compact 截断——保留此前消息的尾部 keptCount 条（partial 语义），
+ * 以摘要消息为起点接续；keptCount 缺省=全量清空（旧记录防御）。重建=压缩后活体终态。 */
 export function rebuildMessages(records: TranscriptRecord[]): LLMMessage[] {
   const out: LLMMessage[] = [];
   for (const r of records) {
     if (r.kind === "compact") {
-      out.length = 0;
+      const kept = r.keptCount ?? 0;
+      if (kept > 0) out.splice(0, Math.max(0, out.length - kept));
+      else out.length = 0;
       out.push({ role: "user", content: [{ type: "text", text: r.summary ?? "(compacted)" }] });
       continue;
     }

@@ -45,8 +45,27 @@ const REPLY: LLMEvent[] = [
   { type: "finish", reason: "completed", raw: "end_turn" } as LLMEvent,
 ];
 
-async function runLines(repo: string, home: string, baseDir: string, lines: string[], session?: ReturnType<typeof createSession>): Promise<{ out: string; session: ReturnType<typeof createSession> }> {
-  const provider = scriptedProvider([REPLY, REPLY, REPLY, REPLY, REPLY]);
+/** 自动压缩触发形态（M1/M2 先例=autocompact-route.test）：provider 抛 context_length ProviderError
+ * → 恢复链② reactive 瀑布升到 auto-compact 级 → 协调器四道闸放行 → autocompact.perform。 */
+class ContextLengthRound implements ProviderAdapter {
+  seen: LLMMessage[][] = [];
+  private round = 0;
+  capabilities(): import("@standardcode/providers").ModelCapabilities {
+    return { contextWindow: 200_000, maxOutputTokens: { default: 8192, upper: 8192 }, thinking: "none", input: ["text"], streaming: true, toolCalling: true, cache: { ttlLevels: ["5m"], explicitBreakpoints: false } };
+  }
+  countTokens = async () => 0;
+  async *stream(req: import("@standardcode/providers").LLMRequest): AsyncIterable<LLMEvent> {
+    this.seen.push(structuredClone(req.messages));
+    this.round++;
+    // 首轮带大 usage（inputTokens 190k>compactAt 160k=闸④放行）；二轮抛 context_length（catch 路由→perform）
+    yield { type: "usage", usage: { inputTokens: 190_000, outputTokens: 5, cacheCreationTokens: 0, cacheReadTokens: 0 } } as LLMEvent;
+    if (this.round === 2) throw new (await import("@standardcode/providers")).ProviderError("context_length", "prompt is too long: 250000 tokens > 200000 maximum");
+    for (const ev of REPLY) yield ev;
+  }
+}
+
+async function runLines(repo: string, home: string, baseDir: string, lines: string[], session?: ReturnType<typeof createSession>, turns?: LLMEvent[][], providerOverride?: ProviderAdapter): Promise<{ out: string; session: ReturnType<typeof createSession> }> {
+  const provider = providerOverride ?? scriptedProvider(turns ?? [REPLY, REPLY, REPLY, REPLY, REPLY]);
   const s = session ?? createSession({ provider, catalog: ["m-a"], model: "m-a", cwd: repo, home });
   let out = "";
   await runRepl({
@@ -90,6 +109,38 @@ describe("WP-01 DoD② 压缩路径落 compact 记录（ADR-0038）", () => {
     expect(resumed.messages).toEqual(session.messages); // 旧形为：重建=全史（M1 口径不回归）
     expect(resumed.skippedMalformed).toBe(0);
   }, 30_000);
+});
+
+describe("WP-01 V R1/R2 修复：自动通道（turn 中压缩）落盘+重建等价", () => {
+  it("usage 大值触发 autocompact.perform（mode=auto）→ compact 记录落盘+压缩前未落盘消息先补写+turn 末增量从水位起", async () => {
+    const repo = join(dir, "auto");
+    const home = mkdtempSync(join(dir, "ha-"));
+    const baseDir = join(dir, "bda");
+    mkdirSync(repo);
+    gitInit(repo);
+    // q1（正常轮）→ q2（provider 抛 context_length：perform 压缩替换历史）→ q3（压缩后正常轮）→ 退出
+    const { session, out } = await runLines(repo, home, baseDir, ["q1", "q2", "q3", "/exit"], undefined, undefined, new ContextLengthRound());
+    const { sessions } = await listSessions(repo, baseDir);
+    const { records } = await (await import("@standardcode/platform")).readTranscript(sessions[0].filePath);
+    const compacts = records.filter((r) => r.kind === "compact");
+    expect(compacts).toHaveLength(1);
+    expect(compacts[0]).toMatchObject({ mode: "auto", keptCount: expect.any(Number) });
+    expect((compacts[0].summary ?? "").length).toBeGreaterThan(0);
+    // 压缩前未落盘消息已补写：compact 前应恰有 q1 user/reply assistant + q2 prompt user（perform 补写）
+    const compactIdx = records.findIndex((r) => r.kind === "compact");
+    const before = records.slice(0, compactIdx).filter((r) => r.kind === "user_message" || r.kind === "assistant_message");
+    expect(before.map((r) => r.kind)).toEqual(["user_message", "assistant_message", "user_message"]);
+    expect(JSON.stringify(before.at(-1))).toContain("q2"); // prompt user 已在压缩前入转录
+    // turn 末增量从水位起：压缩后本轮重试回复（scripted 恒返 REPLY，重试请求不含本轮 prompt）+q3 轮全在 compact 之后
+    const after = records.slice(compactIdx + 1);
+    expect(JSON.stringify(after)).toContain('"reply"'); // 重试回复已入转录（修复前 slice 错位丢失）
+    expect(JSON.stringify(after)).toContain('"q3"');
+    // DoD③ 自动通道：重建=活体终态
+    const resumed = await resumeFrom(sessions[0].filePath);
+    expect(resumed.messages).toEqual(session.messages);
+    expect(resumed.skippedMalformed).toBe(0);
+    void out;
+  }, 40_000);
 });
 
 describe("WP-01 DoD③ 含压缩会话 resume 重建=活体终态（M1 toEqual 口径——缺口修复核心证据）", () => {

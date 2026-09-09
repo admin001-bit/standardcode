@@ -86,6 +86,24 @@ describe("TranscriptWriter/readTranscript（schema v1）", () => {
     expect(JSON.stringify(msgs)).not.toContain("old-q"); // 压缩前全史被丢弃
   });
 
+  it("compact keptCount=partial 保留语义：保留尾部 kept 条+摘要起点（R1 修订）", async () => {
+    const records = [
+      { schemaVersion: 1 as const, seq: 1, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "k1" }] } },
+      { schemaVersion: 1 as const, seq: 2, ts: "t", kind: "assistant_message" as const, message: { role: "assistant" as const, content: [{ type: "text" as const, text: "k2" }] } },
+      { schemaVersion: 1 as const, seq: 3, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "dropped" }] } },
+      { schemaVersion: 1 as const, seq: 4, ts: "t", kind: "compact" as const, mode: "manual" as const, preTokens: 800, postTokens: 120, summary: "PARTIAL-S", keptCount: 2 },
+      { schemaVersion: 1 as const, seq: 5, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "after" }] } },
+    ];
+    const msgs = rebuildMessages(records);
+    expect(msgs).toHaveLength(4); // 尾部 kept 2 条+摘要+增量
+    // kept=尾部 keptCount 条（压缩时序最后的 live 消息=k2,dropped——partial selectedIdx 压掉的是更早的 k1）
+    expect((msgs[0].content as Array<{ text: string }>)[0].text).toBe("k2");
+    expect((msgs[1].content as Array<{ text: string }>)[0].text).toBe("dropped");
+    expect((msgs[2].content as Array<{ text: string }>)[0].text).toBe("PARTIAL-S"); // 摘要接续
+    expect((msgs[3].content as Array<{ text: string }>)[0].text).toBe("after"); // 增量保留
+    expect(JSON.stringify(msgs)).not.toContain('"k1"'); // 被压前缀丢弃
+  });
+
   it("compact 多次截断：最后一次生效后增量保留；summary 缺失占位防御", async () => {
     const records = [
       { schemaVersion: 1 as const, seq: 1, ts: "t", kind: "user_message" as const, message: { role: "user" as const, content: [{ type: "text" as const, text: "v1" }] } },
