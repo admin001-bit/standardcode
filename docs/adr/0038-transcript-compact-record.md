@@ -9,9 +9,10 @@ M2 冻结时：压缩（手动 /compact 与自动 autocompact）只替换内存�
 
 ## 决策
 
-1. **新增记录 kind=`compact`**：`{kind:"compact", preTokens, postTokens, mode:"manual"|"auto", summary?}`——`summary` 存压缩摘要文本（重建时的历史起点锚点）。schemaVersion 保持 1：kind 枚举扩展对旧 reader 无害（旧 `rebuildMessages` 只消费 user_message/assistant_message，compact 记录被忽略=旧行为），不构成破坏性变更，无需次要版本废弃周期。
-2. **重建截断语义**：`rebuildMessages` 遇 compact 记录时，**丢弃其之前的全部消息**，以 `{role:"user", content:[{type:"text", text: summary}]}`（压缩摘要消息）作为历史起点，其后消息照常追加——重建结果=压缩后活体终态（与 M1 恢复等价口径一致）。多个 compact 记录按序多次截断（最后一次生效后的增量保留）。`summary` 缺失（兼容防御）时仅截断、以空摘要占位消息起点。
-3. **写入点**（repl 压缩两通道）：`runCompaction` 成功后、`s.messages = r.newMessages` 同步处——手动通道（ctx.compact，mode:"manual"）与自动通道（autocompact.perform，mode:"auto"）各 append 一条 compact 记录；写入失败不阻断会话（Resilient 层降级语义不变）。
+1. **新增记录 kind=`compact`**：`{kind:"compact", preTokens, postTokens, mode:"manual"|"auto", summary?, keptCount?}`——`summary` 存压缩摘要文本（重建时的历史起点锚点）；`keptCount`=压缩后保留的尾部消息数（修订 2026-09-10，见决策 2）。schemaVersion 保持 1：kind 枚举扩展对旧 reader 无害（旧 `rebuildMessages` 只消费 user_message/assistant_message，compact 记录被忽略=旧行为），不构成破坏性变更，无需次要版本废弃周期。
+2. **重建截断语义**：`rebuildMessages` 遇 compact 记录时，保留此前消息的**尾部 `keptCount` 条**（`keptCount`=`newMessages` 长度−摘要自身，partial 压缩>0；缺省=0 全量清空），以 `{role:"user", content:[{type:"text", text: summary}]}`（压缩摘要消息）作为起点接续，其后消息照常追加——重建结果=压缩后活体终态（与 M1 恢复等价口径一致）。多个 compact 记录按序多次截断。`summary` 缺失（兼容防御）时以占位消息 `"(compacted)"` 起点。
+   - **修订 2026-09-10（V 首验退回 R1）**：初版为"丢弃其之前的全部消息"且无 keptCount 字段；V 探针实证 turn 中自动压缩路径 `final.messages.slice(preTurnLength)` 的前缀稳定假设被压缩替换破坏（重试回复漏写→重建≠活体）——修订为 keptCount 保留语义+`runPromptTurn` turn 末增量基点改压缩水位 `turnCompactBase`（perform 置位）+perform 补写压缩前未落盘消息（对齐前提）。兼容性不变：keptCount 可选、缺省=初版全清语义，旧 reader 忽略未知字段。
+3. **写入点**（repl 压缩两通道）：`runCompaction` 成功后、`s.messages = r.newMessages` 同步处——手动通道（ctx.compact，mode:"manual"）与自动通道（autocompact.perform，mode:"auto"）各 append 一条 compact 记录；自动通道在写 compact 前先补写本 turn 压缩前未落盘消息（决策 2 修订的对齐前提）；写入失败不阻断会话（Resilient 层降级语义不变）。
 4. **seq 单调性不受影响**：compact 记录走 `TranscriptWriter.append` 正常递增 seq；done 记录的 usage 累计口径不变（压缩不重置 meter）。
 5. **迁移提示**：本扩展不要求旧文件迁移（无 compact 记录=现行为）；`/doctor` 迁移提示通道（ENG-080）在 settings schemaVersion 检查中已覆盖落盘契约告警面，本 ADR 不新增 doctor 检查项（kind 缺失非错误状态）。
 
