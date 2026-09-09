@@ -114,9 +114,8 @@ describe("R3 修复回归：工具轮 tool_result 入转录（悬空 tool_use=0�
       [
         { type: "tool_start", id: "t1", name: "Bash" } as LLMEvent,
         { type: "tool_input_delta", id: "t1", jsonPartial: JSON.stringify({ command: "echo probe-marker" }) } as LLMEvent,
-        { type: "tool_end", id: "t1" } as LLMEvent,
+        { type: "tool_end", id: "t1" } as unknown as LLMEvent,
         { type: "text_delta", text: "" } as LLMEvent,
-        { type: "finish", reason: "tool_use", raw: "tool_use" } as LLMEvent,
       ],
       REPLY,
     ]);
@@ -125,8 +124,9 @@ describe("R3 修复回归：工具轮 tool_result 入转录（悬空 tool_use=0�
       session,
       io: { lines: (async function* () { yield "run a command"; yield "/exit"; })(), write: () => {}, close: () => {} },
       baseDir,
+      confirm: { async confirm() { return "once"; } }, // default 模式 Bash=ask → 确认放行（工具真执行）
     });
-    const liveFinal = structuredClone(session.messages); // 活体：[user, asst(tool_use), user(tool_result), asst(text)]
+    const liveFinal = session.messages; // 活体终态（runRepl 内 s.messages=final.messages 已替换引用——取替换后数组本身）
     expect(liveFinal.some((m) => m.role === "user" && JSON.stringify(m).includes("tool_result"))).toBe(true);
     const { sessions } = await listSessions(repo, baseDir);
     const rebuilt = await resumeFrom(sessions[0]!.filePath);

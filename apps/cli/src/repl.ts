@@ -54,6 +54,8 @@ interface SessionAssets {
   sessionId: string;
   lock: SessionLock;
   writer: ResilientTranscriptWriter;
+  /** 转录 append 串行链（appendFile 并发完成序≠调用序——链式保物理行序；出口/切换前 drain）。 */
+  chain: Promise<unknown>;
 }
 
 /** 会话资产存放（模块级 WeakMap 按deps.session 实例跟踪；switchSession 原位换 deps.session 内容）。 */
@@ -70,7 +72,7 @@ async function createSessionAssets(deps: ReplDeps, sessionId: string): Promise<S
     const baseDirArgs = deps.baseDir ? [deps.baseDir] : [];
     const lock = await SessionLock.acquire(deps.session.cwd, sessionId, ...baseDirArgs);
     const writer = await ResilientTranscriptWriter.create(deps.session.cwd, sessionId, ...baseDirArgs);
-    return { sessionId, lock, writer };
+    return { sessionId, lock, writer, chain: Promise.resolve() };
   } catch (err) {
     deps.io.write(`[session] transcript unavailable (${err instanceof Error ? err.message : String(err)}) — session continues without persistence\n`);
     return null;
@@ -85,6 +87,7 @@ async function createSessionAssets(deps: ReplDeps, sessionId: string): Promise<S
 async function switchSession(deps: ReplDeps, opts?: { sessionId: string; messages?: Session["messages"]; skipResumeWrite?: boolean }): Promise<void> {
   const s = deps.session;
   const old = sessionAssets.get(s);
+  if (old) await old.chain.catch(() => {}); // 旧会话尾部先落盘（drain 串行链）
   if (old) await old.lock.release().catch(() => {});
   s.messages = opts?.messages ? [...opts.messages] : [];
   s.exitRequested = false;
@@ -98,7 +101,13 @@ async function switchSession(deps: ReplDeps, opts?: { sessionId: string; message
 function transcriptAppend(deps: ReplDeps, rec: Parameters<ResilientTranscriptWriter["append"]>[0]): void {
   const assets = sessionAssets.get(deps.session);
   if (!assets) return;
-  void assets.writer.append(rec).catch(() => {});
+  assets.chain = assets.chain.then(() => assets.writer.append(rec)).catch(() => {}); // 串行链：物理行序=调用序
+}
+
+/** 等待会话在途转录写入（出口/切换前调用——转录读取与写入竞速防护）。 */
+async function drainSessionAssets(deps: ReplDeps): Promise<void> {
+  const assets = sessionAssets.get(deps.session);
+  if (assets) await assets.chain;
 }
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
@@ -200,12 +209,14 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
       await runSlash(deps, commands, parsed.name, parsed.args);
     }
     if (deps.session.exitRequested) {
+      await drainSessionAssets(deps);
       const old = sessionAssets.get(deps.session);
       if (old) await old.lock.release().catch(() => {});
       deps.io.close();
       return;
     }
   }
+  await drainSessionAssets(deps);
   const old = sessionAssets.get(deps.session);
   if (old) await old.lock.release().catch(() => {});
   deps.io.close();
@@ -213,9 +224,8 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
 
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
+  const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
-  transcriptAppend(deps, { kind: "user_message", message: { role: "user", content: [{ type: "text", text }] } });
-  const preTurnLength = s.messages.length; // R1 修复：本轮新增块=final.messages.slice(preTurnLength)——防历史 assistant 重复写入
   s.activeAbort = new AbortController();
   let doneReason: string | null = null;
   try {
@@ -311,10 +321,9 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       { onDone: (reason) => (doneReason = reason) },
     );
     s.messages = final.messages;
-    // WP-10 R1 修复（V 退回 2026-09-09）：仅追加本轮新增的消息块（原版全量遍历→第 N 轮重复写 N 条
-    // assistant，转录重建≠活体终态）。压缩发生（长度回缩）时本轮无新增可记。
-    // R3 修复（复验发现）：user(tool_result) 同样入转录——缺失即悬空 tool_use（协议硬不变量），
-    // 含工具会话 /resume 后首 turn 必抛；M1 E2E③ 先例形制（tool_result 写入转录）。
+    // WP-10 R1+R3 修复（V 退回+复验发现）：仅追加本轮新增的消息块（含 prompt user/tool_result user/assistant
+    // ——R3：tool_result 缺失即悬空 tool_use 协议硬不变量违例；M1 E2E③ 先例形制）。原版全量遍历→第 N 轮重复。
+    // 压缩发生（长度回缩）时本轮无新增可记。
     if (final.messages.length >= preTurnLength) {
       for (const m of final.messages.slice(preTurnLength)) {
         if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
@@ -323,6 +332,11 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     }
     transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
   } catch (err) {
+    // 硬错误路径：turn 前的 user 消息此轮未入转录——补写（重建等价：尾随 user 无 assistant，V 首验认可形制）
+    for (const m of s.messages.slice(preTurnLength)) {
+      if (m.role === "user") transcriptAppend(deps, { kind: "user_message", message: m });
+      else if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
+    }
     transcriptAppend(deps, { kind: "done", reason: "error" });
     deps.io.write(`\n[error] ${err instanceof Error ? err.message : String(err)}\n`);
   } finally {
