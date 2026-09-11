@@ -32,7 +32,9 @@ describe("ResponsesAdapter 契约回放（DoD①）", () => {
       f({ type: "response.output_item.added", item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "Bash" } }),
       f({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"comm' }),
       f({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: 'and":"ls"}' }),
-      // 双事件结束（Bedrock 式）：finish 帧 + usage 分离帧（usage 可缺省实证的镜像——分离两帧也容忍）
+      // 双事件结束（Bedrock 式）：finish 帧（无 usage）+ usage 分离帧——finish 恰一次，
+      // usage 晚到仍收账（Codex completed 的 token_usage 可缺省 rs:841-858 的分离形态镜像）
+      f({ type: "response.completed", response: { id: "resp_1" } }),
       f({ type: "response.completed", response: { id: "resp_1", usage: { input_tokens: 88, output_tokens: 23, input_tokens_details: { cached_tokens: 64 } } } }),
     ].join("");
     const a = adapter(async () => sseResponse(frames));
@@ -44,9 +46,9 @@ describe("ResponsesAdapter 契约回放（DoD①）", () => {
     expect(events.filter((e) => e.type === "tool_input_delta").map((e: any) => e.jsonPartial).join("")).toBe('{"command":"ls"}');
     expect(events.filter((e) => e.type === "tool_input_delta").every((e: any) => e.id === "call_1")).toBe(true);
     expect(events).toContainEqual({ type: "tool_end", id: "call_1" });
-    // 工具轮 finish=tool_calls（Anthropic stop_reason=tool_use 同构）
-    const finish = events.find((e) => e.type === "finish") as any;
-    expect(finish).toEqual({ type: "finish", reason: "tool_calls", raw: "completed" });
+    // 工具轮 finish=tool_calls（Anthropic stop_reason=tool_use 同构）；分离两帧下 finish 恰一次
+    const finishes = events.filter((e) => e.type === "finish");
+    expect(finishes).toEqual([{ type: "finish", reason: "tool_calls", raw: "completed" }]);
     const usage = events.find((e) => e.type === "usage") as any;
     expect(usage.usage).toEqual({ inputTokens: 88, outputTokens: 23, cacheCreationTokens: 0, cacheReadTokens: 64 });
   });
