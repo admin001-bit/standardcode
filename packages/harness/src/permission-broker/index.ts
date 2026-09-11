@@ -175,6 +175,11 @@ export interface PermissionBroker {
   setMode(mode: PermissionMode): void;
   /** EXE-001 循环序推进一档。 */
   cycle(): PermissionMode;
+  /**
+   * WP-03（ORC-022 权限规则继承）：派生子 broker——规则数组共享（运行时 addAllow 双向可见），
+   * 模式独立（agent 定义 permissionMode 覆盖不影响父会话；CC §6.2 step2 `Pe = nt ?? e.permissionMode` 同构）。
+   */
+  derive(mode?: PermissionMode): PermissionBroker;
   evaluate(toolName: string, input: unknown): BrokerEvaluateResult;
   /**
    * WP-07（§8.3 持久化）："总是允许"运行时追加 allow 规则（落 local 层由调用方 persistAlwaysAllow 负责；
@@ -190,17 +195,28 @@ export interface BrokerOptions {
 
 /** 评估序（§8.3）：deny 规则 → Plan 硬门 → ask 规则 → allow 规则 → 模式缺省；deny 恒赢（B-13）。 */
 export function createPermissionBroker(opts: BrokerOptions = {}): PermissionBroker {
-  let mode: PermissionMode = opts.mode ?? "default";
   const deny = parseRuleset({ deny: opts.rules?.deny ?? [], ask: [], allow: [] }, "deny");
   const ask = parseRuleset({ deny: [], ask: opts.rules?.ask ?? [], allow: [] }, "ask");
   const allow: PermissionRule[] = parseRuleset({ deny: [], ask: [], allow: opts.rules?.allow ?? [] }, "allow");
   const allowRaw: string[] = [...(opts.rules?.allow ?? [])];
+  return buildBroker(deny, ask, allow, allowRaw, opts.mode ?? "default");
+}
 
+/** WP-03：规则数组共享的 broker 体（derive 派生同一数组实例——addAllow 双向可见，模式独立）。 */
+function buildBroker(
+  deny: PermissionRule[],
+  ask: PermissionRule[],
+  allow: PermissionRule[],
+  allowRaw: string[],
+  initialMode: PermissionMode,
+): PermissionBroker {
+  let mode: PermissionMode = initialMode;
   return {
     mode: () => mode,
     setMode: (m) => {
       mode = m;
     },
+    derive: (m) => buildBroker(deny, ask, allow, allowRaw, m ?? mode),
     cycle: () => {
       mode = PERMISSION_MODES[(PERMISSION_MODES.indexOf(mode) + 1) % PERMISSION_MODES.length]!;
       return mode;
