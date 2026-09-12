@@ -87,7 +87,9 @@ export async function spawnSubagentTask(
 
   if (v.normalized.background) {
     // 后台默认（ORC-022）：注册即返回（CC §4.2 async_launched 形状）；完成经注册表事件通知
-    void settle; // detached——完成/失败落账在 settle 内部
+    // settle 的 rejection 已在 runPromise 内落账（registry.fail）——此处必须挂 catch 防未处理拒绝
+    //（Node ≥15 默认崩溃；WP-04 V 首验 R1：与翻转分支 :103 同构对称）
+    void settle.catch(() => {});
     return { status: "async_launched", taskId, agentId: agentId ?? taskId };
   }
 

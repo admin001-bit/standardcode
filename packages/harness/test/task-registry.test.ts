@@ -130,6 +130,31 @@ describe("DoD③ 后台默认+同步 120s 翻转（env 覆盖通道）", () => {
     expect(reg.getConcurrentSubagents()).toBe(0); // 终态释放
   });
 
+  it("R1 回归（V 首验）：后台分支 provider 失败 → failed 落账+槽释放，无未处理拒绝", async () => {
+    const reg = createTaskRegistry({});
+    const failing: ProviderAdapter = {
+      capabilities: () => {
+        throw new Error("not used");
+      },
+      countTokens: async () => 0,
+      async *stream() {
+        throw new Error("provider exploded");
+      },
+    };
+    const failed = new Promise<string>((res) => reg.once("failed", (taskId) => res(taskId)));
+    const launch = await spawnSubagentTask(SPAWN, CTX, { ...RUN, provider: failing }, { registry: reg, env: {} });
+    expect(launch.status).toBe("async_launched");
+    if (launch.status !== "async_launched") return;
+    const taskId = await failed;
+    expect(taskId).toBe(launch.taskId);
+    expect(reg.get(taskId)?.status).toBe("failed");
+    expect(reg.get(taskId)?.error).toContain("provider exploded");
+    expect(reg.getConcurrentSubagents()).toBe(0);
+    // 失败任务同入逐出链（evictAfter 默认 30s；本例不触发，仅证 settle 路径一致）
+    await sleep(5);
+    expect(reg.get(taskId)?.status).toBe("failed");
+  });
+
   it("同步 120s 翻转：env STANDARD_CODE_AUTO_BACKGROUND_TASKS=30 → 30ms 后 backgrounded，翻转后完成仍落账", async () => {
     const reg = createTaskRegistry({});
     const g = gatedProvider();
