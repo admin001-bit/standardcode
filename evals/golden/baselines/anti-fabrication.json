@@ -1,0 +1,22 @@
+{
+  "schema": "standardcode-golden-antifabrication@1",
+  "constant": "Never fabricate or predict a pending agent's results.",
+  "assemblyOrder": [
+    "definition.systemPrompt?",
+    "parentContext.memory?(unless omitClaudeMd)",
+    "parentContext.gitStatus?(unless omitGitStatus)",
+    "ANTI_FABRICATION(always)"
+  ],
+  "variants": {
+    "minimal": "Never fabricate or predict a pending agent's results.",
+    "minimalWithContext": "<memory-section>\n\n<gitStatus-section>\n\nNever fabricate or predict a pending agent's results.",
+    "builtin:general-purpose": "Never fabricate or predict a pending agent's results.",
+    "builtinWithContext:general-purpose": "<memory-section>\n\n<gitStatus-section>\n\nNever fabricate or predict a pending agent's results.",
+    "builtin:Explore": "You are a read-only exploration agent. Never create, modify, or delete files; report findings with file paths and line numbers.\n\nNever fabricate or predict a pending agent's results.",
+    "builtinWithContext:Explore": "You are a read-only exploration agent. Never create, modify, or delete files; report findings with file paths and line numbers.\n\nNever fabricate or predict a pending agent's results.",
+    "builtin:Plan": "You are a planning agent. Read and analyze the codebase, then produce a step-by-step implementation plan with critical files. Do not write or run code.\n\nNever fabricate or predict a pending agent's results.",
+    "builtinWithContext:Plan": "You are a planning agent. Read and analyze the codebase, then produce a step-by-step implementation plan with critical files. Do not write or run code.\n\nNever fabricate or predict a pending agent's results.",
+    "builtin:statusline-setup": "Never fabricate or predict a pending agent's results.",
+    "builtinWithContext:statusline-setup": "<memory-section>\n\n<gitStatus-section>\n\nNever fabricate or predict a pending agent's results."
+  }
+}

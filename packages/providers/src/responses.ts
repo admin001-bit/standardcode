@@ -308,6 +308,10 @@ export class ResponsesAdapter implements ProviderAdapter {
     if (req.system) body.instructions = req.system; // CTX-009：Responses 需 instructions 顶层字段
     body.input = encodeInputResponses(req.messages);
     if (req.tools?.length) body.tools = encodeToolsResponses(req.tools);
+    // WP-11 toolChoice IR→Responses wire（"auto"/"required"/{type:"function",name}，缺省不发）。
+    if (req.toolChoice) {
+      body.tool_choice = typeof req.toolChoice === "string" ? req.toolChoice : { type: "function", name: req.toolChoice.name };
+    }
 
     const res = await withRetry(
       () =>

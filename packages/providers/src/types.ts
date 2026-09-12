@@ -60,6 +60,15 @@ export interface LLMRequest {
    * 原样带本字段即满足继承）。缺省=不向 Provider 发送 thinking 字段（与 M1 行为兼容）。
    */
   thinking?: { type: "adaptive" } | { type: "budget"; budgetTokens: number };
+  /**
+   * WP-11（v2.8 §2 行 M3 吸收清单 :111 "generateObject 强制合成工具调用"）：工具强制选择
+   * 协议无关 IR——"auto"=默认、"required"=必出工具调用、{type:"tool",name}=强制指定工具。
+   * generateObject 形态 = tools 单件（结构化对象 schema）+ {type:"tool"} 强制调用，
+   * 回复 tool_use input 的 JSON 即合成对象。缺省=不发字段；三 adapter wire 映射：
+   * Anthropic {type:"auto"|"any"|"tool",name?} / OpenAI "auto"|"required"|{type:"function",function:{name}}
+   * / Responses "auto"|"required"|{type:"function",name}（各测试钉形状）。
+   */
+  toolChoice?: "auto" | "required" | { type: "tool"; name: string };
 }
 
 // §5.3(1) ProviderAdapter 接口三方法

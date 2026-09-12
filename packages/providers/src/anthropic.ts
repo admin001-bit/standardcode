@@ -229,6 +229,11 @@ export class AnthropicAdapter implements ProviderAdapter {
           ? { type: "enabled" }
           : { type: "enabled", budget_tokens: req.thinking.budgetTokens };
     }
+    // WP-11 toolChoice IR→Anthropic wire（auto/any/tool 三型，缺省不发——generateObject 强制合成面）。
+    if (req.toolChoice) {
+      body.tool_choice =
+        req.toolChoice === "auto" ? { type: "auto" } : req.toolChoice === "required" ? { type: "any" } : { type: "tool", name: req.toolChoice.name };
+    }
 
     const res = await withRetry(
       () =>

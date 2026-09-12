@@ -213,6 +213,10 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       [maxKey]: req.maxTokens ?? caps.maxOutputTokens.default,
     };
     if (req.tools?.length) body.tools = encodeToolsOpenAI(req.tools);
+    // WP-11 toolChoice IR→OpenAI Chat wire（"auto"/"required"/具名 function，缺省不发）。
+    if (req.toolChoice) {
+      body.tool_choice = typeof req.toolChoice === "string" ? req.toolChoice : { type: "function", function: { name: req.toolChoice.name } };
+    }
 
     const res = await withRetry(
       () =>

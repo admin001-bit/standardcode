@@ -311,6 +311,21 @@ let subagentCounter = 0;
  * 同步执行一个 subagent（后台通道=WP-04；background=true 的分流在其接线）。
  * 独立上下文：messages 仅含本次 prompt（DoD②）；独立会话栈：独立 runAgentLoop 状态。
  */
+/**
+ * 子 agent 系统提示词装配（WP-03 装配序原样）：定义提示词（缺省最小壳）→ 主记忆段（omitClaudeMd 省略）
+ * → gitStatus 段（omitGitStatus 省略）→ 防伪造条目（ORC-041 常量进每个 agent 提示词——嵌套 spawn 同受约束）。
+ * WP-11 Golden 化：导出使生产（runSubagent :340）/采集（evals/golden/capture-antifab.mjs）/CI 守卫
+ * 三者同源——装配顺序或文本漂移即守卫红，重采基线必须显式 `npm run golden:capture:antifab`。
+ */
+export function buildSubagentSystem(def: SubagentDefinition, parentContext?: { memory?: string; gitStatus?: string }): string {
+  const sections: string[] = [];
+  if (def.systemPrompt) sections.push(def.systemPrompt);
+  if (parentContext?.memory && !def.omitClaudeMd) sections.push(parentContext.memory);
+  if (parentContext?.gitStatus && !def.omitGitStatus) sections.push(parentContext.gitStatus);
+  sections.push(SUBAGENT_ANTI_FABRICATION);
+  return sections.join("\n\n");
+}
+
 export async function runSubagent(
   normalized: Extract<SpawnValidationResult, { ok: true }>["normalized"],
   run: SubagentRunContext,
@@ -335,14 +350,9 @@ export async function runSubagent(
     gate = run.permission;
   }
 
-  // 系统提示词组装（WP-06 omit 规则消费面）：定义提示词（缺省最小壳）→ 主记忆段（omitClaudeMd 省略）
-  // → gitStatus 段（omitGitStatus 省略）→ 防伪造条目（ORC-041 常量进每个 agent 提示词——嵌套 spawn 同受约束）
-  const sections: string[] = [];
-  if (def.systemPrompt) sections.push(def.systemPrompt);
-  if (run.parentContext?.memory && !def.omitClaudeMd) sections.push(run.parentContext.memory);
-  if (run.parentContext?.gitStatus && !def.omitGitStatus) sections.push(run.parentContext.gitStatus);
-  sections.push(SUBAGENT_ANTI_FABRICATION);
-  const system = sections.join("\n\n");
+  // 系统提示词组装（WP-06 omit 规则消费面；WP-11 Golden 化=提取 buildSubagentSystem 导出，
+  // 生产/capture/CI 守卫三者同源——装配序或常量文本变化即守卫红，重采基线须显式 golden:capture:antifab）
+  const system = buildSubagentSystem(def, run.parentContext);
 
   // 独立上下文（DoD②）：不携带父会话任何消息
   const messages = [{ role: "user" as const, content: [{ type: "text" as const, text: normalized.prompt }] }];
