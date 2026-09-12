@@ -106,3 +106,48 @@ describe("E2E② 单工具输出 >50K tokens：30K 截断+落盘回传+摘要引
     expect(events.some((e) => e.type === "done")).toBe(true);
   });
 });
+
+// —— 落盘全文不变式（V R2 退回补齐：三缺陷形状确定性钉死；初版均匀 300000 夹具对乱序/丢头/窗口三态免疫）——
+
+import { runProcess } from "../../../packages/executor/src/index.ts";
+
+describe("E2E② spill 全文不变式（文件字节=全量 stdout，序=到达序；[CC] #f 单流语义）", () => {
+  const CAP = 30_000;
+  async function spillOf(args: string[]): Promise<string> {
+    const d = mkdtempSync(join(dir, "inv-"));
+    const r = await runProcess({ command: process.execPath, args, maxOutputChars: CAP, spill: { dir: d } });
+    expect(r.truncated).toBe(true);
+    expect(r.spillFile).toBeDefined();
+    return readFileSync(r.spillFile!, "utf8");
+  }
+
+  // 注：内容在子进程内 .repeat() 构造（非字面量入 -e 参数——Windows spawn 命令行 32K 上限 ENAMETOOLONG）。
+  const stdoutScript = (expr: string) => ["-e", `process.stdout.write(${expr})`];
+
+  it("异构跨块：H×40000 + T×260000（首块即越界）→ 文件逐字节=全量且序正确（乱序缺陷回归位）", async () => {
+    const full = "H".repeat(40_000) + "T".repeat(260_000);
+    const got = await spillOf(stdoutScript(`"H".repeat(40000)+"T".repeat(260000)`));
+    expect(got).toBe(full);
+  }, 30_000);
+
+  it("单块越界：cap+1000 一块写出 → 头部 30K 不得丢（丢头缺陷回归位）", async () => {
+    const full = "E".repeat(31_000);
+    const got = await spillOf(stdoutScript(`"E".repeat(31000)`));
+    expect(got).toBe(full);
+  }, 30_000);
+
+  it("跨 cap 窗口：A×20000+B×20000 → 窗口 (cap−len(cur)) 不得截空（窗口缺陷回归位）", async () => {
+    const full = "A".repeat(20_000) + "B".repeat(20_000);
+    const got = await spillOf(stdoutScript(`"A".repeat(20000)+"B".repeat(20000)`));
+    expect(got).toBe(full);
+  }, 30_000);
+
+  it("stderr 越界流全量+[CC] #f 前缀（注：未越界的小流不进 spill=by-design，文件承载=越界流全量）", async () => {
+    const got = await spillOf(["-e", `process.stderr.write("E".repeat(31000)+"e1\\n");process.stdout.write("tiny")`]);
+    // 溢出的 stderr 流：完整窗口在档（头部 30K 段+溢出段）+整块 [stderr] 前缀（[CC] #f append 形状）
+    expect(got.startsWith("[stderr] ")).toBe(true);
+    expect(got).toContain("E".repeat(30_000)); // 头窗口完整（丢头/窗口缺陷在此现形）
+    expect(got).toContain("e1");
+    expect(got.length).toBeGreaterThanOrEqual(31_000 + "[stderr] ".length); // 全量在档
+  }, 30_000);
+});

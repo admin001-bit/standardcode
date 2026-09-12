@@ -76,46 +76,61 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
   let stdout = "";
   let stderr = "";
   let truncated = false;
-  // 超限全文落盘（E2E② 行为载体；[CC] _440.js:5279-5300 stdoutToFile/#f 同构）：截断后余部（含 stderr
-  // 的 "[stderr] " 前缀混流，到达序）追加写 spill 文件；首个截断事件时先补写已收头部，保证文件=全量输出。
+  // 超限全文落盘（E2E② 行为载体；[CC] _440.js:5282-5290 #f 同构：stdout 原样、stderr 加 "[stderr] "
+  // 前缀，混流；单流内字节序=到达序）。文件=全量输出不变式：首触发时一次性写足"完整 cap 窗口（已收头部
+  // +本块内到达 cap 的余下部分）+ 本块超出 cap 的溢出"，其后每块整写（首触发即置 headWritten，杜绝乱序/
+  // 丢头/窗口缺失——【勘误 2026-09-13 V：初版 headWritten 只写"已收头部"导致异块乱序、单块丢 30K 头、
+  // 跨 cap 窗口截空三缺陷，均匀夹具恰好免疫故未被首测捕获】）。文件流 lazy 创建（V R3：不截断不落 0 字节文件）。
   let spillStream: WriteStream | null = null;
   let spillFile: string | undefined;
   let spillBytes = 0;
-  if (opts.spill) {
+  let spillFailed = false;
+  const ensureSpill = (): WriteStream | null => {
+    if (!opts.spill || spillStream || spillFailed) return spillStream;
     spillFile = path.join(opts.spill.dir, `standardcode-tool-output-${process.pid}-${Date.now()}.txt`);
-    spillStream = createWriteStream(spillFile, { encoding: "utf8" });
-  }
-  const headWritten = { out: false, err: false };
+    try {
+      spillStream = createWriteStream(spillFile, { encoding: "utf8" });
+    } catch {
+      spillFailed = true;
+      spillStream = null;
+    }
+    return spillStream;
+  };
   const spillWrite = (tag: "out" | "err", text: string) => {
-    if (!spillStream || text === "") return;
+    if (text === "") return;
     const s = tag === "err" ? `[stderr] ${text}` : text;
+    const st = ensureSpill();
+    if (!st) return;
     spillBytes += Buffer.byteLength(s, "utf8");
-    spillStream.write(s);
+    st.write(s);
   };
   const capInto = (tag: "out" | "err", sink: () => string, set: (v: string) => void, chunk: Buffer) => {
     const cur = sink();
-    const spillHead = () => {
-      if (!headWritten[tag] && cur !== "") { // 空 head 不置位——首 chunk 即越界时，头部由后续触发补写
-        spillWrite(tag, cur); // 全文完整性：截断前已收头部入档
-        headWritten[tag] = true;
-      }
-    };
+    const text = chunk.toString("utf8");
     if (cur.length >= cap) {
       truncated = true;
-      spillHead();
-      spillWrite(tag, chunk.toString("utf8"));
+      if (!headWritten[tag]) {
+        spillWrite(tag, cur); // 恰满 cap 未越界的迟到块：头部此刻才入档
+        headWritten[tag] = true;
+      }
+      spillWrite(tag, text);
       return;
     }
-    const next = cur + chunk.toString("utf8");
+    const next = cur + text;
     if (next.length > cap) {
       set(next.slice(0, cap));
       truncated = true;
-      spillHead();
-      spillWrite(tag, next.slice(cap));
+      if (!headWritten[tag]) {
+        spillWrite(tag, next); // 完整窗口（cap 内）+溢出部分一次写足，序=到达序
+        headWritten[tag] = true;
+      } else {
+        spillWrite(tag, text);
+      }
       return;
     }
     set(next);
   };
+  const headWritten = { out: false, err: false };
   child.stdout!.on("data", (d: Buffer) => capInto("out", () => stdout, (v) => (stdout = v), d));
   child.stderr!.on("data", (d: Buffer) => capInto("err", () => stderr, (v) => (stderr = v), d));
   const drainSpill = (): Promise<void> =>

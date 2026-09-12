@@ -128,12 +128,15 @@ describe("DoD③ TaskStop 两阶段断言（宽限期内核未杀）", () => {
     const child = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 60000)"], { stdio: "ignore" });
     child.unref();
     reg.attachRuntime(t.taskId, { abort: new AbortController(), children: new Set([child]) });
-    await stopTask(reg, t.taskId, { graceMs: 800 });
-    const exited = await new Promise<boolean>((res) => {
+    // 竞态修复【勘误 2026-09-13 V：CI ubuntu/macos 确定性红】：stopTask 必等满 grace（800ms），SIGTERM
+    // 下子进程约 ms 级即发 'exit'——原实现在 `await stopTask` 之后才挂监听，事件错过 → exited 恒 false。
+    // 监听前置到 stopTask 之前（两阶段终止语义断言不弱化）。
+    const exited = new Promise<boolean>((res) => {
       child.once("exit", () => res(true));
-      setTimeout(() => res(false), 4_000);
+      setTimeout(() => res(false), 8_000);
     });
-    expect(exited).toBe(true); // 强杀生效
+    await stopTask(reg, t.taskId, { graceMs: 800 });
+    expect(await exited).toBe(true); // 终止生效（事件在 stop 期间或之前到达）
     expect(child.exitCode !== null || child.signalCode !== null || process.platform === "win32").toBe(true);
   }, 20_000);
 });
