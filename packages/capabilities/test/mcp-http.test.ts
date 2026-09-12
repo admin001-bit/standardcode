@@ -201,3 +201,55 @@ describe("legacy SSE（DoD② sse 型+全链回环）", () => {
     await conn.close();
   }, 10000);
 });
+
+describe("嵌套过期守卫（V 观察②判别覆盖）", () => {
+  let srv2: Server;
+  let url2: string;
+  let initSeen = 0;
+  let toolsSeen = 0;
+  beforeAll(async () => {
+    srv2 = createServer(async (req, res) => {
+      const body = await readBody(req);
+      const msg = JSON.parse(body) as { method?: string; id?: number | string };
+      if (msg.method === "notifications/initialized") {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      if (msg.method === "initialize") {
+        initSeen++;
+        if (initSeen === 1) {
+          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": "FIRST" });
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", serverInfo: { name: "fx2" }, capabilities: {} } }));
+          return;
+        }
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("No valid session ID"); // 重握手也过期=嵌套场景
+        return;
+      }
+      if (msg.method === "tools/list") {
+        toolsSeen++;
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("Server not initialized");
+        return;
+      }
+      res.writeHead(400);
+      res.end();
+    });
+    url2 = await listen(srv2);
+  });
+  afterAll(async () => {
+    await new Promise<void>((r) => srv2.close(() => r()));
+  });
+  it("重握手再过期：initialize 恰 2 次封顶（守卫防失控循环）、tools 恰 1 次、请求以失败收束", async () => {
+    initSeen = 0;
+    toolsSeen = 0;
+    const conn = await connectServer(entry(url2), { cwd: "/", sessionId: "n1" });
+    expect(conn.status).toBe("connected");
+    await expect(conn.client!.request("tools/list")).rejects.toThrow(/recovery unavailable/);
+    expect(initSeen).toBe(2); // 首握手+一次重握手；无第三次（守卫生效判别点）
+    expect(toolsSeen).toBe(1); // tools 不重试（重握手已败）
+    await expect(conn.client!.request("tools/list")).rejects.toThrow(/closed|expired/);
+    await conn.close();
+  }, 10000);
+});

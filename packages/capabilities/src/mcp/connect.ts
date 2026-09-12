@@ -70,8 +70,9 @@ export async function connectServer(entry: McpServerEntry, opts: ConnectOptions)
     status: "pending",
     close: async () => {},
   };
+  let transport: McpTransport | null = null;
   try {
-    const transport = opts.transportFactory
+    transport = opts.transportFactory
       ? opts.transportFactory(entry.config)
       : makeTransport(entry.config, { cwd: opts.cwd, sessionId: opts.sessionId, baseEnv: opts.envBase, fetchImpl: opts.fetchImpl, maxLineBytes: opts.maxLineBytes });
     const client = new McpClient(transport, {
@@ -97,6 +98,9 @@ export async function connectServer(entry: McpServerEntry, opts: ConnectOptions)
     conn.status = "failed";
     conn.error = e instanceof Error ? e.message : String(e);
     await conn.close().catch(() => {});
+    // V 核销观察①清偿：失败路径（版本拒绝/握手超时/spawn 后异常）已 spawn 的子进程必须回收——
+    // conn.close 只在 connected 成功后被替换为真实实现，此处 transport.close 兜底（StdioTransport.close 幂等）。
+    await transport?.close().catch(() => {});
   }
   return conn;
 }

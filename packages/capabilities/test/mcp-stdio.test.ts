@@ -129,3 +129,55 @@ describe("stdio 全链（DoD③④⑥）", () => {
     expect(conn.error).toBeTruthy();
   }, 15000);
 });
+
+// —— V 核销观察①清偿回归：失败路径子进程回收（孤儿防护） ——
+const BADVER_FIXTURE = `
+let buf = "";
+process.stdin.on("data", (c) => {
+  buf += c.toString("utf8");
+  let i;
+  while ((i = buf.indexOf("\\n")) >= 0) {
+    const t = buf.slice(0, i).trim();
+    buf = buf.slice(i + 1);
+    if (!t) continue;
+    const m = JSON.parse(t);
+    if (m.method === "initialize") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2026-07-28" } }) + "\\n");
+    }
+  }
+});
+setTimeout(() => process.exit(0), 10000); // 不被回收则 10s 存活（测试须在 ~2s 内见其死亡）
+`;
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("失败路径子进程回收（V 观察①）", () => {
+  it("握手版本被拒→failed 后已 spawn 子进程被 kill（不孤儿）", async () => {
+    const badver = join(dir, "badver.mjs");
+    await writeFile(badver, BADVER_FIXTURE, "utf8");
+    let captured: StdioTransport | null = null;
+    const conn = await connectServer(
+      entry({ type: "stdio", command: process.execPath, args: [badver] }),
+      {
+        cwd: dir,
+        sessionId: "s-orphan",
+        transportFactory: (config) => {
+          captured = new StdioTransport({ config: config as never, cwd: dir, sessionId: "s-orphan" });
+          return captured;
+        },
+      },
+    );
+    expect(conn.status).toBe("failed");
+    expect(conn.error).toMatch(/unsupported protocol version/);
+    const pid = captured!.childPid!;
+    expect(typeof pid).toBe("number");
+    await waitFor(() => !alive(pid), 3000); // 回收断言：SIGTERM 送达且进程消失
+  }, 20000);
+});
