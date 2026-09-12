@@ -5,3 +5,4 @@ export * from "./config.ts";
 export * from "./client.ts";
 export * from "./transport.ts";
 export * from "./connect.ts";
+export * from "./tools.ts";

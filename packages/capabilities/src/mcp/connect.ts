@@ -10,6 +10,8 @@ export type McpServerStatus = "pending" | "connected" | "failed" | "needs-auth";
 export interface McpConnection {
   name: string;
   origin: McpServerEntry["origin"];
+  /** WP-02：server 解析后配置（per-server timeout/transport 消费面）。 */
+  config?: McpServerEntry["config"];
   status: McpServerStatus;
   error?: string;
   /** 前置校验错误码（UNCONFIGURED/INVALID_CONFIG——未发起连接即落 failed 的形状位）。 */
@@ -67,6 +69,7 @@ export async function connectServer(entry: McpServerEntry, opts: ConnectOptions)
   const conn: McpConnection = {
     name: entry.name,
     origin: entry.origin,
+    config: entry.config,
     status: "pending",
     close: async () => {},
   };

@@ -79,6 +79,8 @@ export class McpClient {
   private pending = new Map<JsonRpcId, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }>();
   private messageCb: ((msg: JsonRpcMessage) => void) | null = null;
   private notificationCb: ((n: JsonRpcNotification) => void) | null = null;
+  private notificationListeners: ((n: JsonRpcNotification) => void)[] = [];
+  private activityCbs: (() => void)[] = [];
   private closed = false;
 
   constructor(
@@ -98,6 +100,24 @@ export class McpClient {
     this.notificationCb = cb;
   }
 
+  /** WP-02：多监听（工具刷新/进度活动共享通知流；与单槽 onNotification 并行不斥）。 */
+  addNotificationListener(cb: (n: JsonRpcNotification) => void): () => void {
+    this.notificationListeners.push(cb);
+    return () => {
+      const i = this.notificationListeners.indexOf(cb);
+      if (i >= 0) this.notificationListeners.splice(i, 1);
+    };
+  }
+
+  /** WP-02 idle 计时复位源：任何入站帧（响应/通知/服务器请求）都算活动（DoD⑤"无响应/无 progress"形状）。 */
+  onActivity(cb: () => void): () => void {
+    this.activityCbs.push(cb);
+    return () => {
+      const i = this.activityCbs.indexOf(cb);
+      if (i >= 0) this.activityCbs.splice(i, 1);
+    };
+  }
+
   async initialize(): Promise<InitializeResult> {
     const res = (await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_LATEST,
@@ -113,7 +133,7 @@ export class McpClient {
     return res;
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, reqOpts?: { signal?: AbortSignal }): Promise<unknown> {
     if (this.closed) return Promise.reject(new McpTimeoutError(`MCP client closed; cannot send ${method}`));
     const id = this.nextId++;
     const req: JsonRpcRequest = { jsonrpc: "2.0", id, method, ...(params !== undefined ? { params } : {}) };
@@ -125,9 +145,25 @@ export class McpClient {
       }, timeoutMs) : undefined;
       timer?.unref?.();
       this.pending.set(id, { resolve, reject, timer });
+      // WP-02 取消面：abort→notifications/cancelled（MCP 标准帧）+本地拒绝；终态撤 listener。
+      const signal = reqOpts?.signal;
+      const onAbort = () => {
+        if (!this.pending.delete(id)) return;
+        if (timer) clearTimeout(timer);
+        void this.notify("notifications/cancelled", { requestId: id, reason: "user cancelled" }).catch(() => {});
+        reject(new Error(`MCP request cancelled: ${method}`));
+      };
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
       this.transport.send(req).catch((e) => {
         this.pending.delete(id);
         if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         reject(e instanceof Error ? e : new Error(String(e)));
       });
     });
@@ -145,6 +181,7 @@ export class McpClient {
   }
 
   private route(msg: JsonRpcMessage): void {
+    for (const cb of this.activityCbs) cb();
     this.messageCb?.(msg);
     if (isResponse(msg)) {
       const p = this.pending.get(msg.id);
@@ -157,6 +194,7 @@ export class McpClient {
     }
     if (isNotification(msg)) {
       this.notificationCb?.(msg);
+      for (const l of this.notificationListeners) l(msg);
       return;
     }
     if (isRequest(msg)) void this.handleServerRequest(msg);

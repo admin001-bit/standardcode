@@ -478,6 +478,10 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
 
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
+  // WP-02（M4）：MCP 后台终态通知注入（turn 首前插 <system-reminder>，SEC-010 载体同构；isMeta 注入不入转录=transcripts.ts:113 口径）
+  for (const note of s.drainMcpNotifications()) {
+    s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${note}</system-reminder>` }] });
+  }
   const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
   let turnCompactBase: number | null = null; // ADR-0038：turn 中压缩水位（perform 置位）——turn 末增量基点改从此位起（preTurnLength 前缀稳定假设被压缩破坏）
   s.messages.push({ role: "user", content: [{ type: "text", text }] });

@@ -58,6 +58,8 @@ export interface RunToolsOptions {
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生的子进程上报（任务级追踪面——TaskStop 两阶段终止的作用对象）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
+  /** WP-02（M4）：执行侧标记透传进 ToolContext（MCP 转后台主循环判定）。 */
+  agentKind?: "main" | "subagent";
 }
 
 /**
@@ -74,6 +76,7 @@ export async function runTools(calls: ToolCall[], opts: RunToolsOptions): Promis
       procs.push(child);
       opts.onProcess?.(child); // WP-05：任务级子进程追踪
     },
+    ...(opts.agentKind ? { agentKind: opts.agentKind } : {}), // WP-02（M4）：执行侧标记
   };
   const runOne = async (call: ToolCall): Promise<void> => {
     outcomes.set(call.id, await runOneTool(call, ctx, opts));

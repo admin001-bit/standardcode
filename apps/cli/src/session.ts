@@ -6,7 +6,7 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createStandardTools, loadMcpServerConfigs, type McpConnection, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, readTrustStore, type TrustGateResult } from "@standardcode/platform";
@@ -57,6 +57,12 @@ export interface Session {
   additionalDirectories: string[];
   /** env 副本快照（WP-07 R-env 修复的断言面：settings env.* 注入经信任门控后落此；只读消费）。 */
   env: Record<string, string | undefined>;
+  /** M4-WP-02：MCP 连接清单（WP-03 /mcp 消费面；status/origin/error 均在 McpConnection）。 */
+  mcpConnections: McpConnection[];
+  /** MCP 装配 Promise（不阻塞启动；单 server 失败只降级 DoD④，异常静默）。 */
+  mcpReady: Promise<void>;
+  /** drain 后台终态通知（repl turn 首注入 <system-reminder>，SEC-010 载体同构）。 */
+  drainMcpNotifications(): string[];
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -229,6 +235,10 @@ export function createSession(init: SessionInit = {}): Session {
     ...(init.home !== undefined ? { home: init.home } : {}),
     // —— WP-11：/provider /reload /add-dir 会话操作面（MDL-010~013 下一 turn 生效；M1 环境重载语义）——
     taskRegistry: createTaskRegistry(),
+    // M4-WP-02：MCP 装配占位（真值在 session 构造后即位——见下方 bootstrap 块）。
+    mcpConnections: [],
+    mcpReady: Promise.resolve(),
+    drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
       const built = buildProvider(n, env, gatedSettings);
@@ -267,6 +277,59 @@ export function createSession(init: SessionInit = {}): Session {
       session.additionalDirectories.push(path.resolve(dir));
     },
   };
+  // —— M4-WP-02：MCP 装配（ADR-0040；gated docs=信任门前置——未信任项目共享层不进；per-server 批准制=WP-03 叠加）——
+  session.mcpConnections = [];
+  const mcpNotes: string[] = [];
+  session.drainMcpNotifications = () => mcpNotes.splice(0, mcpNotes.length);
+  const mcpToolNamesByServer = new Map<string, string[]>();
+  async function refreshServerTools(conn: McpConnection): Promise<void> {
+    if (!conn.client) return;
+    const built = await buildMcpToolsForConnection(conn.client, {
+      serverName: conn.name,
+      transport: conn.config?.type ?? "stdio",
+      serverTimeout: conn.config?.timeout,
+      env,
+      isMainLoop: true,
+      registry: session.taskRegistry,
+      notifications: mcpNotes,
+      onToolsChanged: (serverName) => {
+        const c = session.mcpConnections.find((x) => x.name === serverName);
+        if (c) void refreshServerTools(c).catch(() => {}); // 刷新竞态=后写覆盖（[自定] 从简，list_changed 低频）
+      },
+    });
+    const prev = new Set(mcpToolNamesByServer.get(conn.name) ?? []);
+    if (prev.size > 0) {
+      for (let i = session.tools.length - 1; i >= 0; i--) if (prev.has(session.tools[i]!.name)) session.tools.splice(i, 1);
+    }
+    session.tools.push(...built.tools);
+    mcpToolNamesByServer.set(conn.name, built.tools.map((t) => t.name));
+  }
+  session.mcpReady = (async () => {
+    try {
+      const mcpDocs: Partial<Record<McpSourceName, Record<string, unknown> | null>> = {};
+      for (const src of ["user", "projectShared", "projectLocal", "flag", "managed"] as McpSourceName[]) {
+        mcpDocs[src] = (gatedSettings.docs[src] as Record<string, unknown> | null) ?? null;
+      }
+      // S-3/§8.3：项目共享层 server（随 clone 注入）信任确认前整体不加载（SEC-070 同族口径）——
+      // mcpServers 不在 TRUST_GATED_KEYS 清单，装配侧自持门；per-server 批准制=WP-03 叠加。
+      if (!session.trust.trusted && mcpDocs.projectShared?.mcpServers !== undefined) {
+        const { mcpServers: _gated, ...rest } = mcpDocs.projectShared;
+        mcpDocs.projectShared = rest;
+      }
+      const loaded = loadMcpServerConfigs(mcpDocs, env);
+      const conns = await connectAll(loaded, {
+        cwd: sessionCwd,
+        sessionId: session.id || "standardcode-session",
+        envBase: env,
+      });
+      session.mcpConnections = conns;
+      for (const conn of conns) {
+        if (conn.status === "connected") await refreshServerTools(conn).catch(() => {});
+      }
+    } catch {
+      // 装配异常=零 MCP 工具（降级不阻塞会话；/mcp 可见面=WP-03）
+    }
+  })();
   return session;
 }
 

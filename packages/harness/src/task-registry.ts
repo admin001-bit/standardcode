@@ -13,7 +13,8 @@ export type TaskStatus = "running" | "completed" | "failed";
 
 export interface TaskRecord {
   taskId: string;
-  type: "local_agent";
+  /** M4-WP-02 扩展维：MCP 工具超时转后台任务复用同注册表（ORC-040 内存态语义不分型；缺省仍 local_agent）。 */
+  type: "local_agent" | "mcp_tool";
   status: TaskStatus;
   agentId: string;
   agentType: string;
@@ -40,8 +41,8 @@ export interface TaskRegistryOptions {
 }
 
 export interface TaskRegistry {
-  /** 注册任务（running 态；并发槽未取）。 */
-  register(input: { agentId: string; agentType: string; description: string; isBackgrounded: boolean }): TaskRecord;
+  /** 注册任务（running 态；并发槽未取）。type 缺省 local_agent（WP-02 起 mcp_tool 显式传入）。 */
+  register(input: { agentId: string; agentType: string; description: string; isBackgrounded: boolean; type?: TaskRecord["type"] }): TaskRecord;
   /** WP-05：任务运行时柄（abort 控制器+子进程集合——TaskStop 两阶段终止的作用对象）。 */
   attachRuntime(taskId: string, runtime: { abort: AbortController; children: Set<ChildProcess> }): void;
   getRuntime(taskId: string): { abort: AbortController; children: Set<ChildProcess> } | undefined;

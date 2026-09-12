@@ -7,6 +7,8 @@ export interface ToolContext {
   signal: AbortSignal;
   /** 工具若派生子进程，注册到此处——中断时由 harness 负责进程树终止。 */
   registerProcess(child: ChildProcess): void;
+  /** WP-02（M4）：执行侧标记——MCP 工具超时转后台仅主循环生效（:296642 "!q.agentId" 同构；子代理执行器置位）。 */
+  agentKind?: "main" | "subagent";
 }
 
 export interface Tool extends ToolDef {
@@ -117,6 +119,8 @@ export interface LoopOptions {
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 runTools——任务级追踪面）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
+  /** WP-02（M4）：执行侧标记（subagent 执行器置 "subagent"；缺省=主循环）。 */
+  agentKind?: "main" | "subagent";
 }
 
 export type { ContentBlock, LLMMessage, LLMRequest, ProviderAdapter, TokenUsage };

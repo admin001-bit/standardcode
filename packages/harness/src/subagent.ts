@@ -375,6 +375,7 @@ export async function runSubagent(
     stateRef,
     maxToolRounds: def.maxTurns,
     onProcess: run.onProcess,
+    agentKind: "subagent", // WP-02（M4）：MCP 转后台生效条件之"主循环"面（:296642 同构）
   })) {
     switch (ev.type) {
       case "usage":
