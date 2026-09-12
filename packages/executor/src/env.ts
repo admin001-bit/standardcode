@@ -8,6 +8,8 @@ export interface ExecEnv {
   cwd: string;
   /** 子进程环境（显式 > 隐式）：缺席=runProcess 现场经 sanitizeToolEnv 清洗（fail-closed 缺省）。 */
   env?: NodeJS.ProcessEnv;
+  /** 超限输出落盘目录（E2E②；缺席=tmpdir——测试注入以断言落盘内容）。 */
+  spillDir?: string;
   signal?: AbortSignal;
   /** 工具派生的子进程注册到此处——中断时由 harness 负责进程树终止（§8.4）。 */
   registerProcess?(child: ChildProcess): void;

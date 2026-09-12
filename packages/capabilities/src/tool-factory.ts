@@ -28,6 +28,8 @@ export interface StandardToolsOptions {
   debugToolEnv?: boolean;
   /** debug 输出流（测试注入口；缺省 process.stderr）。 */
   debugStream?: { write(s: string): void };
+  /** 超限输出落盘目录（E2E②；透传 ExecEnv.spillDir——缺省 runProcess 内 tmpdir）。 */
+  spillDir?: string;
 }
 
 function truthyEnv(raw: string | undefined): boolean {
@@ -42,7 +44,7 @@ export function createStandardTools(opts: StandardToolsOptions = {}): StandardTo
       `[tool-env] kept=${Object.keys(toolEnv.env).length} removed=${toolEnv.removed.length > 0 ? toolEnv.removed.join(",") : "(none)"} rules=${[...new Set(toolEnv.strippedBy)].join(",")}\n`,
     );
   }
-  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env };
+  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env, ...(opts.spillDir ? { spillDir: opts.spillDir } : {}) };
   const bind = (def: ToolMetadata & { run(input: unknown, env: ExecEnv): Promise<string> }): StandardTool => ({
     ...def,
     // 中断信号与子进程注册逐调用并入 env（§8.4：工具 MUST 观察中断；harness 负责注册进程的树终止）

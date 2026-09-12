@@ -1,5 +1,7 @@
 // L4 Bash 原语：shell 命令执行。超时/截断常量取 [CC] dig-03 §3 实测锚点（120000/600000/30000）。
 // shell 选择 [自定]：Windows 用 cmd.exe（Git Bash 检测与 WSL 消歧非 M1 范围，可用 STANDARD_CODE_SHELL 显式指定 bash 类 shell），POSIX 用 /bin/sh。
+// WP-12（E2E②）：超限全文落盘+返回文本附 [CC] _440.js:5300 同构引用行（"Output truncated (NKB total). Full output saved to: <path>"）。
+import { tmpdir } from "node:os";
 import { ExecError, type ExecEnv } from "./env.ts";
 import { runProcess, type RunProcessResult } from "./proc.ts";
 
@@ -28,6 +30,7 @@ export async function execBash(input: BashInput, env: ExecEnv): Promise<string> 
       signal: env.signal,
       registerProcess: env.registerProcess,
       maxOutputChars: BASH_OUTPUT_TRUNCATE_CHARS,
+      spill: { dir: env.spillDir ?? tmpdir() }, // E2E②：超限全文落盘（引用行随返回文本）
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") throw new ExecError(`shell not found: ${shell.command}`);
@@ -36,8 +39,13 @@ export async function execBash(input: BashInput, env: ExecEnv): Promise<string> 
   if (env.signal?.aborted) throw new ExecError("interrupted");
   if (result.timedOut) throw new ExecError(`command timed out after ${timeout}ms and was killed`);
   const output = result.stdout + (result.stderr ? (result.stdout ? "\n[stderr]\n" : "") + result.stderr : "");
-  if (result.code !== 0) throw new ExecError(`exit code ${result.code}\n${output || "(no output)"}`);
-  return output || "(no output)";
+  // WP-12（E2E②）：[CC] _440.js:5300 逐字形状引用行——"Output truncated (NKB total). Full output saved to: <path>"
+  const spillNote =
+    result.truncated && result.spillFile
+      ? `\nOutput truncated (${Math.round((result.spillBytes ?? 0) / 1024)}KB total). Full output saved to: ${result.spillFile}`
+      : "";
+  if (result.code !== 0) throw new ExecError(`exit code ${result.code}\n${output || "(no output)"}${spillNote}`);
+  return (output || "(no output)") + spillNote;
 }
 
 function clampTimeout(raw?: number): number {
