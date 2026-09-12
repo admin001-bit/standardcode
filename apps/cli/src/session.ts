@@ -7,7 +7,7 @@
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
 import { createStandardTools, type StandardTool } from "@standardcode/capabilities";
-import { createPermissionBroker, type PermissionBroker, type Ruleset } from "@standardcode/harness";
+import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, readTrustStore, type TrustGateResult } from "@standardcode/platform";
 import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
@@ -57,6 +57,8 @@ export interface Session {
   additionalDirectories: string[];
   /** env 副本快照（WP-07 R-env 修复的断言面：settings env.* 注入经信任门控后落此；只读消费）。 */
   env: Record<string, string | undefined>;
+  /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
+  taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
   switchProvider(name: string): void;
   /** WP-11 /reload：重载记忆与设置（原位更新可变字段）。 */
@@ -226,6 +228,7 @@ export function createSession(init: SessionInit = {}): Session {
     additionalDirectories: [...(settingsValue<string[]>(gatedSettings, "additionalDirectories") ?? [])],
     ...(init.home !== undefined ? { home: init.home } : {}),
     // —— WP-11：/provider /reload /add-dir 会话操作面（MDL-010~013 下一 turn 生效；M1 环境重载语义）——
+    taskRegistry: createTaskRegistry(),
     switchProvider(name: string) {
       const n = name.toLowerCase();
       const built = buildProvider(n, env, gatedSettings);

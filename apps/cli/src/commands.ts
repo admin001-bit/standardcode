@@ -4,6 +4,58 @@ import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./sessi
 import { sessionDiff, redactSecrets } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
 
+// —— WP-07 /effort：推理力度档位 → model.thinking 值映射 [自定]（ADR-0030 值形；medium=resolveThinking 缺省 8000 对齐，
+// low=其半，high=adaptive；OpenCode reasoning_effort 档位语义同构，调研报告 §B2）——
+export const EFFORT_LEVELS = ["off", "low", "medium", "high"] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+export const EFFORT_TO_THINKING: Readonly<Record<EffortLevel, string>> = {
+  off: "off",
+  low: "budget:4000",
+  medium: "budget:8000",
+  high: "adaptive",
+};
+
+/** 档位显示（ThinkingSetting → 档位名；非标准 budget 值显示原样）。 */
+export function effortLabel(thinking: { type: "adaptive" } | { type: "budget"; budgetTokens: number } | undefined): string {
+  if (!thinking) return "off";
+  if (thinking.type === "adaptive") return "high";
+  if (thinking.budgetTokens === 8000) return "medium";
+  if (thinking.budgetTokens === 4000) return "low";
+  return `custom(budget:${thinking.budgetTokens})`;
+}
+
+/**
+ * WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "fork"）。
+ */
+export function deriveSubtaskName(prompt: string): string {
+  return (
+    prompt
+      .trim()
+      .split(/\s+/)
+      .slice(0, 3)
+      .join("-")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 24) || "subtask"
+  );
+}
+
+/** WP-07 /init 骨架（前缀头约定=CC agent-prompt-claude-md-creation.md 同构；内容占位=静态骨架面，分析式生成非本卡）。 */
+export const AGENTS_SKELETON = `# AGENTS.md
+
+This file provides guidance to StandardCode (standardcode CLI) when working with code in this repository.
+
+## Commands
+
+<!-- Common build/lint/test commands, including how to run a single test. -->
+
+## Architecture
+
+<!-- High-level architecture notes that require reading multiple files to understand. -->
+`;
+
 export interface CommandContext {
   catalog(): readonly string[];
   /** 会话工作目录（/diff 的 git 执行目录）。 */
@@ -30,6 +82,12 @@ export interface CommandContext {
   addDir(path: string): Promise<{ text: string }>;
   /** WP-11 /reload：重载记忆（WP-02）与设置（WP-01）。 */
   reload(): { text: string };
+  /** WP-07 /subtask：同步子任务（走 spawn，M6 前仅同步语义；结果注入会话——CC :328 首轮前拒绝）。 */
+  subtask(prompt: string): Promise<{ text: string }>;
+  /** WP-07 /effort：推理力度档位（查看/设置；写 model.thinking local 层+下一 turn 生效——MDL-010~013 同构）。 */
+  effort(args: string): Promise<{ text: string }>;
+  /** WP-07 /init：生成 AGENTS.md 骨架（已存在不覆盖——卡 DoD③）。 */
+  init(): Promise<{ text: string }>;
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -252,6 +310,35 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     description: "reload memory (WP-02) and settings (WP-01) from disk",
     execute(_args, ctx) {
       ctx.write(ctx.reload().text);
+    },
+  },
+  // —— WP-07：M3 分期余量三件（§8.2 M3 增 /subtask /effort /init）——
+  {
+    name: "subtask",
+    usage: "<prompt>",
+    description: "run a synchronous subtask via subagent spawn and inject the result (M6 前仅同步语义)",
+    async execute(args, ctx) {
+      const prompt = args.trim();
+      if (prompt === "") throw new Error("/subtask <prompt>: prompt required");
+      const r = await ctx.subtask(prompt);
+      ctx.write(r.text);
+    },
+  },
+  {
+    name: "effort",
+    usage: "[off|low|medium|high]",
+    description: "show or set the reasoning effort level (writes model.thinking, takes effect next turn — MDL-010~013)",
+    async execute(args, ctx) {
+      const r = await ctx.effort(args.trim());
+      ctx.write(r.text);
+    },
+  },
+  {
+    name: "init",
+    description: "generate an AGENTS.md skeleton in the project root (never overwrites an existing file)",
+    async execute(_args, ctx) {
+      const r = await ctx.init();
+      ctx.write(r.text);
     },
   },
 ];

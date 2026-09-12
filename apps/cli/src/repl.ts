@@ -6,12 +6,13 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { runAgentLoop } from "@standardcode/harness";
+import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
 import { checkToolInput as guardCheck } from "@standardcode/platform";
 import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
 import type { Session } from "./session.ts";
+import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { CLI_COMMANDS, type CommandContext, type SlashCommand } from "./commands.ts";
+import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig } from "@standardcode/context";
@@ -316,6 +317,58 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const s = deps.session;
       s.reload();
       return { text: `[reload] memory (${s.memory.files.length} file(s)) and settings (sources: ${s.settings.effectiveSources.join(", ")}) reloaded` };
+    },
+    // —— WP-07：M3 分期余量三件（§8.2；/subtask 走 spawn——M6 前仅同步语义）——
+    subtask: async (prompt) => {
+      const s = deps.session;
+      // CC /subtask 守卫同构（chunk-g7bantgw.js :328，A 级报告 §3.3）
+      if (s.messages.length === 0) throw new Error("Cannot start a subtask before the first conversation turn");
+      const launch = await spawnSubagentTask(
+        { prompt, description: deriveSubtaskName(prompt), runInBackground: false },
+        { depth: 0, availableTypes: ["general-purpose"] }, // M3 恒 general-purpose（内置集发现链=WP-06）
+        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker },
+        { registry: s.taskRegistry, env: {} }, // env 空=autoBackgroundMs 0 → 同步恒同步
+      );
+      if (launch.status === "refused") return { text: `[subtask] refused: ${launch.message}` };
+      if (launch.status !== "completed") return { text: `[subtask] unexpected channel: ${launch.status}（M3 /subtask 恒同步）` };
+      // 结果注入（DoD①）：报告以 user 消息入会话（下一 turn 模型可见）+落转录保 resume 等价
+      const injected = {
+        role: "user" as const,
+        content: [
+          {
+            type: "text" as const,
+            text: `<subtask agent="${launch.result.agentType}" tokens="${launch.result.totalTokens}">\n${launch.result.report}\n</subtask>`,
+          },
+        ],
+      };
+      s.messages.push(injected);
+      transcriptAppend(deps, { kind: "user_message", message: injected });
+      return {
+        text: `[subtask] ${launch.result.agentType} completed (${launch.result.totalTokens} tokens / ${launch.result.totalToolUseCount} tool uses)\n${launch.result.content}`,
+      };
+    },
+    effort: async (args) => {
+      const s = deps.session;
+      if (args === "") {
+        return {
+          text: `[effort] current: ${effortLabel(s.thinking)}（可选 ${EFFORT_LEVELS.join("|")}；写 model.thinking local 层，下一 turn 生效——MDL-010~013 同构）`,
+        };
+      }
+      if (!(EFFORT_LEVELS as readonly string[]).includes(args)) {
+        throw new Error(`unknown effort: ${args}（可选 ${EFFORT_LEVELS.join("|")}）`);
+      }
+      const level = args as EffortLevel;
+      setLocalSetting(s.cwd, "model.thinking", EFFORT_TO_THINKING[level]);
+      s.reload(); // settings 重载（local 层并入）
+      s.thinking = resolveThinking(undefined, s.env, s.settings); // 下一 turn 生效（env 逃逸舱优先序不变）
+      return { text: `[effort] ${level}（model.thinking=${EFFORT_TO_THINKING[level]}，下一 turn 生效）` };
+    },
+    init: async () => {
+      const s = deps.session;
+      const p = join(s.cwd, "AGENTS.md");
+      if (existsSync(p)) return { text: "[init] AGENTS.md already exists — left unchanged（只生成不覆盖）" };
+      writeFileSync(p, AGENTS_SKELETON, "utf8");
+      return { text: `[init] created ${p}（骨架）` };
     },
     write: deps.io.write,
   };
