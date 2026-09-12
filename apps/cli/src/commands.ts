@@ -1,8 +1,42 @@
 // M1 五命令（v2.8 §8.2 M1 最小集）+ M2 增量（§8.2 M2 分期，B-03 只注册本里程碑命令）：
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
+import type { TokenUsage } from "@standardcode/providers";
 import { sessionDiff, redactSecrets } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
+
+// —— WP-10 /usage 价格表（ENG-046 "内置价格表"；卡边界=按 §10 落固定内置表 [自定] 登记偏差）。
+// 数值纪律：结构性占位（系数形状 output=5×/cacheW=1.25×/cacheR=0.1×input 均 [自定]），
+// 非官方价目事实断言；标定缺位登记未解决（悬而未决随仪表盘）。覆盖=本仓内置目录两模型；
+// env 自定目录模型（STANDARD_CODE_MODELS）无价格行=cost n/a（拒绝静默套价）。 ——
+export interface ModelPriceRate {
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+  cacheWriteUsdPerMTok: number;
+  cacheReadUsdPerMTok: number;
+}
+
+const CATALOG_PRICES: Readonly<Record<string, ModelPriceRate>> = {
+  // 系数形状 [自定]：output=5×input、cacheWrite=1.25×input、cacheRead=0.1×input——
+  // 字面量显式写死（浮点乘除不落 0.30000000000000004 类尾差，展示与合计共用同一权威表）。
+  "claude-sonnet-4-6": { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheWriteUsdPerMTok: 3.75, cacheReadUsdPerMTok: 0.3 },
+  "claude-opus-5": { inputUsdPerMTok: 15, outputUsdPerMTok: 75, cacheWriteUsdPerMTok: 18.75, cacheReadUsdPerMTok: 1.5 },
+};
+
+export function priceTableRow(model: string): ModelPriceRate | null {
+  return CATALOG_PRICES[model] ?? null;
+}
+
+/** 价格表行合计（DoD③ 断言面）：四列 × 对应单价，USD/百万 token 口径。 */
+export function usageCostUsd(totals: TokenUsage, rate: ModelPriceRate): number {
+  return (
+    ((totals.inputTokens ?? 0) * rate.inputUsdPerMTok +
+      (totals.outputTokens ?? 0) * rate.outputUsdPerMTok +
+      (totals.cacheCreationTokens ?? 0) * rate.cacheWriteUsdPerMTok +
+      (totals.cacheReadTokens ?? 0) * rate.cacheReadUsdPerMTok) /
+    1_000_000
+  );
+}
 
 // —— WP-07 /effort：推理力度档位 → model.thinking 值映射 [自定]（ADR-0030 值形；medium=resolveThinking 缺省 8000 对齐，
 // low=其半，high=adaptive；OpenCode reasoning_effort 档位语义同构，调研报告 §B2）——
@@ -115,6 +149,10 @@ export interface CommandContext {
   tasks(args: string): { text: string };
   /** WP-05 /background：挂后台任务清单。 */
   background(): { text: string };
+  /** WP-10 /status：会话状态总览（模型/provider/权限模式/上下文水位/任务数——全实时读态）。 */
+  status(): { text: string };
+  /** WP-10 /usage：四列累计+缓存命中率（会话内实时，cache_read/input=M1 WP-05 口径）+内置价格表估算（[自定] 占位）。 */
+  usage(): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -382,6 +420,21 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     async execute(_args, ctx) {
       const r = await ctx.init();
       ctx.write(r.text);
+    },
+  },
+  // —— WP-10：M3 分期余量两件（§8.2；CTX-102/ENG-046/ADR-0027 权威口径）——
+  {
+    name: "status",
+    description: "session state overview (model/provider/permission mode/context water level/task count — real-time)",
+    execute(_args, ctx) {
+      ctx.write(ctx.status().text);
+    },
+  },
+  {
+    name: "usage",
+    description: "token four-column session totals + cache hit rate (in-session real-time) + built-in price table cost estimate (CTX-102/ENG-046)",
+    execute(_args, ctx) {
+      ctx.write(ctx.usage().text);
     },
   },
 ];

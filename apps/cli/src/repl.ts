@@ -12,7 +12,7 @@ import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitl
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
+import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
@@ -393,6 +393,50 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const bg = s.taskRegistry.list().filter((t) => t.isBackgrounded);
       if (bg.length === 0) return { text: "[background] 无挂后台任务" };
       return { text: `[background] ${bg.length} 条\n${bg.map((t) => `  ${t.taskId} [${t.status}] ${t.agentType} "${t.description}"`).join("\n")}` };
+    },
+    // —— WP-10：/status /usage（§8.2 M3 分期；全字段实时读态——DoD① 判据面）——
+    status: () => {
+      const s = deps.session;
+      const caps = s.provider.capabilities(s.model);
+      const grid = buildContextGrid({
+        window: caps.contextWindow,
+        systemChars: s.memory.text.length,
+        toolsChars: s.tools.reduce((acc, t) => acc + t.description.length, 0),
+        memoryChars: s.memory.files.reduce((acc, f) => acc + f.raw.length, 0),
+        messages: s.messages,
+        usage: s.meter.snapshot(),
+      });
+      // 水位=grid 估算占用（window−freeSpace−autocompactBuffer，/context 同源口径）
+      const occupied = Math.max(0, grid.window - grid.freeSpace - grid.autocompactBuffer);
+      const all = s.taskRegistry.list();
+      const active = s.taskRegistry.list({ activeOnly: true });
+      return {
+        text: [
+          "[status]",
+          `  model: ${s.model}（provider: ${s.providerName}；catalog: ${s.catalog.join(", ")}）`,
+          `  permission: ${s.broker.mode()}`,
+          `  context: ${occupied}/${grid.window} tokens（${((occupied / grid.window) * 100).toFixed(1)}%，grid 估算占用=/context 同源）`,
+          `  tasks: ${active.length} active / ${all.length} total`,
+          `  session: ${currentSessionMeta(deps).sessionId.slice(0, 8)}（cwd=${s.cwd}；memory=${s.memory.files.length} file(s)；turns=${s.meter.turns}）`,
+        ].join("\n"),
+      };
+    },
+    usage: () => {
+      const s = deps.session;
+      const t = s.meter.snapshot();
+      const hit = t.inputTokens > 0 ? `${((t.cacheReadTokens / t.inputTokens) * 100).toFixed(1)}%` : "n/a（no input usage yet）";
+      const rate = priceTableRow(s.model);
+      const price = rate
+        ? `  cost estimate: $${usageCostUsd(t, rate).toFixed(6)}（四列×单价行合计；内置固定价格表 [自定] 结构性占位，官方标定缺位登记未解决）in=$${rate.inputUsdPerMTok}/M out=$${rate.outputUsdPerMTok}/M cacheW=$${rate.cacheWriteUsdPerMTok}/M cacheR=$${rate.cacheReadUsdPerMTok}/M`
+        : `  cost estimate: n/a（${s.model} 不在内置价格表——env 自定目录模型不设价，拒绝静默套价）`;
+      return {
+        text: [
+          "[usage] session totals（API usage=唯一权威口径 ADR-0027；本地估算不位移展示值——DP-4 显式>隐式）",
+          `  input=${t.inputTokens} output=${t.outputTokens} cache_creation=${t.cacheCreationTokens} cache_read=${t.cacheReadTokens}`,
+          `  cache hit rate（会话内实时，M1 WP-05 同源=cache_read/input）: ${hit}`,
+          price,
+        ].join("\n"),
+      };
     },
     write: deps.io.write,
   };

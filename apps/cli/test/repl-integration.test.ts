@@ -89,9 +89,9 @@ describe("runRepl (四模式派发 + 流式上屏)", () => {
     expect((provider as ReturnType<typeof scriptedProvider>).requests).toHaveLength(0);
   });
 
-  it("未知命令拒绝（B-03）【勘误 2026-09-09：原断言用 /config——WP-11 注册后已属 M2 集内，改用 /usage（M3）】", async () => {
-    const { out } = await runReplWith(["/usage", "/exit"], scriptedProvider([]));
-    expect(out).toContain("[command] unknown: /usage");
+  it("未知命令拒绝（B-03）【勘误 2026-09-09：原断言用 /config——WP-11 注册后已属 M2 集内，改用 /usage（M3）】【勘误 2026-09-12：WP-10 注册 /usage 后改用 /mcp（M4 集外，B-03 永不入本里程碑集）】", async () => {
+    const { out } = await runReplWith(["/mcp", "/exit"], scriptedProvider([]));
+    expect(out).toContain("[command] unknown: /mcp");
   });
 
   it("跨轮历史累积（第二轮请求含第一轮消息）", async () => {
