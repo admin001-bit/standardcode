@@ -2,11 +2,12 @@
 // 语义锚点（A 级 KimiCode的产品细节.md:181-197）：
 //   TaskOutput——task_id 返回状态与输出，内联预览最多包含**最近 32 KB**（tail），完整日志在磁盘
 //     （转录面归 WP-05 后续/转录扩展，本卡接口只出内联预览），始终非阻塞=立即返回当前快照；
-//   TaskStop——两阶段终止（ORC-032：SIGTERM→5s 宽限→SIGKILL，SIGTERM_GRACE_MS=5_000 实测）；
-//     可选 reason（默认 "Stopped by TaskStop"）；对已终止任务安全调用（Kimi :193）；
-//     Windows=taskkill /T 语义映射（卡边界；M1 中断先例 killTreeSafe :165-175）。
-//   WaitFor——timeout 必填（秒面=毫秒，上限 600s=600_000ms）；不传 task_id 时调用时刻无运行任务
-//     立即返回、有则任意一个结束即返回；超时不是错误——结果列出仍在运行的任务（Kimi :197）。
+//   TaskStop——两阶段终止（ORC-032：SIGTERM→5s 宽限→SIGKILL，SIGTERM_GRACE_MS=5_000 一手源码实测
+//     kimi background/index.ts:163）；可选 reason（默认 "Stopped by TaskStop"，task-stop.ts:23 逐字同）；
+//     对已终止任务安全调用（A 级 :192）；Windows=taskkill /T 语义映射（卡边界；M1 先例）。
+//   WaitFor——timeout 必填（秒面=毫秒，上限 600s；上限值=A 级 :194 文档锚，Kimi 源码快照无对应常量）；
+//     不传 task_id 时调用时刻无运行任务立即返回、有则任意一个结束即返回；超时不是错误——
+//     结果列出仍在运行的任务（A 级 :194）。
 // 任务运行柄（abort+children）由 spawnSubagentTask 挂于注册表（WP-05 runtime 面）。
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -16,7 +17,7 @@ import type { TaskRegistry, TaskStatus } from "./task-registry.ts";
 export const TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
 /** ORC-032 实测宽限（5_000ms）。 */
 export const SIGTERM_GRACE_MS = 5_000;
-/** Kimi WaitFor timeout 上限 600 秒（A 级 :197）。 */
+/** Kimi WaitFor timeout 上限 600 秒（A 级 :194 文档锚；Kimi 源码快照无对应常量）。 */
 export const WAITFOR_TIMEOUT_MAX_MS = 600_000;
 
 /** 终态报告超上限取最近字节（tail），UTF-8 边界安全。 */
