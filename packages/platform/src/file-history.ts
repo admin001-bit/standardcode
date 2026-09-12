@@ -3,13 +3,18 @@
 // 快照触发=每次工具写盘前（Write/Edit/改写类 Bash——Bash 目标以重定向启发式解析，[自定]，ADR-0032）。
 // 布局：~/.standardcode/projects/<encoded>/file-history/<snapId>/ 存原文件树 + index.jsonl 逐行登记。
 // 快照内容=写盘前全文件内容（EXE-040 依赖"快照入 file-history/"）；被 rewind 撤销的快照标记（不物理删除）。
+// M3 WP-08：checkpoint 写入持锁（SessionLock.acquireIn 复用——同项目多会话的 seq 单调与索引追加互斥；
+// 锁持有期=单次快照写（mkdir+存档+append 索引），冲突抛错→工具 error tool_result，ADR-0032 决策 5 同口径）。
 
 import { mkdir, readFile, writeFile, appendFile, readdir, rename, access, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { encodeProjectPath, transcriptsDir } from "./transcripts.ts";
+import { SessionLock } from "./session-store.ts";
 
 export const FILE_HISTORY_SCHEMA_VERSION = 1;
+/** file-history 目录级写锁文件名（SessionLock.acquireIn 复用位）。 */
+export const FILE_HISTORY_LOCK_FILE = "file-history.lock";
 
 export interface SnapshotRecord {
   schemaVersion: 1;
@@ -61,20 +66,7 @@ export class FileHistoryStoreImpl implements FileHistoryStore {
     const indexFile = path.join(dir, "index.jsonl");
     const store = new FileHistoryStoreImpl(dir, indexFile);
     // 已有索引恢复 seq（崩溃后继续单调）
-    try {
-      const text = await readFile(indexFile, "utf8");
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const rec = JSON.parse(line) as SnapshotRecord;
-          if (rec.schemaVersion === FILE_HISTORY_SCHEMA_VERSION && typeof rec.seq === "number" && rec.seq > store.seq) store.seq = rec.seq;
-        } catch {
-          /* 坏行容忍（同 transcripts 口径） */
-        }
-      }
-    } catch {
-      /* 无索引=新 store */
-    }
+    store.seq = maxSeqFromIndex(await readFile(indexFile, "utf8").catch(() => ""));
     return store;
   }
 
@@ -102,32 +94,39 @@ export class FileHistoryStoreImpl implements FileHistoryStore {
   }
 
   async snapshot(tool: SnapshotRecord["tool"], filePath: string, sessionId?: string): Promise<number> {
-    this.seq++;
-    const snapId = `snap-${String(this.seq).padStart(6, "0")}`;
-    await mkdir(path.join(this.dir, snapId), { recursive: true });
-    const storedAs = `${snapId}/${encodeURIComponent(filePath).replace(/[%]/g, "_")}`;
-    let existed = true;
+    // checkpoint 写入持锁（WP-08 DoD④）：锁内重读索引 maxSeq（跨会话/跨进程 seq 单调）→ 存档 → 追加索引。
+    const lock = await SessionLock.acquireIn(this.dir, FILE_HISTORY_LOCK_FILE);
     try {
-      const content = await readFile(filePath);
-      await writeFile(path.join(this.dir, storedAs), content);
-    } catch (err) {
-      // 仅 ENOENT=写盘前不存在（新建场景）；其他读失败（如 EACCES）按快照失败上抛
-      // →工具调用合成 error tool_result（ADR-0032 决策 5：无快照宁可拒绝执行，防 rewind 误删）
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") existed = false;
-      else throw err;
+      this.seq = Math.max(this.seq, maxSeqFromIndex(await readFile(this.indexFile, "utf8").catch(() => "")));
+      this.seq++;
+      const snapId = `snap-${String(this.seq).padStart(6, "0")}`;
+      await mkdir(path.join(this.dir, snapId), { recursive: true });
+      const storedAs = `${snapId}/${encodeURIComponent(filePath).replace(/[%]/g, "_")}`;
+      let existed = true;
+      try {
+        const content = await readFile(filePath);
+        await writeFile(path.join(this.dir, storedAs), content);
+      } catch (err) {
+        // 仅 ENOENT=写盘前不存在（新建场景）；其他读失败（如 EACCES）按快照失败上抛
+        // →工具调用合成 error tool_result（ADR-0032 决策 5：无快照宁可拒绝执行，防 rewind 误删）
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") existed = false;
+        else throw err;
+      }
+      const rec: SnapshotRecord = {
+        schemaVersion: FILE_HISTORY_SCHEMA_VERSION,
+        seq: this.seq,
+        ts: new Date().toISOString(),
+        tool,
+        filePath,
+        storedAs,
+        existed,
+        ...(sessionId ? { sessionId } : {}),
+      };
+      await appendFile(this.indexFile, JSON.stringify(rec) + "\n", "utf8");
+      return this.seq;
+    } finally {
+      await lock.release().catch(() => {});
     }
-    const rec: SnapshotRecord = {
-      schemaVersion: FILE_HISTORY_SCHEMA_VERSION,
-      seq: this.seq,
-      ts: new Date().toISOString(),
-      tool,
-      filePath,
-      storedAs,
-      existed,
-      ...(sessionId ? { sessionId } : {}),
-    };
-    await appendFile(this.indexFile, JSON.stringify(rec) + "\n", "utf8");
-    return this.seq;
   }
 
   async rewindTo(targetSeq: number): Promise<{ undone: number; files: string[] }> {
@@ -159,6 +158,21 @@ export class FileHistoryStoreImpl implements FileHistoryStore {
     }
     return { undone: undoneFiles.length, files: undoneFiles };
   }
+}
+
+/** 索引文本 → 最大 seq（坏行容忍，同 transcripts 口径；无索引=0）。 */
+function maxSeqFromIndex(text: string): number {
+  let max = 0;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line) as SnapshotRecord;
+      if (rec.schemaVersion === FILE_HISTORY_SCHEMA_VERSION && typeof rec.seq === "number" && rec.seq > max) max = rec.seq;
+    } catch {
+      /* 坏行容忍 */
+    }
+  }
+  return max;
 }
 
 async function rmForce(p: string): Promise<void> {

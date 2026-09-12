@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { LLMEvent, LLMMessage, LLMRequest, ProviderAdapter } from "@standardcode/providers";
 import { createSession } from "../src/session.ts";
-import { runRepl, type ReplIo } from "../src/repl.ts";
+import { createCommandContext, runRepl, type ReplIo } from "../src/repl.ts";
 import { CLI_COMMANDS } from "../src/commands.ts";
 import { completeInput } from "../src/tab-complete.ts";
 
@@ -258,5 +258,33 @@ describe("DoD①⑧ 注册+Tab 补全（M2 全集十八；M3 增五件后 23—�
     for (const n of ["compact", "config", "provider", "doctor", "cd", "add-dir", "reload"]) expect(names).toContain(n);
     expect(names.length).toBe(23); // M2 十八+M3 五（/tasks /background WP-05；/subtask /effort /init WP-07）
     expect(completeInput("/re", CLI_COMMANDS).candidates).toContain("/reload");
+  });
+});
+
+describe("WP-08 DoD③ compact 直调面 fail-closed（M2 WP-11 登记级①收口：界外值不静默回落默认窗）", () => {
+  it("ctx.compact 界外值（越界/NaN/小数/负数）拒绝：协调器不换、模型轮次不发生；合法下界通过", async () => {
+    const repo = join(dir, "wp08c");
+    const home = mkdtempSync(join(dir, "hwp08c-"));
+    const baseDir = join(dir, "bwp08c");
+    mkdirSync(repo);
+    gitInit(repo);
+    const provider = scriptedProvider([REPLY, REPLY]);
+    const session = createSession({ provider, catalog: ["m-a"], model: "m-a", cwd: repo, home });
+    session.messages.push({ role: "user", content: [{ type: "text", text: "hi" }] });
+    const io: ReplIo = {
+      lines: (async function* () {})(),
+      write: () => {},
+      close: () => {},
+    };
+    const ctx = createCommandContext({ session, io, baseDir });
+    const before = session.autocompact;
+    for (const bad of [50_000, 1_000_001, NaN, 1.5, -1]) {
+      await expect(ctx.compact(bad)).rejects.toThrow(/integer in \[100000, 1000000\]/);
+    }
+    expect(session.autocompact).toBe(before); // 原版路径=静默回落默认窗并整体替换协调器（防御纵深缺口）
+    expect(provider.seen.length).toBe(0); // 界外值不进压缩轮次
+    await ctx.compact(100_000); // 合法边界（下界含）正常执行
+    expect(session.autocompact).not.toBe(before);
+    expect(provider.seen.length).toBe(1);
   });
 });

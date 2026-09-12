@@ -23,6 +23,7 @@ export async function execBash(input: BashInput, env: ExecEnv): Promise<string> 
       args: shell.args.concat(shell.verbatim ? [`"${input.command}"`] : [input.command]),
       verbatimArgs: shell.verbatim,
       cwd: env.cwd,
+      env: env.env,
       timeoutMs: timeout,
       signal: env.signal,
       registerProcess: env.registerProcess,

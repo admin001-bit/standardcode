@@ -1,5 +1,12 @@
 // L4 执行底座导出（v2.8 §5.2 executor 行：命令执行、文件读写）。
-export { ExecError, type ExecEnv } from "./env.ts";
+export {
+  ExecError,
+  type ExecEnv,
+  sanitizeToolEnv,
+  TOOL_ENV_STRIP_RULES,
+  type ToolEnvSnapshot,
+  type ToolEnvStripRule,
+} from "./env.ts";
 export { runProcess, killTree, type RunProcessOptions, type RunProcessResult } from "./proc.ts";
 export {
   execBash,

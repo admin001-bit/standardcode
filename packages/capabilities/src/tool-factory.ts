@@ -1,5 +1,7 @@
 // L3 工具装配工厂：元数据 + executor 原语 → StandardTool（harness Tool 结构兼容——由集成测试锁形）。
 // 每次调用产出绑定会话 cwd 的新实例，避免模块级单例状态。
+// SEC-080（M3 WP-08）：env 构造=会话级白名单快照（显式下发 executor；executor 侧另有现场清洗缺省=隐式纵深）；
+// debug 通道：显式 debugToolEnv > 隐式 STANDARD_CODE_DEBUG env（DP-4 优先序），输出=注入流（缺省 stderr）。
 import type { ExecEnv } from "@standardcode/executor";
 import {
   execBash,
@@ -8,6 +10,7 @@ import {
   execGrep,
   execRead,
   execWrite,
+  sanitizeToolEnv,
   type BashInput,
   type EditInput,
   type GlobInput,
@@ -21,10 +24,25 @@ import type { StandardTool, ToolMetadata } from "./contract.ts";
 export interface StandardToolsOptions {
   /** 会话工作目录：相对路径解析基点（缺省进程 cwd）。 */
   cwd?: string;
+  /** debug 快照开关（显式位；缺席=隐式 STANDARD_CODE_DEBUG truthy 判定）。 */
+  debugToolEnv?: boolean;
+  /** debug 输出流（测试注入口；缺省 process.stderr）。 */
+  debugStream?: { write(s: string): void };
+}
+
+function truthyEnv(raw: string | undefined): boolean {
+  return raw !== undefined && /^(1|true|yes)$/i.test(raw.trim());
 }
 
 export function createStandardTools(opts: StandardToolsOptions = {}): StandardTool[] {
-  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd() };
+  const toolEnv = sanitizeToolEnv();
+  if (opts.debugToolEnv ?? truthyEnv(process.env.STANDARD_CODE_DEBUG)) {
+    const stream = opts.debugStream ?? process.stderr;
+    stream.write(
+      `[tool-env] kept=${Object.keys(toolEnv.env).length} removed=${toolEnv.removed.length > 0 ? toolEnv.removed.join(",") : "(none)"} rules=${[...new Set(toolEnv.strippedBy)].join(",")}\n`,
+    );
+  }
+  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env };
   const bind = (def: ToolMetadata & { run(input: unknown, env: ExecEnv): Promise<string> }): StandardTool => ({
     ...def,
     // 中断信号与子进程注册逐调用并入 env（§8.4：工具 MUST 观察中断；harness 负责注册进程的树终止）

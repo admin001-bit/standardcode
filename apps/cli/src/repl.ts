@@ -15,7 +15,7 @@ import { parseInput } from "./input-modes.ts";
 import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
-import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig } from "@standardcode/context";
+import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
 import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
 import { isTrusted } from "@standardcode/platform";
 import { createStandardTools } from "@standardcode/capabilities";
@@ -193,9 +193,13 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— WP-11（§8.2 M2 余量；ENG-043/S-10/ENG-080/MDL-010~013/CTX-036）——
     compact: async (window, partialIdx) => {
       const s = deps.session;
-      // 手动窗口（CTX-036"手动窗口 100k–1M"）：指定时重建协调器（V R1 修复：显式 config 直建，不经
-      // env 字符串二次解析——裸数 k 启发式是 WP-03 解析器语义，命令参数处已按 [100000,1000000] 数值校验）
+      // 手动窗口（CTX-036"手动窗 100k–1M"）：指定时重建协调器（V R1 修复：显式 config 直建，不经
+      // env 字符串二次解析——裸数 k 启发式是 WP-03 解析器语义，命令参数处已按 [100000,1000000] 数值校验）。
+      // M2 WP-11 登记级①收口（WP-08 DoD③）：直调面同样 fail-closed——界外值拒绝，不静默回落默认窗。
       if (window !== undefined) {
+        if (!Number.isInteger(window) || window < MANUAL_WINDOW_MIN || window > MANUAL_WINDOW_MAX) {
+          throw new Error(`compact window: must be integer in [${MANUAL_WINDOW_MIN}, ${MANUAL_WINDOW_MAX}] (CTX-036 manual window; fail-closed)`);
+        }
         s.autocompact = createCompactionCoordinator(
           resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
         );

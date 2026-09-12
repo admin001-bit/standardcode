@@ -2,7 +2,7 @@
 // S-10（§11 原文）：转录文件权限收紧（用户目录 0600 语义；Windows 用户目录 ACL 已隔离，chmod best-effort
 // 登记偏差）；密钥值写入前替换脱敏；清理提示归 /doctor（WP-11）。
 // 加锁（[自定] 设计，ADR-0031）：同项目 transcript 写互斥=O_EXCL 锁文件 + PID + mtime 陈旧判定（30s）——
-// 简单可靠、无原生依赖；checkpoint 加锁同构（file-history 归 WP-09 后接入）。
+// 简单可靠、无原生依赖；checkpoint 加锁同构（M3 WP-08 清偿：file-history 写入经 SessionLock.acquireIn 复用同机制）。
 // 磁盘满降级（§13 行 10 统一矩阵的落盘路径切片）：ENOSPC/EDQUOT → 写失败不抛、降级内存缓冲+告警一次，
 // 会话继续（transcript 缺口登记于 writer.degraded）。
 
@@ -61,9 +61,17 @@ export class SessionLock {
 
   /** 获取同项目会话写锁（互斥；已持锁抛错）。锁文件=transcripts 目录下 <sessionId>.lock。 */
   static async acquire(projectRoot: string, sessionId: string, baseDir = path.join(homedir(), ".standardcode")): Promise<SessionLock> {
-    const dir = transcriptsDir(projectRoot, baseDir);
+    return SessionLock.acquireIn(transcriptsDir(projectRoot, baseDir), `${sessionId}.lock`);
+  }
+
+  /**
+   * 通用目录级互斥锁（同 ADR-0031 机制：O_EXCL + PID + mtime 陈旧判定 30s）。
+   * 复用方：file-history checkpoint 写入（SEC-080 卡边界"SessionLock 复用"——M2 WP-08 头注"checkpoint
+   * 加锁同构，file-history 归 WP-09 后接入"的 M3 清偿位，锁文件=file-history 目录下 file-history.lock）。
+   */
+  static async acquireIn(dir: string, lockFile: string): Promise<SessionLock> {
     await mkdir(dir, { recursive: true });
-    const lockPath = path.join(dir, `${sessionId}.lock`);
+    const lockPath = path.join(dir, lockFile);
     const handle = await open(lockPath, "wx").catch((err: NodeJS.ErrnoException) => {
       if (err.code === "EEXIST") {
         return null; // 已被持有（陈旧判定走下方抢占路径）
@@ -85,7 +93,7 @@ export class SessionLock {
           return new SessionLock(lockPath).markLocked();
         }
       }
-      throw new Error(`session lock held: ${lockPath}（同项目多开互斥，§13 行 9；${stale ? "陈旧锁清理失败" : "另一会话持有"}）`);
+      throw new Error(`session lock held: ${lockPath}（同写面互斥，§13 行 9；${stale ? "陈旧锁清理失败" : "另一持有者"}）`);
     }
     await handle.write(`pid=${process.pid}\nts=${Date.now()}\n`, null, "utf8");
     await handle.close();
