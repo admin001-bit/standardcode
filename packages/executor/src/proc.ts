@@ -2,7 +2,8 @@
 // 进程树终止语义与 harness tools.ts 同构（Windows taskkill /T、POSIX 进程组 SIGKILL）；
 // POSIX 侧 spawn detached 使子进程自成进程组，-pid 才能命中整组。
 // 落盘回传（v2.8 §12.2 E2E②"30K 截断+落盘回传"的行为载体；[CC] _440.js:5279-5300 stdoutToFile 同构：
-// 全文（stdout 原样+[stderr] 前缀标注混流，到达序）写 spill 文件，返回文本附 KB 汇总+路径行）。
+// 越界流全量（stdout 原样+[stderr] 前缀标注，单流内=到达序）写 spill 文件，返回文本附 KB 汇总+路径行；
+// 未越界小流不进文件。【措辞订正 2026-09-13 V 复验观察①：原"混流到达序"过声称——双流各自流内有序】
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,9 +25,9 @@ export interface RunProcessOptions {
   /** 单流（stdout/stderr 各自）字符上限，超出即截断，防失控输出撑爆内存。 */
   maxOutputChars?: number;
   /**
-   * 超限全文落盘开关（E2E② 行为载体；WP-12 接线=bash.ts）：截断发生时，全量输出（含截断前已收头部）
-   * 写 <dir>/standardcode-tool-output-<pid>-<ts>.txt（stdout 原样、stderr 加 "[stderr] " 前缀，到达序混流——
-   * [CC] #f 同构）。缺省=不落盘（截断即丢，M1 行为兼容）。
+   * 超限全文落盘开关（E2E② 行为载体；WP-12 接线=bash.ts）：流越界时该流全量（含截断前已收头部）
+   * 写 <dir>/standardcode-tool-output-<pid>-<ts>.txt（stdout 原样、stderr 加 "[stderr] " 前缀，
+   * 单流内=到达序——[CC] #f 同构；未越界小流不进文件）。缺省=不落盘（截断即丢，M1 行为兼容）。
    */
   spill?: { dir: string };
 }
