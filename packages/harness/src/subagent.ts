@@ -36,6 +36,20 @@ export interface SubagentDefinition {
   background?: boolean;
   /** 单 turn 工具轮数上限透传（LoopOptions.maxToolRounds）。 */
   maxTurns?: number;
+  /**
+   * WP-06（ORC-022 omit 规则）：true=子 agent 系统提示词组装省略主记忆段
+   * （CC §6.1 omitClaudeMd :156607-156609 同构；Explore/Plan/内置只读型置 true）。
+   */
+  omitClaudeMd?: boolean;
+  /** WP-06：true=省略 gitStatus 段（CC §6.1 `Ke = agentType==="Explore"||"Plan" ? ct : et` :156611 同构，落为显式位）。 */
+  omitGitStatus?: boolean;
+  /** 模型位（CC §5.1 model 字段；"inherit"=随父会话；WP-06 built-in 消费，运行面接线=后续卡）。 */
+  model?: string;
+  /**
+   * WP-06（ORC-022"非最新模型压到中等档"）：true=model:"inherit" 且父会话非最新模型时压到中等档
+   * （CC Explore iP/g6t "opus" cap 同构语义，档位落点本仓 [自定]；env 关断=STANDARD_CODE_DISABLE_EXPLORE_INHERIT_CAP）。
+   */
+  inheritCap?: boolean;
 }
 
 export interface SubagentSpawnInput {
@@ -255,6 +269,11 @@ export interface SubagentRunContext {
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 agent-loop——任务级追踪面）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
+  /**
+   * WP-06（ORC-022 omit 规则消费面）：父会话可传入记忆/gitStatus 段进子 agent 系统提示词组装；
+   * 定义位 omitClaudeMd/omitGitStatus 置真时对应段省略（子代理上下文本就隔离，omit 作用于提示词组装）。
+   */
+  parentContext?: { memory?: string; gitStatus?: string };
   /** agentId 工厂（测试确定性注入；缺省递增 subagent-N）。 */
   newAgentId?: () => string;
 }
@@ -304,8 +323,14 @@ export async function runSubagent(
     gate = run.permission;
   }
 
-  // 系统提示词：定义提示词（缺省最小壳）+ 防伪造条目（ORC-041 常量进每个 agent 提示词——嵌套 spawn 同受约束）
-  const system = [def.systemPrompt, SUBAGENT_ANTI_FABRICATION].filter((s): s is string => !!s).join("\n\n");
+  // 系统提示词组装（WP-06 omit 规则消费面）：定义提示词（缺省最小壳）→ 主记忆段（omitClaudeMd 省略）
+  // → gitStatus 段（omitGitStatus 省略）→ 防伪造条目（ORC-041 常量进每个 agent 提示词——嵌套 spawn 同受约束）
+  const sections: string[] = [];
+  if (def.systemPrompt) sections.push(def.systemPrompt);
+  if (run.parentContext?.memory && !def.omitClaudeMd) sections.push(run.parentContext.memory);
+  if (run.parentContext?.gitStatus && !def.omitGitStatus) sections.push(run.parentContext.gitStatus);
+  sections.push(SUBAGENT_ANTI_FABRICATION);
+  const system = sections.join("\n\n");
 
   // 独立上下文（DoD②）：不携带父会话任何消息
   const messages = [{ role: "user" as const, content: [{ type: "text" as const, text: normalized.prompt }] }];
