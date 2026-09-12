@@ -124,6 +124,8 @@ export function resolveInheritCap(
   ctx: { sessionModelIsLatest: boolean; disableCapEnv?: string },
 ): { model: string | undefined; capped: boolean } {
   if (def.model !== "inherit") return { model: def.model, capped: false };
-  const capped = def.inheritCap === true && ctx.sessionModelIsLatest === false && ctx.disableCapEnv === undefined;
+  // env 关断按 truthy 判定（CC 同构，V 复验 P5：空串=未设置不关断）
+  const capDisabled = Boolean(ctx.disableCapEnv);
+  const capped = def.inheritCap === true && ctx.sessionModelIsLatest === false && !capDisabled;
   return { model: capped ? MEDIUM_CAP_MODEL : def.model, capped };
 }

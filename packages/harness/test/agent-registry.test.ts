@@ -186,6 +186,7 @@ describe("DoD① 附：非最新模型压中档 env 同构位（iP/关断面，�
     expect(resolveInheritCap(explore, { sessionModelIsLatest: false }).model).toBe(MEDIUM_CAP_MODEL);
     expect(resolveInheritCap(explore, { sessionModelIsLatest: false }).capped).toBe(true);
     expect(resolveInheritCap(explore, { sessionModelIsLatest: false, disableCapEnv: "1" }).capped).toBe(false);
+    expect(resolveInheritCap(explore, { sessionModelIsLatest: false, disableCapEnv: "" }).capped).toBe(true); // V 复验 P5：空串 truthy 判定=不关断（CC 同构）
     expect(resolveInheritCap(explore, { sessionModelIsLatest: true }).model).toBe("inherit");
     // 非 inherit 模型不受 cap 影响
     const status = BUILT_IN_AGENTS.find((a) => a.name === "statusline-setup")!;
