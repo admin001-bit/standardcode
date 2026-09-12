@@ -48,7 +48,7 @@ export function parseTasksArgs(raw: string): { activeOnly: boolean; limit: numbe
   return { activeOnly, limit };
 }
 
-/** WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "fork"）。
+/** WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "subtask"——CC 兜底字面 "fork" 因本命令语境改名 [自定]）。
  */
 export function deriveSubtaskName(prompt: string): string {
   return (
