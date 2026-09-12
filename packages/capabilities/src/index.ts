@@ -2,3 +2,5 @@
 export type { StandardTool, ToolMetadata, Tool, ToolContext } from "./contract.ts";
 export { CapabilityRegistry } from "./registry.ts";
 export { createStandardTools, type StandardToolsOptions } from "./tool-factory.ts";
+// M4-WP-01：MCP 配置载体+客户端连接运行时（工具注入/信任门=WP-02/03）。
+export * from "./mcp/index.ts";
