@@ -5,6 +5,7 @@ export * from "./tree-kill.ts";
 export * from "./agent-loop.ts";
 export * from "./subagent.ts";
 export * from "./agent-registry.ts";
+export * from "./agent-definitions.ts";
 export * from "./task-registry.ts";
 export * from "./subagent-tasks.ts";
 export * from "./task-control.ts";

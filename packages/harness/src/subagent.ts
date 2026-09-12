@@ -50,6 +50,18 @@ export interface SubagentDefinition {
    * （CC Explore iP/g6t "opus" cap 同构语义，档位落点本仓 [自定]；env 关断=STANDARD_CODE_DISABLE_EXPLORE_INHERIT_CAP）。
    */
   inheritCap?: boolean;
+  /**
+   * WP-09（A 级 §5.3 isolation 70407-70415）：定义级隔离标记透传（worktree=标记实现；
+   * remote 拒绝=WP-03 校验序列既有段消费面；.md 解析产此位，spawn 接线=后续卡）。
+   */
+  isolation?: "worktree" | "remote";
+  /** WP-09（A 级 §5.3 initialPrompt 70443-70444；SEC-070 列举字段）：定义级初始提示透传位（消费接线=后续卡）。 */
+  initialPrompt?: string;
+  /**
+   * WP-09（A 级 §5.3 hooks `PAo` 70251-70259；SEC-070 提权字段之一）：hooks 键在场标记。
+   * M4 前无实体消费（卡边界），但存在即构成提权请求（信任门/二次确认判定输入）。
+   */
+  hooksRequested?: boolean;
 }
 
 export interface SubagentSpawnInput {
