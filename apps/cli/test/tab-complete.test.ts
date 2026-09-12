@@ -12,7 +12,7 @@ describe("completeInput (UI-001)", () => {
 
   it("多义前缀 → 候选列表；单命令前缀 → 唯一补全", () => {
     const c = completeInput("/", CLI_COMMANDS);
-    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff", "/new", "/resume", "/rename", "/compact", "/config", "/provider", "/doctor", "/cd", "/add-dir", "/reload", "/subtask", "/effort", "/init"]); // WP-11 十八+WP-07 三=21
+    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff", "/new", "/resume", "/rename", "/compact", "/config", "/provider", "/doctor", "/cd", "/add-dir", "/reload", "/tasks", "/background", "/subtask", "/effort", "/init"]); // WP-11 十八+WP-05 二+WP-07 三=23
     const ce = completeInput("/e", CLI_COMMANDS); // WP-07 /effort 落地后 /e 双义
     expect(ce.candidates).toEqual(["/exit", "/effort"]);
     const c2 = completeInput("/exi", CLI_COMMANDS); // 唯一命中仍走 insert

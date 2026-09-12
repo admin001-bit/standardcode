@@ -6,6 +6,7 @@
 // evictAfter 30s：任务终态后 30s 逐出（ORC-040 原文；调度器可注入供测试——DoD②）。
 
 import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { MAX_CONCURRENT_SUBAGENTS } from "./subagent.ts";
 
 export type TaskStatus = "running" | "completed" | "failed";
@@ -41,6 +42,9 @@ export interface TaskRegistryOptions {
 export interface TaskRegistry {
   /** 注册任务（running 态；并发槽未取）。 */
   register(input: { agentId: string; agentType: string; description: string; isBackgrounded: boolean }): TaskRecord;
+  /** WP-05：任务运行时柄（abort 控制器+子进程集合——TaskStop 两阶段终止的作用对象）。 */
+  attachRuntime(taskId: string, runtime: { abort: AbortController; children: Set<ChildProcess> }): void;
+  getRuntime(taskId: string): { abort: AbortController; children: Set<ChildProcess> } | undefined;
   /** 取并发槽：幂等（已持槽再取=true 不重复计数）；槽满=false。 */
   takeConcurrencySlot(taskId: string): boolean;
   /** 释放并发槽：幂等（未持槽释放为 no-op——DoD① 重复释放不二次计数）。 */
@@ -75,6 +79,7 @@ export function createTaskRegistry(opts: TaskRegistryOptions = {}): TaskRegistry
     });
   const emitter = new EventEmitter();
   const tasks = new Map<string, TaskRecord>();
+  const runtimes = new Map<string, { abort: AbortController; children: Set<ChildProcess> }>();
   let counter = 0;
 
   function emitUpdated(taskId: string) {
@@ -92,7 +97,10 @@ export function createTaskRegistry(opts: TaskRegistryOptions = {}): TaskRegistry
     emitter.emit(status, taskId, t);
     if (evictAfterMs > 0) {
       scheduleEvict(() => {
-        if (tasks.delete(taskId)) emitter.emit("evicted", taskId);
+        if (tasks.delete(taskId)) {
+          runtimes.delete(taskId);
+          emitter.emit("evicted", taskId);
+        }
       }, evictAfterMs);
     }
   }
@@ -111,6 +119,10 @@ export function createTaskRegistry(opts: TaskRegistryOptions = {}): TaskRegistry
       emitUpdated(task.taskId);
       return task;
     },
+    attachRuntime: (taskId, runtime) => {
+      runtimes.set(taskId, runtime);
+    },
+    getRuntime: (taskId) => runtimes.get(taskId),
     takeConcurrencySlot: (taskId) => {
       const t = tasks.get(taskId);
       if (!t) return false;
@@ -136,7 +148,10 @@ export function createTaskRegistry(opts: TaskRegistryOptions = {}): TaskRegistry
     complete: (taskId, result) => settle(taskId, "completed", { result }),
     fail: (taskId, error) => settle(taskId, "failed", { error }),
     remove: (taskId) => {
-      if (tasks.delete(taskId)) emitUpdated(taskId);
+      if (tasks.delete(taskId)) {
+        runtimes.delete(taskId);
+        emitUpdated(taskId);
+      }
     },
     get: (taskId) => tasks.get(taskId),
     list: (o) => {

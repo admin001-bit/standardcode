@@ -25,7 +25,30 @@ export function effortLabel(thinking: { type: "adaptive" } | { type: "budget"; b
 }
 
 /**
- * WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "fork"）。
+ * WP-05 /tasks 参数解析（ORC-032：active_only 默认 true、limit 1–100 默认 20）：
+ * `/tasks` | `/tasks <limit>` | `/tasks all` | `/tasks all <limit>`。limit 越界/非整数抛错（fail-closed）。
+ */
+export function parseTasksArgs(raw: string): { activeOnly: boolean; limit: number } {
+  const parts = raw.trim().split(/\s+/).filter(Boolean);
+  let activeOnly = true;
+  const nums: string[] = [];
+  for (const p of parts) {
+    if (p === "all") activeOnly = false;
+    else nums.push(p);
+  }
+  if (nums.length > 1) throw new Error(`/tasks: expected [all] [limit 1-100], got multiple numbers: ${nums.join(" ")}`);
+  let limit = 20;
+  if (nums.length === 1) {
+    const n = Number(nums[0]);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      throw new Error(`/tasks limit must be integer in [1,100] (ORC-032), got: ${nums[0]}`);
+    }
+    limit = n;
+  }
+  return { activeOnly, limit };
+}
+
+/** WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "fork"）。
  */
 export function deriveSubtaskName(prompt: string): string {
   return (
@@ -88,6 +111,10 @@ export interface CommandContext {
   effort(args: string): Promise<{ text: string }>;
   /** WP-07 /init：生成 AGENTS.md 骨架（已存在不覆盖——卡 DoD③）。 */
   init(): Promise<{ text: string }>;
+  /** WP-05 /tasks：任务清单（ORC-032：active_only 默认 true、limit 1–100 默认 20）。 */
+  tasks(args: string): { text: string };
+  /** WP-05 /background：挂后台任务清单。 */
+  background(): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -310,6 +337,22 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     description: "reload memory (WP-02) and settings (WP-01) from disk",
     execute(_args, ctx) {
       ctx.write(ctx.reload().text);
+    },
+  },
+  // —— WP-05：M3 任务面板（§8.2 M3 增 /tasks /background；ORC-032 Kimi 语义逐键）——
+  {
+    name: "tasks",
+    usage: "[all] [limit 1-100]",
+    description: "list tasks (active_only default true, limit 1-100 default 20 — ORC-032)",
+    execute(args, ctx) {
+      ctx.write(ctx.tasks(args).text);
+    },
+  },
+  {
+    name: "background",
+    description: "list backgrounded tasks (挂后台清单，ORC-032)",
+    execute(_args, ctx) {
+      ctx.write(ctx.background().text);
     },
   },
   // —— WP-07：M3 分期余量三件（§8.2 M3 增 /subtask /effort /init）——

@@ -12,7 +12,7 @@ import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitl
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
+import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig } from "@standardcode/context";
@@ -369,6 +369,26 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       if (existsSync(p)) return { text: "[init] AGENTS.md already exists — left unchanged（只生成不覆盖）" };
       writeFileSync(p, AGENTS_SKELETON, "utf8");
       return { text: `[init] created ${p}（骨架）` };
+    },
+    // —— WP-05：/tasks /background（ORC-032：TaskList 语义=active_only 默认 true、limit 1–100 默认 20）——
+    tasks: (args) => {
+      const s = deps.session;
+      const { activeOnly, limit } = parseTasksArgs(args);
+      const all = s.taskRegistry.list(activeOnly ? { activeOnly: true } : undefined);
+      const shown = all.slice(0, limit);
+      if (shown.length === 0) return { text: `[tasks] ${activeOnly ? "no active tasks" : "no tasks"}（注册表共 ${s.taskRegistry.list().length} 条）` };
+      const lines = shown.map((t) => {
+        const bg = t.isBackgrounded ? " bg" : "";
+        const usage = t.result ? ` ${t.result.totalTokens}tok/${t.result.totalToolUseCount}tools` : "";
+        return `  ${t.taskId} [${t.status}]${bg} ${t.agentType} "${t.description}"${usage}`;
+      });
+      return { text: `[tasks] ${shown.length}/${all.length}${activeOnly ? "（active_only；/tasks all 含终态）" : ""}\n${lines.join("\n")}` };
+    },
+    background: () => {
+      const s = deps.session;
+      const bg = s.taskRegistry.list().filter((t) => t.isBackgrounded);
+      if (bg.length === 0) return { text: "[background] 无挂后台任务" };
+      return { text: `[background] ${bg.length} 条\n${bg.map((t) => `  ${t.taskId} [${t.status}] ${t.agentType} "${t.description}"`).join("\n")}` };
     },
     write: deps.io.write,
   };

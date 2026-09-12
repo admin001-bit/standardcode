@@ -115,6 +115,8 @@ export interface LoopOptions {
   /** 观测点：done/return 时回填最终 turn 状态（测试与上层核验用，如中断后无悬空 tool_use）。 */
   stateRef?: { current?: TurnState };
   signal?: AbortSignal;
+  /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 runTools——任务级追踪面）。 */
+  onProcess?(child: import("node:child_process").ChildProcess): void;
 }
 
 export type { ContentBlock, LLMMessage, LLMRequest, ProviderAdapter, TokenUsage };

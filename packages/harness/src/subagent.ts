@@ -253,6 +253,8 @@ export interface SubagentRunContext {
   /** 窄权限闸（broker 不可得时的回退面；此时 agent 定义模式覆盖不生效——无法在不改父的情况下改模式）。 */
   permission?: LoopOptions["permission"];
   signal?: AbortSignal;
+  /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 agent-loop——任务级追踪面）。 */
+  onProcess?(child: import("node:child_process").ChildProcess): void;
   /** agentId 工厂（测试确定性注入；缺省递增 subagent-N）。 */
   newAgentId?: () => string;
 }
@@ -325,6 +327,7 @@ export async function runSubagent(
     signal: run.signal,
     stateRef,
     maxToolRounds: def.maxTurns,
+    onProcess: run.onProcess,
   })) {
     switch (ev.type) {
       case "usage":

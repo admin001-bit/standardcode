@@ -82,9 +82,23 @@ export async function spawnSubagentTask(
     return { status: "refused", code: "concurrency_limit", message: "Concurrent subagent limit reached.", trace: v.trace };
   }
 
-  const runCtx: SubagentRunContext = { ...run, signal: opts.signal ?? run.signal, newAgentId: idFallback };
+  // WP-05 任务运行时：AbortController（TaskStop 阶段一优雅停止面）+子进程集合（两阶段终止作用对象）
+  const abort = new AbortController();
+  const children = new Set<import("node:child_process").ChildProcess>();
+  registry.attachRuntime(taskId, { abort, children });
+  const chainAbort = (sig?: AbortSignal) => sig?.addEventListener("abort", () => abort.abort(), { once: true });
+  chainAbort(opts.signal);
+  chainAbort(run.signal);
+  const runCtx: SubagentRunContext = {
+    ...run,
+    signal: abort.signal,
+    newAgentId: idFallback,
+    onProcess: (child) => {
+      children.add(child);
+      child.once("exit", () => children.delete(child));
+    },
+  };
   const settle = runPromise(v.normalized, runCtx, registry, taskId);
-
   if (v.normalized.background) {
     // 后台默认（ORC-022）：注册即返回（CC §4.2 async_launched 形状）；完成经注册表事件通知
     // settle 的 rejection 已在 runPromise 内落账（registry.fail）——此处必须挂 catch 防未处理拒绝

@@ -56,6 +56,8 @@ export interface RunToolsOptions {
   /** file-history 快照（WP-09，EXE-040）：每次工具写盘前触发（全部门禁通过后、执行前）。 */
   fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
   signal?: AbortSignal;
+  /** WP-05（ORC-032 TaskStop）：工具派生的子进程上报（任务级追踪面——TaskStop 两阶段终止的作用对象）。 */
+  onProcess?(child: import("node:child_process").ChildProcess): void;
 }
 
 /**
@@ -70,6 +72,7 @@ export async function runTools(calls: ToolCall[], opts: RunToolsOptions): Promis
     signal: opts.signal ?? new AbortController().signal,
     registerProcess(child) {
       procs.push(child);
+      opts.onProcess?.(child); // WP-05：任务级子进程追踪
     },
   };
   const runOne = async (call: ToolCall): Promise<void> => {
