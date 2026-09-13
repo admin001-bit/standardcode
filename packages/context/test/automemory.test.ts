@@ -67,10 +67,15 @@ describe("DoD② MEMORY.md 索引硬截断（ae=200/ot=25000 对位）", () => {
     expect(over.warnings.some((w) => w.includes("200 lines"))).toBe(true);
     const fat = fixture();
     writeFileSync(path.join(fat, MEMORY_INDEX_FILE), "y".repeat(26_000), "utf8");
+    const cjk = fixture();
+    writeFileSync(path.join(cjk, MEMORY_INDEX_FILE), "记".repeat(9_000), "utf8"); // 9000 CJK=27000 UTF-8 字节（R3：码元截断会击穿）
     const overBytes = readMemoryIndex(fat);
     expect(overBytes.truncated).toBe(true);
     expect(overBytes.bytes).toBe(MEMORY_INDEX_MAX_BYTES);
     expect(overBytes.warnings.some((w) => w.includes("25,000 bytes") || w.includes("25000 bytes"))).toBe(true);
+    const overCjk = readMemoryIndex(cjk);
+    expect(overCjk.truncated).toBe(true);
+    expect(overCjk.bytes).toBeLessThanOrEqual(MEMORY_INDEX_MAX_BYTES); // R3：字节维上限成立
   });
 
   it("文件缺席=空视图非错误", () => {
@@ -120,6 +125,7 @@ describe("DoD④ 维护纪律段（[自定] 措辞；结构借鉴 _533 形状）
     expect(d).toContain("[[name]]");
     expect(d).toContain("200 lines / 25,000 bytes");
     expect(d).toContain("stale");
+    expect(d).toContain("placeholder for something you plan to write later"); // R1 修复后措辞
     expect(d).toContain("**user**");
     expect(d).toContain("**feedback**");
     expect(d).toContain("**project**");

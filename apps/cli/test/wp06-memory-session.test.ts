@@ -69,8 +69,6 @@ function makeSession(over: Record<string, unknown> = {}): { session: Session; pr
     trusted: true,
     ...over,
   });
-  // 测试用固定 enc 目录：把 session.autoMemory 指到预置 memDir（encodeProjectPath 依赖真实路径，测试注入视图）
-  void homedir;
   return { session, provider };
 }
 

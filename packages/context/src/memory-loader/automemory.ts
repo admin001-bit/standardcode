@@ -88,7 +88,16 @@ export function readMemoryIndex(dir: string, readFile: typeof readFileSync = rea
   let text = lines.join("\n");
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes > MEMORY_INDEX_MAX_BYTES) {
-    text = text.slice(0, MEMORY_INDEX_MAX_BYTES);
+    // 字节维截断（R3 修复：String.slice 按 UTF-16 码元，CJK 多字节下会击穿字节上限——按码点二分收缩至 ≤ 上限）
+    const cps = [...text];
+    let lo = 0;
+    let hi = cps.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi + 1) / 2);
+      if (Buffer.byteLength(cps.slice(0, mid).join(""), "utf8") <= MEMORY_INDEX_MAX_BYTES) lo = mid;
+      else hi = mid - 1;
+    }
+    text = cps.slice(0, lo).join("");
     truncated = true;
     warnings.push(`${MEMORY_INDEX_FILE} exceeds ${MEMORY_INDEX_MAX_BYTES} bytes — truncated to ${MEMORY_INDEX_MAX_BYTES} bytes`);
   }
@@ -135,7 +144,7 @@ export function resolveMemoryLinks(dir: string, names: string[], readFile: typeo
 
 export interface AutoMemoryView {
   index: MemoryIndexView;
-  /** 索引+正文中的互链解析结果（目标存在=全文随注入）。 */
+  /** 索引文本的互链解析结果（目标存在=全文随注入；正文链接一跳展开=留位 [自定]，核验 O1 登记）。 */
   resolved: ResolvedLink[];
   missing: string[];
   /** 目录下记忆文件计数（/memory 可视化）。 */
@@ -208,8 +217,8 @@ export function buildMemoryDisciplinePrompt(opts?: { autoTrackEnabled?: boolean 
     "",
     "### Linking and staleness",
     "",
-    "In memory bodies, link related memories with `[[name]]` (the other memory's slug). A `[[name]]` that does not match an existing memory yet is fine - it marks something worth writing later, not an error.",
+    "In memory bodies, link related memories with `[[name]]` (the other memory's slug). A `[[name]]` with no matching memory yet is fine - it is a placeholder for something you plan to write later, not a failure.",
     "",
-    "Memory records can become stale. Treat them as what was true at a point in time: before acting on a memory, verify it against the current state of the files or resources; if a memory conflicts with what you observe now, trust what you observe and update or remove the stale memory.",
+    "Memory records can become stale. Treat each record as a snapshot of what was true at some earlier point: before relying on one, re-check it against the code or data as they are now; when a memory disagrees with what you currently observe, prefer what you observe and correct or delete the outdated record.",
   ].join("\n");
 }

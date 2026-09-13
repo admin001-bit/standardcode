@@ -22,6 +22,8 @@ function fakeProvider(): ProviderAdapter {
 
 const readTool: Tool = { name: "Read", inputSchema: { type: "object" }, description: "t", execute: async () => "r", isConcurrencySafe: true };
 const bashTool: Tool = { name: "Bash", inputSchema: { type: "object" }, description: "t", execute: async () => "b", isConcurrencySafe: true };
+const grepTool: Tool = { name: "Grep", inputSchema: { type: "object" }, description: "t", execute: async () => "g", isConcurrencySafe: true };
+const globTool: Tool = { name: "Glob", inputSchema: { type: "object" }, description: "t", execute: async () => "gl", isConcurrencySafe: true };
 
 describe("MEM-030（WP-06 DoD⑤）", () => {
   it("memory 键解析入 def（三值合法；非法告警）", () => {
@@ -33,16 +35,29 @@ describe("MEM-030（WP-06 DoD⑤）", () => {
     expect(bad.warnings.some((w) => w.includes("memory 'secret' not in"))).toBe(true);
   });
 
-  it("启用 memory 的 agent=只读三件套自动补（def.tools 白名单外也补；WP-09 O2 回补）", async () => {
+  it("启用 memory 的 agent=只读三件套自动补（def.tools 白名单外也补；WP-09 O2 回补；R2 判别力=req.tools 断言）", async () => {
     const parsed = parseAgentMarkdown("---\nname: a\ndescription: d\nmemory: project\ntools:\n  - Bash\n---\nbody", "a.md");
+    let seenTools: string[] | null = null;
+    const provider: ProviderAdapter = {
+      ...fakeProvider(),
+      async *stream(req) {
+        seenTools = (req.tools ?? []).map((t) => t.name);
+        yield { type: "message_start", id: "m", model: "test" };
+        yield { type: "text_delta", text: "done" };
+        yield { type: "usage", usage: { inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 } };
+        yield { type: "finish", reason: "completed", raw: "end_turn" };
+      },
+    };
     const r = await runSubagent({ definition: parsed.def!, prompt: "p", description: "d", agentType: "a", background: false }, {
-      provider: fakeProvider(),
+      provider,
       model: "m",
-      tools: [bashTool, readTool],
+      tools: [bashTool, readTool, grepTool, globTool],
       newAgentId: () => "a1",
     });
     expect(r.status).toBe("completed");
-    void r;
+    // 三件套自动补：def.tools=[Bash] 白名单下 Read/Grep/Glob 缺者补入（判别力：删循环则 Grep/Glob 缺席红）
+    for (const t of ["Read", "Grep", "Glob"]) expect(seenTools).toContain(t);
+    expect(seenTools).toContain("Bash");
   });
 
   it("primedAgentMemory 注入=messages 首条 <agent-memory> 载体（Golden 面零影响）", async () => {
