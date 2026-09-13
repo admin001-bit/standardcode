@@ -61,7 +61,8 @@ export function loadProjectAgentDefinitions(projectRoot: string, dir = projectAg
 
 // —— SEC-070 local 层留痕（settings.local.json `agentTrust` 映射）——
 
-function readLocalDoc(file: string): Record<string, unknown> {
+/** 读 local 层 doc（坏 JSON/非对象抛错——写侧保守，读侧消费方 fail-open；WP-03 mcp-trust 复用）。 */
+export function readLocalDoc(file: string): Record<string, unknown> {
   if (!existsSync(file)) return { schemaVersion: 1 };
   let parsed: unknown;
   try {

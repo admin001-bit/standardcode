@@ -6,3 +6,4 @@ export * from "./file-history.ts";
 export * from "./diff.ts";
 export * from "./trust.ts";
 export * from "./agent-discovery.ts";
+export * from "./mcp-trust.ts";

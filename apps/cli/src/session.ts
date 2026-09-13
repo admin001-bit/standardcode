@@ -6,10 +6,10 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createStandardTools, loadMcpServerConfigs, type McpConnection, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createStandardTools, gateMcpServerDocs, loadMcpServerConfigs, parseTransportType, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
-import { createTrustGate, isTrusted, readTrustStore, type TrustGateResult } from "@standardcode/platform";
+import { createTrustGate, isTrusted, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
 
@@ -23,6 +23,18 @@ export const PERMISSION_LABEL: Record<PermissionMode, string> = {
   plan: "Plan",
   bypassPermissions: "Auto",
 };
+
+/** M4-WP-03：/mcp list 视图（活动定义+被门控剔除项；状态/传输/来源/连接态）。 */
+export interface McpServerView {
+  name: string;
+  origin: McpSourceName;
+  transport: "stdio" | "sse" | "http";
+  /** 批准状态机终态（S-3；approved/rejected/disabled/pending）。 */
+  state: McpApprovalState;
+  /** 连接态（未装载=缺席）。 */
+  status?: "pending" | "connected" | "failed" | "needs-auth";
+  error?: string;
+}
 
 export interface Session {
   /** 当前会话 ID（WP-10：转录文件名+锁键+/resume 目标；repl 初始化时赋 UUID）。 */
@@ -57,12 +69,22 @@ export interface Session {
   additionalDirectories: string[];
   /** env 副本快照（WP-07 R-env 修复的断言面：settings env.* 注入经信任门控后落此；只读消费）。 */
   env: Record<string, string | undefined>;
-  /** M4-WP-02：MCP 连接清单（WP-03 /mcp 消费面；status/origin/error 均在 McpConnection）。 */
+  /** M4-WP-02：MCP 连接清单（/mcp 消费面；status/origin/error 均在 McpConnection）。 */
   mcpConnections: McpConnection[];
   /** MCP 装配 Promise（不阻塞启动；单 server 失败只降级 DoD④，异常静默）。 */
   mcpReady: Promise<void>;
   /** drain 后台终态通知（repl turn 首注入 <system-reminder>，SEC-010 载体同构）。 */
   drainMcpNotifications(): string[];
+  /** M4-WP-03：raw 定义全集（门控前；/mcp list 与批准动作的名字校验/来源快照消费）。 */
+  mcpRawServers: McpServerEntry[];
+  /** M4-WP-03：逐来源逐 server 批准态（批准状态机终态，每次装配刷新）。 */
+  mcpGateStates: { name: string; origin: McpSourceName; state: McpApprovalState }[];
+  /** M4-WP-03：/mcp list 视图。 */
+  mcpServers(): McpServerView[];
+  /** M4-WP-03：approve|reject|enable|disable → local 层留痕（ADR-0037 形制）+按现行门控重装配。 */
+  mcpRecord(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<void>;
+  /** M4-WP-03：按现行门控重装配（关旧连+清旧工具+重连；装配链串行防竞态）。 */
+  refreshMcp(): Promise<void>;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -238,6 +260,11 @@ export function createSession(init: SessionInit = {}): Session {
     // M4-WP-02：MCP 装配占位（真值在 session 构造后即位——见下方 bootstrap 块）。
     mcpConnections: [],
     mcpReady: Promise.resolve(),
+    mcpRawServers: [],
+    mcpGateStates: [],
+    mcpServers: () => [],
+    mcpRecord: async () => {},
+    refreshMcp: async () => {},
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
@@ -277,11 +304,15 @@ export function createSession(init: SessionInit = {}): Session {
       session.additionalDirectories.push(path.resolve(dir));
     },
   };
-  // —— M4-WP-02：MCP 装配（ADR-0040；gated docs=信任门前置——未信任项目共享层不进；per-server 批准制=WP-03 叠加）——
+  // —— M4-WP-02/03：MCP 装配（ADR-0040）——S-3 per-server 批准制（WP-03）：projectShared 层逐 server 过批准
+  // 状态机，pending/rejected/disabled 不进合并（[CC] nxt `_440.js:154575-154589` 只收 approved 形状），低来源同名
+  // 定义自然回落（Z1e `_440.js:154480-154492`）；批准/停用留痕=settings.local.json `mcpTrust`（platform 读写）。
+  // 装配链串行（refreshMcp 与首装共用队列）；每次装配先 teardown（关旧连+清旧工具面）再按现行门控重连。
   session.mcpConnections = [];
   const mcpNotes: string[] = [];
   session.drainMcpNotifications = () => mcpNotes.splice(0, mcpNotes.length);
   const mcpToolNamesByServer = new Map<string, string[]>();
+  const mcpProjectRoot = init.projectRoot ?? sessionCwd;
   async function refreshServerTools(conn: McpConnection): Promise<void> {
     if (!conn.client) return;
     const built = await buildMcpToolsForConnection(conn.client, {
@@ -304,32 +335,99 @@ export function createSession(init: SessionInit = {}): Session {
     session.tools.push(...built.tools);
     mcpToolNamesByServer.set(conn.name, built.tools.map((t) => t.name));
   }
-  session.mcpReady = (async () => {
-    try {
-      const mcpDocs: Partial<Record<McpSourceName, Record<string, unknown> | null>> = {};
-      for (const src of ["user", "projectShared", "projectLocal", "flag", "managed"] as McpSourceName[]) {
-        mcpDocs[src] = (gatedSettings.docs[src] as Record<string, unknown> | null) ?? null;
+  let mcpAssembly: Promise<void> = Promise.resolve();
+  function runMcpAssembly(): Promise<void> {
+    const run = mcpAssembly.then(async () => {
+      const oldConns = session.mcpConnections;
+      session.mcpConnections = [];
+      for (const names of mcpToolNamesByServer.values()) {
+        const set = names instanceof Set ? names : new Set(names);
+        for (let i = session.tools.length - 1; i >= 0; i--) if (set.has(session.tools[i]!.name)) session.tools.splice(i, 1);
       }
-      // S-3/§8.3：项目共享层 server（随 clone 注入）信任确认前整体不加载（SEC-070 同族口径）——
-      // mcpServers 不在 TRUST_GATED_KEYS 清单，装配侧自持门；per-server 批准制=WP-03 叠加。
-      if (!session.trust.trusted && mcpDocs.projectShared?.mcpServers !== undefined) {
-        const { mcpServers: _gated, ...rest } = mcpDocs.projectShared;
-        mcpDocs.projectShared = rest;
+      mcpToolNamesByServer.clear();
+      await Promise.allSettled(oldConns.map((c) => c.close()));
+      try {
+        const docs = session.trust.settings.docs;
+        const mcpDocs: Partial<Record<McpSourceName, Record<string, unknown> | null>> = {};
+        for (const src of ["user", "projectShared", "projectLocal", "flag", "managed"] as McpSourceName[]) {
+          mcpDocs[src] = (docs[src] as Record<string, unknown> | null) ?? null;
+        }
+        const gate = gateMcpServerDocs({
+          docs: mcpDocs,
+          trusted: session.trust.trusted,
+          enableAllProjectMcpServers: settingsValue<boolean>(session.trust.settings, "enableAllProjectMcpServers") === true,
+          records: readMcpTrust(mcpProjectRoot),
+        });
+        session.mcpGateStates = gate.states;
+        session.mcpRawServers = loadMcpServerConfigs(mcpDocs, env).servers; // 门控前全集（/mcp list 消费）
+        const loaded = loadMcpServerConfigs(gate.docs, env);
+        const conns = await connectAll(loaded, {
+          cwd: sessionCwd,
+          sessionId: session.id || "standardcode-session",
+          envBase: env,
+        });
+        session.mcpConnections = conns;
+        for (const conn of conns) {
+          if (conn.status === "connected") await refreshServerTools(conn).catch(() => {});
+        }
+      } catch {
+        // 装配异常=零 MCP 工具（降级不阻塞会话；/mcp 可见面）
       }
-      const loaded = loadMcpServerConfigs(mcpDocs, env);
-      const conns = await connectAll(loaded, {
-        cwd: sessionCwd,
-        sessionId: session.id || "standardcode-session",
-        envBase: env,
+    });
+    mcpAssembly = run.catch(() => {});
+    return run;
+  }
+  session.mcpReady = runMcpAssembly();
+  session.refreshMcp = () => runMcpAssembly();
+  session.mcpServers = () => {
+    const views: McpServerView[] = [];
+    const active = new Set<string>();
+    for (const c of session.mcpConnections) {
+      const st = session.mcpGateStates.find((s) => s.name === c.name && s.origin === c.origin);
+      views.push({
+        name: c.name,
+        origin: c.origin,
+        transport: c.config?.type ?? "stdio",
+        state: st?.state ?? "approved",
+        status: c.status,
+        ...(c.error !== undefined ? { error: c.error } : {}),
       });
-      session.mcpConnections = conns;
-      for (const conn of conns) {
-        if (conn.status === "connected") await refreshServerTools(conn).catch(() => {});
-      }
-    } catch {
-      // 装配异常=零 MCP 工具（降级不阻塞会话；/mcp 可见面=WP-03）
+      active.add(c.name);
     }
-  })();
+    for (const s of session.mcpRawServers) {
+      if (active.has(s.name)) continue;
+      const st = session.mcpGateStates.find((x) => x.name === s.name && x.origin === s.origin);
+      views.push({ name: s.name, origin: s.origin, transport: s.config.type, state: st?.state ?? "pending" });
+    }
+    return views;
+  };
+  session.mcpRecord = async (action, name) => {
+    const known = session.mcpRawServers.find((s) => s.name.toLowerCase() === name.toLowerCase());
+    if (!known) throw new Error(`no MCP server named "${name}"（/mcp list 查看清单）`);
+    const base: McpTrustRecord = readMcpTrust(mcpProjectRoot)[name.toLowerCase()] ?? {};
+    if (action === "approve" || action === "reject") {
+      // S-3"来源持久记录"：从 raw 定义快照传输+命令或 URL（插值前——${VAR} 字面留痕，不落解析值）。
+      const rec: McpTrustRecord = { ...base, decision: action === "approve" ? "approved" : "rejected", confirmedAt: new Date().toISOString() };
+      const doc = session.trust.settings.docs[known.origin] as Record<string, unknown> | null | undefined;
+      const servers = doc?.mcpServers;
+      const raw = (servers !== null && typeof servers === "object" && !Array.isArray(servers) ? (servers as Record<string, unknown>)[known.name] : undefined) as Record<string, unknown> | undefined;
+      const t = parseTransportType(raw?.type);
+      if ("kind" in t) {
+        rec.transport = t.kind;
+        if (t.kind === "stdio") {
+          const cmd = typeof raw?.command === "string" ? raw.command : "";
+          const args = Array.isArray(raw?.args) ? (raw.args as unknown[]).filter((a): a is string => typeof a === "string") : [];
+          rec.command = [cmd, ...args].join(" ");
+        } else if (typeof raw?.url === "string") {
+          rec.url = raw.url;
+        }
+      }
+      recordMcpTrust(mcpProjectRoot, name, rec);
+    } else {
+      recordMcpTrust(mcpProjectRoot, name, { ...base, disabled: action === "disable", confirmedAt: new Date().toISOString() });
+    }
+    await session.refreshMcp();
+  };
   return session;
 }
 

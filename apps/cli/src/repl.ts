@@ -438,6 +438,27 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         ].join("\n"),
       };
     },
+    // —— WP-03：/mcp（S-3 安装即确认；可视化管控面，§8.2 M4 增）——
+    mcpList: () => {
+      const views = deps.session.mcpServers();
+      const lines = [`[mcp] ${views.length} server(s)`];
+      for (const v of views) {
+        const status = v.status ?? "-";
+        lines.push(`  ${v.name}  ${v.transport}  ${v.origin}  ${v.state}  ${status}${v.error ? `  error: ${v.error}` : ""}`);
+      }
+      if (views.some((v) => v.state === "pending")) {
+        lines.push("  pending project server(s) are not active until approved: /mcp approve <name> (S-3)");
+      }
+      return { text: lines.join("\n") };
+    },
+    mcpAction: async (action, name) => {
+      await deps.session.mcpRecord(action, name);
+      const done = { approve: "approved", reject: "rejected", enable: "enabled", disable: "disabled" }[action];
+      const v = deps.session.mcpServers().find((x) => x.name.toLowerCase() === name.toLowerCase());
+      const suffix = v ? ` — ${v.state}${v.status ? ` (${v.status})` : ""}` : "";
+      const hint = action === "enable" && v?.state === "rejected" ? "（decision=rejected 仍在——恢复批准用 /mcp approve）" : "";
+      return { text: `[mcp] ${done} ${name}${suffix}${hint}` };
+    },
     write: deps.io.write,
   };
 }

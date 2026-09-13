@@ -81,11 +81,11 @@ describe("DoD① /tasks 参数语义（active_only/limit 边界 1–100）", () 
 });
 
 describe("命令全集与 Tab 补全（UI-001）", () => {
-  it("registry 恰二十五（M2 十八+M3 七：/tasks /background /subtask /effort /init /status /usage）", () => {
+  it("registry 恰二十六（M2 十八+M3 七+M4 WP-03 一：/mcp）", () => {
     expect(CLI_COMMANDS.map((c) => c.name)).toEqual([
       "help", "clear", "exit", "model", "permission", "rewind", "context", "diff", "new", "resume", "rename",
       "compact", "config", "provider", "doctor", "cd", "add-dir", "reload",
-      "tasks", "background", "subtask", "effort", "init", "status", "usage",
+      "tasks", "background", "subtask", "effort", "init", "status", "usage", "mcp",
     ]);
     expect(completeInput("/ta", CLI_COMMANDS).insert).toBe("/tasks ");
     expect(completeInput("/back", CLI_COMMANDS).insert).toBe("/background ");

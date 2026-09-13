@@ -29,8 +29,8 @@ function fakeProvider(): ProviderAdapter {
 }
 
 describe("命令注册（M1 最小集+M2 WP-09 增量；§8.2 分期，B-03 只注册本里程碑命令）", () => {
-  it("registry 恰二十五命令（§8.2 M2 全集十八+M3 七件：/tasks /background（WP-05）+/subtask /effort /init（WP-07）+/status /usage（WP-10））", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission", "rewind", "context", "diff", "new", "resume", "rename", "compact", "config", "provider", "doctor", "cd", "add-dir", "reload", "tasks", "background", "subtask", "effort", "init", "status", "usage"]);
+  it("registry 恰二十六命令（§8.2 M2 全集十八+M3 七件+/mcp（M4 WP-03）：/tasks /background（WP-05）+/subtask /effort /init（WP-07）+/status /usage（WP-10））", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toEqual(["help", "clear", "exit", "model", "permission", "rewind", "context", "diff", "new", "resume", "rename", "compact", "config", "provider", "doctor", "cd", "add-dir", "reload", "tasks", "background", "subtask", "effort", "init", "status", "usage", "mcp"]);
   });
 
   it("/help 列全表", () => {

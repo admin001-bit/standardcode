@@ -153,6 +153,10 @@ export interface CommandContext {
   status(): { text: string };
   /** WP-10 /usage：四列累计+缓存命中率（会话内实时，cache_read/input=M1 WP-05 口径）+内置价格表估算（[自定] 占位）。 */
   usage(): { text: string };
+  /** WP-03 /mcp：server 清单视图（状态/传输/来源/连接态）。 */
+  mcpList(): { text: string };
+  /** WP-03 /mcp：approve|reject|enable|disable（local 层留痕 ADR-0037 形制+按现行门控重装配）。 */
+  mcpAction(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<{ text: string }>;
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -435,6 +439,30 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     description: "token four-column session totals + cache hit rate (in-session real-time) + built-in price table cost estimate (CTX-102/ENG-046)",
     execute(_args, ctx) {
       ctx.write(ctx.usage().text);
+    },
+  },
+  // —— WP-03：M4 分期首件（§8.2 M4 增 /mcp；S-3 安装即确认+/mcp 可视化管控）——
+  {
+    name: "mcp",
+    usage: "[list | approve|reject|enable|disable <server>]",
+    description: "MCP servers: per-server approval state/transport/origin (S-3); manage approval and disable (persists to local layer)",
+    async execute(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "list").toLowerCase();
+      if (sub === "list") {
+        if (parts.length > 1) throw new Error(`/mcp list: unexpected argument(s): ${parts.slice(1).join(" ")}`);
+        ctx.write(ctx.mcpList().text);
+        return;
+      }
+      if (sub === "approve" || sub === "reject" || sub === "enable" || sub === "disable") {
+        const name = parts[1];
+        if (!name) throw new Error(`/mcp ${sub} <server>: server name required`);
+        if (parts.length > 2) throw new Error(`/mcp ${sub}: exactly one server name expected (got: ${parts.slice(1).join(" ")})`);
+        const r = await ctx.mcpAction(sub, name);
+        ctx.write(r.text);
+        return;
+      }
+      throw new Error(`unknown /mcp subcommand: ${sub}（可选 list | approve | reject | enable | disable）`);
     },
   },
 ];
