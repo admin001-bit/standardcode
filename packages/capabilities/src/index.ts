@@ -6,3 +6,5 @@ export { createStandardTools, type StandardToolsOptions } from "./tool-factory.t
 export * from "./mcp/index.ts";
 // M4-WP-04：hooks 引擎（settings 配置源+事件编排+退出码/JSON 协议+聚合）。
 export * from "./hooks/index.ts";
+// M4-WP-05：skills（frontmatter+三源发现+清单预算+Skill 工具）。
+export * from "./skills/index.ts";

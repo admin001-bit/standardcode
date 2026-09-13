@@ -205,13 +205,13 @@ describe("repl 生命周期触发面（e2e：Session/Stop/PromptSubmit/Compact/S
     const s = makeSession({ SubagentStart: [{ hooks: [markHook(f, "sub-start")] }], SubagentStop: [{ hooks: [markHook(f, "sub-stop")] }] });
     await runReplWith(s, ["hello", "/subtask do things", "/exit"]);
     const end = Date.now() + 5000;
-    while (Date.now() < end && !readFileSync(f, "utf8").includes("sub-stop")) await new Promise((r) => setTimeout(r, 50));
+    while (Date.now() < end && !(readFileSync(f, "utf8").includes("sub-start") && readFileSync(f, "utf8").includes("sub-stop"))) await new Promise((r) => setTimeout(r, 50));
     const text = readFileSync(f, "utf8");
     expect(text).toContain("sub-start");
     expect(text).toContain("sub-stop");
   }, 30_000);
 
-  it("命令清单仍 26（WP-04 未增命令，B-03）", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(26);
+  it("命令清单恰 27【勘误 2026-09-13：WP-05 注册 /skills 后 26→27】", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(27);
   });
 });

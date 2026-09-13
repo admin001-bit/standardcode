@@ -157,6 +157,10 @@ export interface CommandContext {
   mcpList(): { text: string };
   /** WP-03 /mcp：approve|reject|enable|disable（local 层留痕 ADR-0037 形制+按现行门控重装配）。 */
   mcpAction(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<{ text: string }>;
+  /** WP-05 /skills：list（name/描述/来源/状态）。 */
+  skillsList(): { text: string };
+  /** WP-05 /skills run：用户点名豁免（disable-model-invocation 双轨的豁免面，DoD④）。 */
+  skillsRun(name: string, args?: string): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -463,6 +467,29 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         return;
       }
       throw new Error(`unknown /mcp subcommand: ${sub}（可选 list | approve | reject | enable | disable）`);
+    },
+  },
+  // —— WP-05：M4 分期（§8.2 M4 增 /skills；S-5 allowed-tools 白名单+SEC-070 信任门）——
+  {
+    name: "skills",
+    usage: "[list | run <name> [args]]",
+    description: "list skills (name/description/source/state) or invoke a skill by name (user invocation bypasses disable-model-invocation)",
+    execute(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "list").toLowerCase();
+      if (sub === "list") {
+        if (parts.length > 1) throw new Error(`/skills list: unexpected argument(s): ${parts.slice(1).join(" ")}`);
+        ctx.write(ctx.skillsList().text);
+        return;
+      }
+      if (sub === "run") {
+        const name = parts[1];
+        if (!name) throw new Error("/skills run <name> [args]: skill name required");
+        const r = ctx.skillsRun(name, parts.length > 2 ? parts.slice(2).join(" ") : undefined);
+        ctx.write(r.text);
+        return;
+      }
+      throw new Error(`unknown /skills subcommand: ${sub}（可选 list | run）`);
     },
   },
 ];

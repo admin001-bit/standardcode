@@ -6,7 +6,7 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createStandardTools, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, parseTransportType, type HookEngine, type HookEventName, type HookEventOutcome, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
@@ -51,6 +51,19 @@ export interface SessionHooks {
   ): void;
   /** harness 工具链适配（PreToolUse 三裁决序/PostToolUse/PostToolUseFailure/PermissionRequest）。 */
   toolAdapter(): ToolHooks;
+}
+
+/** M4-WP-05：skills 门面（清单增量+激活收窄+用户点名豁免）。 */
+export interface SessionSkills {
+  all(): LoadedSkill[];
+  warnings(): string[];
+  /** 增量清单 meta 文本（CTX-005 追加载体；null=无新增；内部推进 sent 名集合——DoD⑧ per-agent 去重）。 */
+  listing(): string | null;
+  active(): { name: string; allowedTools?: string[] } | null;
+  /** allowed-tools 白名单收窄后的工具面（DoD⑤ S-5；Skill 工具恒保留 [自定]）。 */
+  toolFace(base: StandardTool[]): StandardTool[];
+  /** 用户点名豁免（/skills run；不经 Skill tool=免 disable-model-invocation 限制，DoD④ 双轨）。 */
+  runByName(name: string, args?: string): { text: string; injected: string | null };
 }
 
 export interface Session {
@@ -104,6 +117,8 @@ export interface Session {
   refreshMcp(): Promise<void>;
   /** M4-WP-04：hooks 门面（引擎+工具链适配；配置源=settings 五来源+信任门运行时判定）。 */
   hooks: SessionHooks;
+  /** M4-WP-05：skills 门面（三源发现+清单增量+allowed-tools 收窄+用户点名豁免）。 */
+  skills: SessionSkills;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -293,6 +308,14 @@ export function createSession(init: SessionInit = {}): Session {
         postToolUseFailure: async () => {},
       }),
     },
+    skills: {
+      all: () => [],
+      warnings: () => [],
+      listing: () => null,
+      active: () => null,
+      toolFace: (base) => base,
+      runByName: () => ({ text: "bootstrap", injected: null }),
+    },
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
@@ -438,6 +461,69 @@ export function createSession(init: SessionInit = {}): Session {
         await hookEngine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
       },
     }),
+  };
+  // —— M4-WP-05：skills（DoD② 三源发现+SEC-070 信任门前置；Skill 工具注册进工具面；清单增量/激活收窄/usage 半衰期内存态 [自定]）——
+  const loadedSkills = loadSkills({ ...(init.home !== undefined ? { home: init.home } : {}), projectRoot: sessionCwd, trusted: session.trust.trusted });
+  const skillUsage: Record<string, SkillUsageRecord> = {};
+  const sentSkillNames = new Set<string>();
+  const sentSkillHashes = new Set<string>();
+  let activeSkillState: { name: string; allowedTools?: string[] } | null = null;
+  const skillTool = createSkillTool({
+    findSkill: (name) => {
+      const s = loadedSkills.skills.find((x) => x.name === name);
+      return s ? { name: s.name, description: s.description, allowedTools: s.allowedTools, disableModelInvocation: s.disableModelInvocation, contentHash: s.contentHash, body: s.body, dir: s.dir } : undefined;
+    },
+    projectDir: sessionCwd,
+    get sessionId() {
+      return session.id;
+    },
+    bumpUsage: (name) => {
+      const u = skillUsage[name] ?? { count: 0, lastUsedAt: 0 };
+      skillUsage[name] = { count: u.count + 1, lastUsedAt: Date.now() };
+    },
+    wasSent: (h) => sentSkillHashes.has(h),
+    markSent: (h) => sentSkillHashes.add(h),
+    activate: (a) => {
+      activeSkillState = a;
+    },
+  });
+  session.tools.push(skillTool);
+  session.skills = {
+    all: () => loadedSkills.skills,
+    warnings: () => loadedSkills.warnings,
+    listing: () => {
+      const invocable = loadedSkills.skills.filter((s) => !s.disableModelInvocation); // 清单隐身双轨（:257572）
+      if (invocable.length === 0) return null;
+      const newOnes = invocable.filter((s) => !sentSkillNames.has(s.name));
+      if (newOnes.length === 0) return null; // DoD⑧ 增量：无新增不发
+      const built = buildSkillListing(
+        invocable.map((s) => ({ name: s.name, description: s.description, ...(s.whenToUse ? { whenToUse: s.whenToUse } : {}) })),
+        { contextTokens: session.provider.capabilities(session.model).contextWindow, usage: skillUsage },
+      );
+      const lines = built.lines.filter((line) => {
+        const body = line.startsWith("- ") ? line.slice(2) : line;
+        const name = body.includes(": ") ? body.slice(0, body.indexOf(": ")) : body;
+        return newOnes.some((n) => n.name === name);
+      });
+      for (const n of newOnes) sentSkillNames.add(n.name);
+      return SKILL_LISTING_HEADER + lines.join("\n"); // :318109 头逐字
+    },
+    active: () => activeSkillState,
+    toolFace: (base) => {
+      const a = activeSkillState;
+      if (!a?.allowedTools || a.allowedTools.length === 0) return base;
+      const allow = new Set([...a.allowedTools, "Skill"]); // Skill 工具恒保留（切换/退出通道 [自定]）
+      return base.filter((t) => allow.has(t.name));
+    },
+    runByName: (name, args) => {
+      const s = loadedSkills.skills.find((x) => x.name === name);
+      if (!s) throw new Error(`no skill named "${name}"（/skills 查看清单）`);
+      skillUsage[name] = { count: (skillUsage[name]?.count ?? 0) + 1, lastUsedAt: Date.now() };
+      activeSkillState = { name: s.name, ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}) }; // 用户点名同激活白名单 [自定]
+      if (sentSkillHashes.has(s.contentHash)) return { text: `[skills] ${name}: ${SKILL_ALREADY_LOADED_NOTE}`, injected: null };
+      sentSkillHashes.add(s.contentHash);
+      return { text: `[skills] invoked ${name}（内容已注入会话）`, injected: expandSkillBody(s.body, { skillDir: s.dir, projectDir: sessionCwd, sessionId: session.id, args }) };
+    },
   };
   session.mcpServers = () => {
     const views: McpServerView[] = [];

@@ -472,6 +472,29 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const hint = action === "enable" && v?.state === "rejected" ? "（decision=rejected 仍在——恢复批准用 /mcp approve）" : "";
       return { text: `[mcp] ${done} ${name}${suffix}${hint}` };
     },
+    // —— WP-05：/skills（S-5+SEC-070；DoD⑦ list 形状+DoD④ run 豁免面）——
+    skillsList: () => {
+      const s = deps.session;
+      const all = s.skills.all();
+      const active = s.skills.active();
+      const lines = [`[skills] ${all.length} skill(s)`];
+      for (const sk of all) {
+        const state = active?.name === sk.name ? "active" : sk.disableModelInvocation ? "user-only" : "model";
+        const desc = [sk.description, sk.whenToUse].filter((x) => x !== undefined && x !== "").join(" ");
+        lines.push(`  ${sk.name}  ${sk.source}  ${state}${sk.argumentHint ? `  (${sk.argumentHint})` : ""}${desc ? `  ${desc}` : ""}`);
+      }
+      for (const w of s.skills.warnings()) lines.push(`  [warn] ${w}`);
+      if (active) lines.push(`  active: ${active.name}${active.allowedTools ? `（tools: ${active.allowedTools.join(", ")}）` : ""}`);
+      return { text: lines.join("\n") };
+    },
+    skillsRun: (name, args) => {
+      const r = deps.session.skills.runByName(name, args);
+      if (r.injected !== null) {
+        // 用户点名展开注入（isMeta user 追加——CTX-005 载体；下一 turn 模型可见）
+        deps.session.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${r.injected}</system-reminder>` }] });
+      }
+      return { text: r.text };
+    },
     write: deps.io.write,
   };
 }
@@ -529,6 +552,11 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   for (const note of s.drainMcpNotifications()) {
     s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${note}</system-reminder>` }] });
     s.hooks.fire("Notification", undefined, { message: note }); // M4-WP04：Notification 事件触发面
+  }
+  // M4-WP05：skills 清单增量注入（meta user 消息追加，CTX-005 不动既有前缀字节；DoD③⑧）
+  const listing = s.skills.listing();
+  if (listing !== null) {
+    s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${listing}</system-reminder>` }] });
   }
   const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
@@ -615,7 +643,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             }
           : undefined,
         messages: s.messages,
-        tools: s.tools,
+        tools: s.skills.toolFace(s.tools), // M4-WP05：allowed-tools 白名单收窄（DoD⑤ S-5；激活自下一 turn 生效 [自定]）
         // WP-09：guard-path 护栏（platform 实现；stop 硬停/confirm 升 ask——S-9 Auto 不豁免）
         guard: {
           check: (name, input) => {
