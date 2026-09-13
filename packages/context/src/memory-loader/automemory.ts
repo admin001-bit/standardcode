@@ -138,7 +138,7 @@ export function resolveMemoryLinks(dir: string, names: string[], readFile: typeo
       missing.push(name);
     }
   }
-  if (missing.length > 0) warnings.push(`memory links not written yet: ${missing.join(", ")} (fine — marks worth writing later)`);
+  if (missing.length > 0) warnings.push(`memory links not written yet: ${missing.join(", ")} (acceptable — a link to a future memory marks it as worth creating)`);
   return { resolved, missing, warnings };
 }
 
@@ -206,7 +206,7 @@ export function buildMemoryDisciplinePrompt(opts?: { autoTrackEnabled?: boolean 
     "",
     '2. Add one pointer line to the `MEMORY.md` index: `- [Title](slug.md) - one-line hook (under ~150 characters)`.',
     "",
-    "Rules: each memory lives in exactly one file (one thing per file); `MEMORY.md` is an index, never write memory content into it; keep the index concise - it is truncated after 200 lines / 25,000 bytes, so entries beyond that are dropped; update an existing file instead of creating a duplicate, and delete memories that turn out to be wrong.",
+    "Rules: each memory lives in exactly one file (one thing per file); `MEMORY.md` is an index, never write memory content into it; keep the index concise - it is truncated after 200 lines / 25,000 bytes, so entries beyond that are dropped; when a duplicate exists, extend that file instead of starting a new one, and retire any memory that has stopped being accurate.",
     "",
     "### Memory types",
     "",
