@@ -43,7 +43,12 @@ process.stdin.on("end", () => {
   );
 });
 afterAll(() => {
-  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // Windows：超时测试的孤儿孙进程可持 fixture 句柄数秒——rm EPERM 容错（泄漏可接受，OS 随 tmp 清理；wp02 形制）
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 });
+  } catch {
+    /* 泄漏可接受 */
+  }
 });
 
 const cmd = (action: string, timeout?: number, extraArgs: string[] = []): { type: "command"; command: string; timeout?: number } => ({

@@ -50,7 +50,7 @@ async function runReplWith(lines: string[], provider: ProviderAdapter): Promise<
     write: (s) => (out += s),
     close: () => {},
   };
-  await runRepl({ session, io });
+  await runRepl({ session, io, baseDir: dir }); // 【勘误 2026-09-13】baseDir 隔离：锁/转录不落真实 home（WP-04 CI 发现泄漏竞速源；语义不变）
   return { out, provider };
 }
 

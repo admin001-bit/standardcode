@@ -93,7 +93,7 @@ async function runReplWith(session: Session, lines: string[]): Promise<string> {
     write: (s) => (out += s),
     close: () => {},
   };
-  await runRepl({ session, io });
+  await runRepl({ session, io, baseDir: root }); // baseDir 隔离：锁/转录不落真实 home（CI detectProjectWorkspace 竞速源消除）
   return out;
 }
 
