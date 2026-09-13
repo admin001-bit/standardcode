@@ -39,7 +39,7 @@ describe("DoD① frontmatter 逐键解析", () => {
     expect(def!.initialPrompt).toBe("start with the diff");
     expect(def!.systemPrompt).toBe("You are a DB migration agent.\nAlways snapshot first.");
     // 无 M3 消费面的键：合法值丢键告警（不拒收）
-    for (const k of ["color", "memory", "effort"]) expect(warnings.some((w) => w.includes(k))).toBe(true);
+    for (const k of ["color", "effort"]) expect(warnings.some((w) => w.includes(k))).toBe(true); // 【勘误 2026-09-13：WP-06 MEM-030 消费 memory 键（入 def.memory），告警断言移除】
   });
 
   it("model: inherit 特判位保留（:70386-70391）", () => {

@@ -43,6 +43,12 @@ export function transcriptsDir(projectRoot: string, baseDir = path.join(homedir(
   return path.join(baseDir, "projects", encoded, "transcripts");
 }
 
+/** WP-06：项目自动记忆目录（§9.1 ②：~/.standardcode/projects/<enc>/memory/——与 transcripts/同 enc 基座）。 */
+export function projectMemoryDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
+  const encoded = encodeProjectPath(projectRoot);
+  return path.join(baseDir, "projects", encoded, "memory");
+}
+
 export function encodeProjectPath(projectRoot: string): string {
   // [自定]：`/` `\` `:` → '-'（ADR-0028 决策 2）；其余非 [A-Za-z0-9._-] → x<hex>（无歧义、Windows 文件名合法）
   let out = "";

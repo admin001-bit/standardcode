@@ -189,8 +189,8 @@ describe("DoD⑦ /skills 命令（list+run）", () => {
     expect(out2).toContain("unknown /skills subcommand");
   });
 
-  it("命令清单恰 27（DoD⑦ 命令清单 27 适配）", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(27);
+  it("命令清单恰 28【勘误 2026-09-13：WP-06 注册 /memory 后 27→28】", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(28);
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("skills");
   });
 });

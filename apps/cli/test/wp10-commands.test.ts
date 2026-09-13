@@ -166,11 +166,11 @@ describe("DoD③ 价格表行合计（内置固定表 [自定] 占位）", () =>
 });
 
 describe("DoD④ 两命令 Tab 补全", () => {
-  it("/st 唯一命中 /status、/u 唯一命中 /usage（insert 面）；候选列表含前缀重叠件；命令全集恰 27【勘误 2026-09-13：WP-03 注册 /mcp 后 25→26；勘误 2026-09-13：WP-05 注册 /skills 后 26→27】", () => {
+  it("/st 唯一命中 /status、/u 唯一命中 /usage（insert 面）；候选列表含前缀重叠件；命令全集恰 28【勘误 2026-09-13：WP-03 /mcp 25→26；WP-05 /skills 26→27；WP-06 /memory 27→28】", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
     expect(names).toContain("status");
     expect(names).toContain("usage");
-    expect(names.length).toBe(27);
+    expect(names.length).toBe(28);
     expect(completeInput("/st", CLI_COMMANDS).insert).toBe("/status ");
     expect(completeInput("/us", CLI_COMMANDS).insert).toBe("/usage ");
     expect(completeInput("/u", CLI_COMMANDS).insert).toBe("/usage "); // /update=M4 未注册（B-03），/u 唯一命中

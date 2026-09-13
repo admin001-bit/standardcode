@@ -62,6 +62,11 @@ export interface SubagentDefinition {
    * M4 前无实体消费（卡边界），但存在即构成提权请求（信任门/二次确认判定输入）。
    */
   hooksRequested?: boolean;
+  /**
+   * WP-06（MEM-030；[CC] memory 键 :70398-70406 三值）：agent 记忆启用——只读三件套自动补
+   * （DoD⑤）+primed 预热注入（SubagentRunContext.primedAgentMemory）+独立记忆目录（三作用域，cli 侧定位）。
+   */
+  memory?: "user" | "project" | "local";
 }
 
 export interface SubagentSpawnInput {
@@ -286,6 +291,8 @@ export interface SubagentRunContext {
    * 定义位 omitClaudeMd/omitGitStatus 置真时对应段省略（子代理上下文本就隔离，omit 作用于提示词组装）。
    */
   parentContext?: { memory?: string; gitStatus?: string };
+  /** WP-06（MEM-030 DoD⑤）：primed 预热注入（agent 记忆内容；cli 装配读记忆目录填入——messages 首条 user 载体）。 */
+  primedAgentMemory?: string;
   /** agentId 工厂（测试确定性注入；缺省递增 subagent-N）。 */
   newAgentId?: () => string;
 }
@@ -335,6 +342,15 @@ export async function runSubagent(
 
   // 工具解析：定义白名单过滤父工具集；空 → zero-tool 拒绝（CC §6.2 step3 同构）
   const resolvedTools = def.tools ? (run.tools ?? []).filter((t) => def.tools!.includes(t.name)) : run.tools ?? [];
+  // MEM-030（WP-06 DoD⑤；WP-09 O2 回补）：启用 memory 的 agent 自动补只读三件套（写归主会话）
+  if (def.memory) {
+    for (const t of ["Read", "Grep", "Glob"]) {
+      if (!resolvedTools.some((x) => x.name === t)) {
+        const tool = (run.tools ?? []).find((x) => x.name === t);
+        if (tool) resolvedTools.push(tool);
+      }
+    }
+  }
   if (resolvedTools.length === 0) {
     throw new Error(
       `Agent '${def.name}' would be spawned with zero tools — refusing. Its tools list resolved to nothing: [${(def.tools ?? []).join(", ")}]. Fix the agent's tools frontmatter or pass a different subagent_type.`,
@@ -354,8 +370,12 @@ export async function runSubagent(
   // 生产/capture/CI 守卫三者同源——装配序或常量文本变化即守卫红，重采基线须显式 golden:capture:antifab）
   const system = buildSubagentSystem(def, run.parentContext);
 
-  // 独立上下文（DoD②）：不携带父会话任何消息
-  const messages = [{ role: "user" as const, content: [{ type: "text" as const, text: normalized.prompt }] }];
+  // 独立上下文（DoD②）：不携带父会话任何消息；MEM-030 primed 预热注入（agent 记忆摘要面——
+  // cli 装配读目录填 run.primedAgentMemory；不进 buildSubagentSystem=Golden 基线零影响 [自定]）
+  const messages = [
+    ...(run.primedAgentMemory ? [{ role: "user" as const, content: [{ type: "text" as const, text: `<agent-memory>${run.primedAgentMemory}</agent-memory>` }] }] : []),
+    { role: "user" as const, content: [{ type: "text" as const, text: normalized.prompt }] },
+  ];
 
   const startedAt = Date.now();
   let totalTokens = 0;

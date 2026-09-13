@@ -9,8 +9,8 @@ import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
-import { createTrustGate, isTrusted, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
-import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
+import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
+import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
@@ -87,6 +87,12 @@ export interface Session {
   settings: LoadedSettings;
   /** 记忆用户轨（M2 WP-02：MEM-011 加载序+MEM-044 双读+@import；text 进 prompt-layout memory 分段）。 */
   memory: LoadedMemory;
+  /** WP-06：自动记忆轨视图（索引+互链；memory.autoTrack=false 时 view=null）。 */
+  autoMemory: AutoMemoryView | null;
+  /** WP-06：维护纪律提示词段（system 拼接；memory.autoTrack=false 时为空串）。 */
+  memoryDiscipline: string;
+  /** WP-06：自动轨注入面（索引+互链；内容 hash 变化才返回文本，否则 null——增量 [自定]）。 */
+  autoMemoryListing(): string | null;
   /** 扩展思维配置（M2 WP-06，缺省关闭=不发 thinking 字段；每 turn 请求与压缩请求共用）。 */
   thinking: ThinkingSetting | undefined;
   /** AutoCompact 协调器（M2 WP-03：四道闸+重压缩链；执行体 runCompaction 在 repl 装配=WP-04）。 */
@@ -308,6 +314,9 @@ export function createSession(init: SessionInit = {}): Session {
         postToolUseFailure: async () => {},
       }),
     },
+    autoMemory: null,
+    memoryDiscipline: "",
+    autoMemoryListing: () => null,
     skills: {
       all: () => [],
       warnings: () => [],
@@ -462,6 +471,23 @@ export function createSession(init: SessionInit = {}): Session {
       },
     }),
   };
+  // —— M4-WP-06：自动记忆轨（§9.1 ②；memory.autoTrack [自定] 缺省开=MEM-042 同向；索引/互链+纪律段）——
+  const autoTrackEnabled = settingsValue<boolean>(session.trust.settings, "memory.autoTrack") ?? true;
+  const autoMemoryDir = projectMemoryDir(sessionCwd, init.home ? path.join(init.home, ".standardcode") : undefined);
+  session.autoMemory = autoTrackEnabled ? loadAutoMemory(autoMemoryDir) : null;
+  session.memoryDiscipline = autoTrackEnabled ? buildMemoryDisciplinePrompt() : "";
+  let autoMemorySentHash = "";
+  session.autoMemoryListing = () => {
+    if (!session.autoMemory) return null;
+    const text = renderAutoMemoryContext(session.autoMemory);
+    if (text === null) return null;
+    let h = 0;
+    for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+    if (String(h) === autoMemorySentHash) return null; // 增量：内容未变不重发
+    autoMemorySentHash = String(h);
+    return text;
+  };
+
   // —— M4-WP-05：skills（DoD② 三源发现+SEC-070 信任门前置；Skill 工具注册进工具面；清单增量/激活收窄/usage 半衰期内存态 [自定]）——
   const loadedSkills = loadSkills({ ...(init.home !== undefined ? { home: init.home } : {}), projectRoot: sessionCwd, trusted: session.trust.trusted });
   const skillUsage: Record<string, SkillUsageRecord> = {};

@@ -157,6 +157,8 @@ export interface CommandContext {
   mcpList(): { text: string };
   /** WP-03 /mcp：approve|reject|enable|disable（local 层留痕 ADR-0037 形制+按现行门控重装配）。 */
   mcpAction(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<{ text: string }>;
+  /** WP-06 /memory：双轨可视化（用户轨来源与顺序 MEM-044+自动轨索引摘要）。 */
+  memoryView(): { text: string };
   /** WP-05 /skills：list（name/描述/来源/状态）。 */
   skillsList(): { text: string };
   /** WP-05 /skills run：用户点名豁免（disable-model-invocation 双轨的豁免面，DoD④）。 */
@@ -490,6 +492,16 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         return;
       }
       throw new Error(`unknown /skills subcommand: ${sub}（可选 list | run）`);
+    },
+  },
+  // —— WP-06：M4 分期（§8.2 M4 增 /memory；MEM-044 可视化+§9.1 ② 自动轨）——
+  {
+    name: "memory",
+    usage: "",
+    description: "show memory dual-track view (user-track sources & order MEM-044 + auto-track index summary)",
+    execute(_args, ctx) {
+      if (_args.trim() !== "") throw new Error("/memory takes no arguments");
+      ctx.write(ctx.memoryView().text);
     },
   },
 ];

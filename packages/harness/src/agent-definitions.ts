@@ -171,6 +171,10 @@ export function parseAgentMarkdown(text: string, file: string): ParsedAgentFile 
         warnings.push(`${file}: memory '${v}' not in {${MEMORY_VALUES.join(",")}} — ignored`);
         continue;
       }
+      if (v !== undefined) {
+        def.memory = v as SubagentDefinition["memory"]; // WP-06 MEM-030 消费（三件套补齐/primed/独立目录）
+        continue;
+      }
     }
     if (key === "effort") {
       const v = asString(f.effort);

@@ -487,6 +487,21 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       if (active) lines.push(`  active: ${active.name}${active.allowedTools ? `（tools: ${active.allowedTools.join(", ")}）` : ""}`);
       return { text: lines.join("\n") };
     },
+    // —— WP-06：/memory（MEM-044 双轨可视化：用户轨来源与顺序+自动轨索引摘要）——
+    memoryView: () => {
+      const s = deps.session;
+      const lines = ["[memory] 用户编写轨（加载序=数组序，MEM-044 双读 CLAUDE.md→AGENTS.md）:"];
+      for (const f of s.memory.files) lines.push(`  [${f.scope}] ${f.kind} ${f.path}`);
+      if (s.memory.files.length === 0) lines.push("  (empty)");
+      lines.push(`[memory] 自动轨（§9.1 ②；${s.autoMemory ? "enabled" : "disabled (memory.autoTrack=false)"}）`);
+      if (s.autoMemory) {
+        const v = s.autoMemory;
+        lines.push(`  索引: ${v.index.exists ? `${v.index.lines} 行 / ${v.index.bytes} 字节${v.index.truncated ? "（已硬截断）" : ""}` : "(no MEMORY.md)"}`);
+        lines.push(`  记忆文件: ${v.entryCount} 个`);
+        if (v.missing.length > 0) lines.push(`  未写链接: ${v.missing.join(", ")}`);
+      }
+      return { text: lines.join("\n") };
+    },
     skillsRun: (name, args) => {
       const r = deps.session.skills.runByName(name, args);
       if (r.injected !== null) {
@@ -558,6 +573,11 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   if (listing !== null) {
     s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${listing}</system-reminder>` }] });
   }
+  // M4-WP06：自动轨注入（索引+互链；内容 hash 变化才重发——增量 [自定]；CTX-005 追加载体）
+  const autoMem = s.autoMemoryListing();
+  if (autoMem !== null) {
+    s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${autoMem}</system-reminder>` }] });
+  }
   const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
   s.activeAbort = new AbortController();
@@ -572,8 +592,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       runAgentLoop({
         provider: s.provider,
         model: s.model,
-        // WP-02：记忆用户轨进 system（§7.1 Memory 段；loader 拼接文本原样传递）
-        system: s.memory.text.trim() !== "" ? s.memory.text : undefined,
+        // WP-02：记忆用户轨进 system（§7.1 Memory 段）+WP-06：自动轨维护纪律段（memory.autoTrack 关=空串不入）
+        system: [s.memory.text, s.memoryDiscipline].map((t) => t.trim()).filter((t) => t !== "").join("\n\n") || undefined,
         // WP-06（CTX-020）：thinking 配置随每 turn 请求（缺省关闭不发）
         thinking: s.thinking,
         // WP-05（CTX-037）：reactive 瀑布接线（R1 修复——原版零生产接线为 V 退回）。
