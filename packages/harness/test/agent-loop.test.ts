@@ -133,7 +133,7 @@ describe("runTools", () => {
     expect(out.map((o) => o.id)).toEqual(["a", "b"]);
     expect(out.map((o) => o.content)).toEqual(["slow-done", "fast-done"]);
   });
-  it("未知工具/权限拒绝/schema 拒绝 → error tool_result", async () => {
+  it("未知工具/schema 拒绝/权限拒绝 → error tool_result【勘误 2026-09-13：WP-04 接缝③实装 §5.4 生命周期序（schema 校验→PreToolUse hooks→权限仲裁→执行）——原断言锁旧序'权限先于 schema'，改循新序：schema 错误先于权限拒绝】", async () => {
     const registry = { get: (n: string) => (n === "echo" ? echoTool() : undefined) };
     const out = await runTools(
       [
@@ -145,7 +145,7 @@ describe("runTools", () => {
     );
     expect(out[0].isError).toBe(true);
     expect(out[1].isError).toBe(true);
-    expect(out[1].content).toContain("permission denied");
+    expect(out[1].content).toContain("input failed schema validation");
     expect(out[2]).toMatchObject({ isError: false, content: "echo:hi" });
   });
   it("中断：未完成的调用合成 error tool_result", async () => {

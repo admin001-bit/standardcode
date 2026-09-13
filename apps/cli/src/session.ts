@@ -6,8 +6,8 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createStandardTools, gateMcpServerDocs, loadMcpServerConfigs, parseTransportType, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
-import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry } from "@standardcode/harness";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createStandardTools, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, parseTransportType, type HookEngine, type HookEventName, type HookEventOutcome, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type StandardTool } from "@standardcode/capabilities";
+import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { createCompactionCoordinator, detectProjectWorkspace, loadMemory, resolveAutocompactConfig, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
@@ -34,6 +34,23 @@ export interface McpServerView {
   /** 连接态（未装载=缺席）。 */
   status?: "pending" | "connected" | "failed" | "needs-auth";
   error?: string;
+}
+
+/** M4-WP-04：hooks 门面（可阻断 gate=await 聚合；fire=通知面吞错）。 */
+export interface SessionHooks {
+  gate(
+    event: HookEventName,
+    query: { toolName?: string; agentType?: string; source?: string; reason?: string } | undefined,
+    payload: Record<string, unknown>,
+    stopHookActive?: boolean,
+  ): Promise<HookEventOutcome>;
+  fire(
+    event: HookEventName,
+    query: { toolName?: string; agentType?: string; source?: string; reason?: string } | undefined,
+    payload: Record<string, unknown>,
+  ): void;
+  /** harness 工具链适配（PreToolUse 三裁决序/PostToolUse/PostToolUseFailure/PermissionRequest）。 */
+  toolAdapter(): ToolHooks;
 }
 
 export interface Session {
@@ -85,6 +102,8 @@ export interface Session {
   mcpRecord(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<void>;
   /** M4-WP-03：按现行门控重装配（关旧连+清旧工具+重连；装配链串行防竞态）。 */
   refreshMcp(): Promise<void>;
+  /** M4-WP-04：hooks 门面（引擎+工具链适配；配置源=settings 五来源+信任门运行时判定）。 */
+  hooks: SessionHooks;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -265,6 +284,15 @@ export function createSession(init: SessionInit = {}): Session {
     mcpServers: () => [],
     mcpRecord: async () => {},
     refreshMcp: async () => {},
+    hooks: {
+      gate: async () => ({ verdict: null, decisionReason: null, nonBlockingErrors: [], skippedReason: "bootstrap" }),
+      fire: () => {},
+      toolAdapter: () => ({
+        preToolUse: async () => null,
+        postToolUse: async () => {},
+        postToolUseFailure: async () => {},
+      }),
+    },
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
@@ -379,6 +407,38 @@ export function createSession(init: SessionInit = {}): Session {
   }
   session.mcpReady = runMcpAssembly();
   session.refreshMcp = () => runMcpAssembly();
+  // —— M4-WP-04：hooks 引擎（§9.3 附注 13 事件；settings 五来源+disableAllHooks+信任门运行时判定 :262013）——
+  const hookEngine: HookEngine = createHookEngine(loadHookConfigs(session.trust.settings.docs), {
+    trusted: () => session.trust.trusted,
+    cwd: sessionCwd,
+    ...(session.id ? { sessionId: session.id } : {}),
+  });
+  session.hooks = {
+    gate: async (event, query, payload, stopHookActive) =>
+      hookEngine.fire(event, { ...(query !== undefined ? { query } : {}), payload, ...(stopHookActive ? { stopHookActive: true } : {}) }),
+    fire: (event, query, payload) => {
+      void hookEngine.fire(event, { ...(query !== undefined ? { query } : {}), payload }).catch(() => {});
+    },
+    toolAdapter: () => ({
+      preToolUse: async (name, input) => {
+        const o = await hookEngine.fire("PreToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
+        if (o.verdict === "deny") return { decision: "deny", reason: o.blockingError ?? o.decisionReason?.reason ?? "PreToolUse hook denied" };
+        if (o.verdict === "ask") return { decision: "ask", reason: o.decisionReason?.reason };
+        return null;
+      },
+      postToolUse: async (name, input, content) => {
+        await hookEngine.fire("PostToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, tool_response: content } });
+      },
+      postToolUseFailure: async (name, input, error) => {
+        await hookEngine.fire("PostToolUseFailure", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, error } });
+      },
+      permissionRequest: async (name, input) => {
+        await hookEngine.fire("PermissionRequest", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
+        // Notification 触发面：权限确认请求（[CC] Notification 语义对位；MCP 后台通知 drain 循环另有触发位）
+        await hookEngine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
+      },
+    }),
+  };
   session.mcpServers = () => {
     const views: McpServerView[] = [];
     const active = new Set<string>();

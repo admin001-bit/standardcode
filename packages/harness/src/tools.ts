@@ -1,4 +1,4 @@
-// 工具执行回路（§5.4：schema 校验 → 权限仲裁（接口点，WP-08）→ 执行 → 回灌）。
+// 工具执行回路（§5.4：schema 校验 → PreToolUse hooks（WP-04 接缝③）→ 权限仲裁 → 执行 → 回灌）。
 
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Tool, ToolContext, ToolRegistry, PermissionGate } from "./types.ts";
@@ -48,6 +48,20 @@ export interface ToolGuard {
   check(toolName: string, input: unknown): ToolGuardVerdict;
 }
 
+/** M4-WP04（§5.4 接缝③③层裁决序）：工具生命周期 hooks 接口（capabilities hooks 引擎适配注入）。 */
+export interface ToolHookVerdict {
+  decision: "allow" | "deny" | "ask";
+  reason?: string;
+}
+export interface ToolHooks {
+  /** PreToolUse：schema 校验后、权限仲裁前（§5.4 序）；null=无裁决放行；deny 恒赢。 */
+  preToolUse(toolName: string, input: unknown): Promise<ToolHookVerdict | null>;
+  postToolUse(toolName: string, input: unknown, content: string): Promise<void>;
+  postToolUseFailure(toolName: string, input: unknown, error: string): Promise<void>;
+  /** PermissionRequest：ask 判定时触发（通知面，不消费裁决 [自定]）。 */
+  permissionRequest?(toolName: string, input: unknown): Promise<void>;
+}
+
 export interface RunToolsOptions {
   registry: ToolRegistry;
   permission?: PermissionGate;
@@ -55,6 +69,8 @@ export interface RunToolsOptions {
   guard?: ToolGuard;
   /** file-history 快照（WP-09，EXE-040）：每次工具写盘前触发（全部门禁通过后、执行前）。 */
   fileHistory?: { beforeTool(toolName: string, input: unknown): Promise<void> };
+  /** M4-WP04：hooks 引擎适配面（PreToolUse 阻断/PostToolUse/PostToolUseFailure/PermissionRequest）。 */
+  hooks?: ToolHooks;
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生的子进程上报（任务级追踪面——TaskStop 两阶段终止的作用对象）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
@@ -126,12 +142,38 @@ async function runOneTool(call: ToolCall, ctx: ToolContext, opts: RunToolsOption
   }
   const guard = opts.guard?.check(call.name, call.input);
   if (guard?.action === "stop") {
-    // EXE-020：检测+停止；deny 恒赢（B-13）——护栏硬停先于权限判定
+    // EXE-020：检测+停止；deny 恒赢（B-13）——护栏硬停先于一切执行面
     return { id: call.id, name: call.name, content: `guard-path stop (${guard.rule}): ${guard.detail ?? ""}`, isError: true };
+  }
+  // §5.4 生命周期序（接缝③实装）：schema 校验 → PreToolUse hooks → 权限仲裁 → 执行
+  const invalid = validateToolInput(tool.inputSchema, call.input);
+  if (invalid) {
+    return { id: call.id, name: call.name, content: `input failed schema validation: ${invalid}`, isError: true };
+  }
+  let hookAsk = false;
+  let hookReason: string | undefined;
+  if (opts.hooks) {
+    try {
+      const v = await opts.hooks.preToolUse(call.name, call.input);
+      if (v?.decision === "deny") {
+        return { id: call.id, name: call.name, content: `PreToolUse hook denied: ${v.reason ?? call.name}`, isError: true };
+      }
+      if (v?.decision === "ask") {
+        hookAsk = true;
+        hookReason = v.reason;
+      }
+    } catch {
+      // 引擎侧 fail-closed（PreToolUse 异常=工具不执行）由引擎聚合产出 deny；此处异常=适配面断裂，同 fail-closed
+      return { id: call.id, name: call.name, content: "PreToolUse hook pipeline failed (fail-closed)", isError: true };
+    }
   }
   let decision: "allow" | "deny" | "ask" = "allow";
   if (opts.permission) {
     decision = await opts.permission.check(call.name, call.input);
+  }
+  if (decision === "allow" && hookAsk) {
+    // PreToolUse hook ask 升级（deny 恒赢不受影响）
+    decision = "ask";
   }
   if (decision === "allow" && guard?.action === "confirm") {
     // S-9 强制确认且 Auto 不豁免（§11）：护栏 confirm 把 allow 降为 ask
@@ -141,13 +183,17 @@ async function runOneTool(call: ToolCall, ctx: ToolContext, opts: RunToolsOption
     return { id: call.id, name: call.name, content: `permission denied: ${call.name}`, isError: true };
   }
   if (decision === "ask") {
-    // M1 无交互确认 UI（WP-03 命令面未含确认流）——ask fail-closed 拒绝（B-13/SEC-020：一切执行面默认 ask，未批不执行）
-    const why = guard?.action === "confirm" ? `guard-path confirm (${guard.rule}): ${guard.detail ?? ""}` : `permission required (ask) and unattended: ${call.name}`;
+    if (opts.hooks?.permissionRequest) {
+      // PermissionRequest 事件触发面（通知面，不消费裁决 [自定]）；失败不改变 fail-closed 结果
+      await opts.hooks.permissionRequest(call.name, call.input).catch(() => {});
+    }
+    // 无确认 UI 或确认拒绝=不执行（B-13/SEC-020：一切执行面默认 ask，未批不执行）
+    const why = hookAsk
+      ? `PreToolUse hook requires approval (ask)${hookReason ? `: ${hookReason}` : ""}`
+      : guard?.action === "confirm"
+        ? `guard-path confirm (${guard.rule}): ${guard.detail ?? ""}`
+        : `permission required (ask) and unattended: ${call.name}`;
     return { id: call.id, name: call.name, content: why, isError: true };
-  }
-  const invalid = validateToolInput(tool.inputSchema, call.input);
-  if (invalid) {
-    return { id: call.id, name: call.name, content: `input failed schema validation: ${invalid}`, isError: true };
   }
   if (opts.fileHistory) {
     // EXE-030/040：每次工具写盘前快照（门禁全过、执行未始；快照失败不阻断工具执行，登记于结果内容）
@@ -159,9 +205,15 @@ async function runOneTool(call: ToolCall, ctx: ToolContext, opts: RunToolsOption
   }
   try {
     const content = await tool.execute(call.input, ctx);
+    if (opts.hooks) {
+      await opts.hooks.postToolUse(call.name, call.input, content).catch(() => {});
+    }
     return { id: call.id, name: call.name, content, isError: false };
   } catch (err) {
     const message = ctx.signal.aborted ? "interrupted" : err instanceof Error ? err.message : String(err);
+    if (opts.hooks) {
+      await opts.hooks.postToolUseFailure(call.name, call.input, message).catch(() => {});
+    }
     return { id: call.id, name: call.name, content: `tool error: ${message}`, isError: true };
   }
 }

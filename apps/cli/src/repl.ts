@@ -200,10 +200,12 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         if (!Number.isInteger(window) || window < MANUAL_WINDOW_MIN || window > MANUAL_WINDOW_MAX) {
           throw new Error(`compact window: must be integer in [${MANUAL_WINDOW_MIN}, ${MANUAL_WINDOW_MAX}] (CTX-036 manual window; fail-closed)`);
         }
-        s.autocompact = createCompactionCoordinator(
-          resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
-        );
+      s.autocompact = createCompactionCoordinator(
+        resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
+      );
       }
+      // M4-WP04：PreCompact 触发（通知面；verdict 不消费 [自定]）
+      await s.hooks.gate("PreCompact", undefined, {}).catch(() => null);
       const r = await runCompaction({
         provider: s.provider,
         model: s.model,
@@ -216,6 +218,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       s.autocompact.recordCompactSuccess(r.postTokens, 0); // 手动压缩=独立轮次（工具轮计数不属于 turn 状态，Session 无 toolRounds）
       // ADR-0038：压缩落盘 compact 记录（重建截断语义的历史起点；M2 偏差⑤清偿；keptCount=partial 保留尾部消息数）
       transcriptAppend(deps, { kind: "compact", mode: "manual", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary, keptCount: r.newMessages.length - 1 });
+      await s.hooks.gate("PostCompact", undefined, {}).catch(() => null); // M4-WP04：PostCompact 触发
       return { summary: r.summary, preTokens: r.preTokens, postTokens: r.postTokens };
     },
     config: async (args) => {
@@ -331,7 +334,17 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         { prompt, description: deriveSubtaskName(prompt), runInBackground: false },
         { depth: 0, availableTypes: ["general-purpose"] }, // M3 恒 general-purpose（内置集发现链=WP-06）
         { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker },
-        { registry: s.taskRegistry, env: {} }, // env 空=autoBackgroundMs 0 → 同步恒同步
+        {
+          registry: s.taskRegistry,
+          env: {}, // env 空=autoBackgroundMs 0 → 同步恒同步
+          // M4-WP04：SubagentStart/Stop 触发点（回调覆盖后台/翻转/同步三路终态）
+          onStart: (info) => {
+            s.hooks.fire("SubagentStart", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}) });
+          },
+          onSettled: (info) => {
+            s.hooks.fire("SubagentStop", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}), outcome: info.ok ? "success" : "failure" });
+          },
+        },
       );
       if (launch.status === "refused") return { text: `[subtask] refused: ${launch.message}` };
       if (launch.status !== "completed") return { text: `[subtask] unexpected channel: ${launch.status}（M3 /subtask 恒同步）` };
@@ -469,6 +482,8 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   s0.id = randomUUID();
   const assets = await createSessionAssets(deps, s0.id);
   if (assets) sessionAssets.set(s0, assets);
+  // M4-WP04：SessionStart（source=startup [自定] 单值；/resume /clear 变体不区分）
+  await s0.hooks.gate("SessionStart", { source: "startup" }, { source: "startup" });
   const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
   for await (const raw of deps.io.lines) {
     const line = raw.trim();
@@ -484,13 +499,16 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
       await runSlash(deps, commands, parsed.name, parsed.args);
     }
     if (deps.session.exitRequested) {
-      await drainSessionAssets(deps);
-      const old = sessionAssets.get(deps.session);
-      if (old) await old.lock.release().catch(() => {});
-      deps.io.close();
+      await exitRepl(deps);
       return;
     }
   }
+  await exitRepl(deps);
+}
+
+/** M4-WP04：出口统一（SessionEnd 触发+资产 drain+锁释放+io.close）。 */
+async function exitRepl(deps: ReplDeps): Promise<void> {
+  await deps.session.hooks.gate("SessionEnd", { reason: "exit" }, { reason: "exit" }).catch(() => {});
   await drainSessionAssets(deps);
   const old = sessionAssets.get(deps.session);
   if (old) await old.lock.release().catch(() => {});
@@ -499,16 +517,29 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
 
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
+  // M4-WP04：UserPromptSubmit 门（exit2/decision:block → 提示词不进轮次，blockingError 告知用户）
+  if (s.hooks) {
+    const up = await s.hooks.gate("UserPromptSubmit", undefined, { prompt: text }).catch(() => null);
+    if (up?.blockingError) {
+      deps.io.write(`[hooks] prompt blocked by UserPromptSubmit hook: ${up.blockingError}\n`);
+      return;
+    }
+  }
   // WP-02（M4）：MCP 后台终态通知注入（turn 首前插 <system-reminder>，SEC-010 载体同构；isMeta 注入不入转录=transcripts.ts:113 口径）
   for (const note of s.drainMcpNotifications()) {
     s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${note}</system-reminder>` }] });
+    s.hooks.fire("Notification", undefined, { message: note }); // M4-WP04：Notification 事件触发面
   }
   const preTurnLength = s.messages.length; // R1/R3 修复：快照取 push 前——本轮新增块（含 prompt user/tool_result user/assistant）统一在 turn 末一次写入，防重复
-  let turnCompactBase: number | null = null; // ADR-0038：turn 中压缩水位（perform 置位）——turn 末增量基点改从此位起（preTurnLength 前缀稳定假设被压缩破坏）
   s.messages.push({ role: "user", content: [{ type: "text", text }] });
   s.activeAbort = new AbortController();
   let doneReason: string | null = null;
+  let appendFrom = preTurnLength; // 已落盘水位（Stop 续轮推进；catch 补写起点——续轮后不重复）
   try {
+    let stopBlocks = 0;
+    for (;;) {
+    let turnCompactBase: number | null = null; // ADR-0038：turn 中压缩水位（perform 置位；每轮独立）
+    const iterBase = appendFrom;
     const final = await renderTurn(
       runAgentLoop({
         provider: s.provider,
@@ -539,6 +570,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
           evaluate: (used, turn) => s.autocompact.evaluate(used, turn),
           perform: async (turn) => {
             const preCompact = [...s.messages]; // 压缩前快照（ADR-0038 对齐前提：未落盘消息先补写）
+            await s.hooks.gate("PreCompact", undefined, {}).catch(() => null); // M4-WP04：PreCompact 触发
             const r = await runCompaction({
               provider: s.provider,
               model: s.model,
@@ -563,6 +595,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
               summary: r.summary,
               keptCount: r.newMessages.length - 1,
             });
+            await s.hooks.gate("PostCompact", undefined, {}).catch(() => null); // M4-WP04：PostCompact 触发
             return { ok: true, postCompactTokens: r.postTokens, messages: r.newMessages };
           },
         },
@@ -610,6 +643,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             return "deny";
           },
         },
+        // M4-WP04：hooks 引擎适配面（PreToolUse 三裁决序/PostToolUse/PostToolUseFailure/PermissionRequest）
+        hooks: s.hooks.toolAdapter(),
         signal: s.activeAbort.signal,
       }),
       deps.io.write,
@@ -621,17 +656,32 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     // ——R3：tool_result 缺失即悬空 tool_use 协议硬不变量违例；M1 E2E③ 先例形制）。原版全量遍历→第 N 轮重复。
     // ADR-0038（V 首验 R1）：turn 中压缩置 turnCompactBase=压缩后水位——增量基点从水位起（preTurnLength 的
     // 前缀稳定假设被压缩替换破坏，slice 错位会漏写重试回复）；水位前消息已由 perform 补写，无需重复。
-    const appendBase = turnCompactBase ?? preTurnLength;
+    const appendBase = turnCompactBase ?? iterBase;
     if (final.messages.length >= appendBase) {
       for (const m of final.messages.slice(appendBase)) {
         if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
         else if (m.role === "user") transcriptAppend(deps, { kind: "user_message", message: m });
       }
     }
+    appendFrom = s.messages.length;
+    // M4-WP04：Stop hook（正常完成才触发；blocking → stderr 回灌模型续轮；连续阻断上限 8（§5.4 ⑦ :151674）→交还用户）
+    if ((doneReason ?? "end") === "end") {
+      const so = await s.hooks.gate("Stop", undefined, {}, stopBlocks > 0).catch(() => null);
+      if (so?.blockingError) {
+        if (stopBlocks < 8) {
+          stopBlocks++;
+          s.messages.push({ role: "user", content: [{ type: "text", text: `[Stop hook] ${so.blockingError}` }] });
+          continue; // 反馈消息在下一轮 iterBase 之后落转录
+        }
+        deps.io.write(`\n[hooks] Stop hook blocked ${stopBlocks} times — returning control to user\n`);
+      }
+    }
+    break;
+    }
     transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
   } catch (err) {
-    // 硬错误路径：turn 前的 user 消息此轮未入转录——补写（重建等价：尾随 user 无 assistant，V 首验认可形制）
-    for (const m of s.messages.slice(preTurnLength)) {
+    // 硬错误路径：未落盘消息补写（appendFrom=已落盘水位——Stop 续轮后不重复）
+    for (const m of s.messages.slice(appendFrom)) {
       if (m.role === "user") transcriptAppend(deps, { kind: "user_message", message: m });
       else if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
     }

@@ -119,6 +119,8 @@ export interface LoopOptions {
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 runTools——任务级追踪面）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
+  /** M4-WP04（§5.4 接缝③）：hooks 引擎适配面（透传 runTools——PreToolUse 三裁决序/PostToolUse 面）。 */
+  hooks?: import("./tools.ts").ToolHooks;
   /** WP-02（M4）：执行侧标记（subagent 执行器置 "subagent"；缺省=主循环）。 */
   agentKind?: "main" | "subagent";
 }

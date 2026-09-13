@@ -41,6 +41,10 @@ export interface SubagentTaskOptions {
   signal?: AbortSignal;
   /** agentId 工厂透传（缺省 runSubagent 内部递增）。 */
   newAgentId?: () => string;
+  /** M4-WP04：SubagentStart 触发点（注册+取槽成功后、运行前；refused 不触发）。 */
+  onStart?: (info: { taskId: string; agentId?: string; agentType: string }) => void;
+  /** M4-WP04：SubagentStop 触发点（终态落账后——同步/后台/翻转三路统一）。 */
+  onSettled?: (info: { taskId: string; agentId?: string; agentType: string; ok: boolean }) => void;
 }
 
 function toResultRecord(r: SubagentRunResult): NonNullable<import("./task-registry.ts").TaskRecord["result"]> {
@@ -99,24 +103,37 @@ export async function spawnSubagentTask(
     },
   };
   const settle = runPromise(v.normalized, runCtx, registry, taskId);
+  // M4-WP04：SubagentStart 触发点（注册+取槽成功后、运行前；refused/槽竞态不触发）
+  opts.onStart?.({ taskId, agentId: idFallback(), agentType: v.normalized.agentType });
+  // onSettled 包装：complete/fail 双路各恰一次（后台/翻转/同步三路共享同一 settle 链）
+  const settleHooked = settle.then(
+    (r) => {
+      opts.onSettled?.({ taskId, agentId: idFallback(), agentType: v.normalized.agentType, ok: true });
+      return r;
+    },
+    (e: unknown) => {
+      opts.onSettled?.({ taskId, agentId: idFallback(), agentType: v.normalized.agentType, ok: false });
+      throw e;
+    },
+  );
   if (v.normalized.background) {
     // 后台默认（ORC-022）：注册即返回（CC §4.2 async_launched 形状）；完成经注册表事件通知
     // settle 的 rejection 已在 runPromise 内落账（registry.fail）——此处必须挂 catch 防未处理拒绝
     //（Node ≥15 默认崩溃；WP-04 V 首验 R1：与翻转分支 :103 同构对称）
-    void settle.catch(() => {});
+    void settleHooked.catch(() => {});
     return { status: "async_launched", taskId, agentId: agentId ?? taskId };
   }
 
   const autoMs = opts.autoBackgroundMs ?? parseAutoBackgroundMs(opts.env?.STANDARD_CODE_AUTO_BACKGROUND_TASKS);
   if (autoMs <= 0) {
-    return await settle; // 同步恒同步（env 缺省）
+    return await settleHooked; // 同步恒同步（env 缺省）
   }
   // 同步 120s 翻转（CC Promise.race 同构）：翻转后 isBackgrounded 置位，调用方先返回
   const flip = new Promise<"backgrounded">((res) => setTimeout(() => res("backgrounded"), autoMs));
-  const winner = await Promise.race([settle, flip]);
+  const winner = await Promise.race([settleHooked, flip]);
   if (winner === "backgrounded") {
     registry.markBackgrounded(taskId);
-    void settle.catch(() => {}); // 翻转后完成/失败落账在 settle 内部；调用方已返回
+    void settleHooked.catch(() => {}); // 翻转后完成/失败落账在 settle 内部；调用方已返回
     return { status: "backgrounded", taskId, agentId: agentId ?? taskId };
   }
   return winner; // completed（未翻转）
