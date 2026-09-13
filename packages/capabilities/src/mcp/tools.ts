@@ -230,12 +230,21 @@ export async function callMcpToolWithAutoBackground(
 ): Promise<string> {
   // 生效条件（DoD⑥/:296642）：主循环+有注册表+env 阈值>0——子代理执行器 agentKind 标记排除。
   const autoMs = mctx.isMainLoop && mctx.registry && ctx.agentKind !== "subagent" ? parseAutoBackgroundMs(mctx.env.STANDARD_CODE_AUTO_BACKGROUND_TASKS) : 0;
-  // TaskStop 取消链：本调用挂自有 taskAbort；前台中断（ctx.signal）与后台终止分离——
-  // §8.4"后台任务不受前台中断影响"仅对已翻转任务成立；翻转前 ctx.signal 透传（前台调用可中断）。
+  if (autoMs <= 0) return callToolOnce(client, fullName, rawToolName, input, ctx, mctx);
+  // R1 修复（V 核销 2026-09-13）：§8.4"后台任务不受前台中断影响"——翻转前 ctx.signal 经转发器联动
+  // taskAbort（前台中断=取消调用）；**翻转瞬间解绑**（[CC] fqs 转后台即断 parent→bg 链 E2e :293396 同构），
+  // 已后台化调用仅由 TaskStop（runtime.abort=taskAbort）支配；翻转与中断同帧竞态=解绑后一律忽略 ctx.signal。
   const taskAbort = new AbortController();
-  const callSignal = autoMs > 0 ? AbortSignal.any([ctx.signal, taskAbort.signal]) : ctx.signal;
-  const call = callToolOnce(client, fullName, rawToolName, input, { ...ctx, signal: callSignal }, mctx);
-  if (autoMs <= 0) return call;
+  let detached = false;
+  const forwardAbort = () => {
+    if (!detached) taskAbort.abort();
+  };
+  ctx.signal.addEventListener("abort", forwardAbort, { once: true });
+  const detach = () => {
+    detached = true;
+    ctx.signal.removeEventListener("abort", forwardAbort);
+  };
+  const call = callToolOnce(client, fullName, rawToolName, input, { ...ctx, signal: taskAbort.signal }, mctx);
   const start = (mctx.now ?? Date.now)();
   const flipped = await new Promise<"done" | "backgrounded">((resolve, reject) => {
     const timer = setTimeout(() => resolve("backgrounded"), autoMs);
@@ -251,7 +260,11 @@ export async function callMcpToolWithAutoBackground(
       },
     );
   });
-  if (flipped === "done") return call;
+  if (flipped === "done") {
+    detach(); // 竞态防御：done 路径已终态，转发器摘除
+    return call;
+  }
+  detach(); // 转后台瞬间断链（V R1）
   // 翻转：注册任务（TaskStop 经 runtime.abort 停原调用——取消链闭环）；原 call 继续，settle 落账+双路通知。
   const registry = mctx.registry!;
   const task = registry.register({

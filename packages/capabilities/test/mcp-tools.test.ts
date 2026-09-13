@@ -244,6 +244,32 @@ describe("DoD⑥ 120s 超时转后台（:293505 形状+registry 落账）", () =
     expect(r2).toBe("sub");
   }, 15_000);
 
+  it("R1 回归：翻转后前台中断（ctx.signal abort）不得杀后台调用；TaskStop 仍可停（§8.4）", async () => {
+    const registry = createTaskRegistry({ evictAfterMs: 0 });
+    const notes: string[] = [];
+    let callRespond: ((r: JsonRpcMessage) => void) | null = null;
+    const { client } = scriptClient((msg, respond) => {
+      if ("method" in msg && msg.method === "tools/call") callRespond = respond;
+    });
+    const abort = new AbortController();
+    const ctx = baseMctx({ env: { STANDARD_CODE_AUTO_BACKGROUND_TASKS: "20" }, registry, notifications: notes });
+    const text = await callMcpToolWithAutoBackground(client, "mcp__fx__bg", "bg", {}, { signal: abort.signal, registerProcess: () => {} }, ctx);
+    const taskId = text.match(/task_id "(task-\d+)"/)![1]!;
+    abort.abort(); // 前台中断——已后台化调用必须无动于衷
+    expect(registry.get(taskId)!.status).toBe("running");
+    callRespond!({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "survived" }] } });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(registry.get(taskId)!.status).toBe("completed");
+    expect(registry.get(taskId)!.result!.content).toBe("survived");
+    expect(notes.at(-1)).toContain("completed");
+    // 未翻转的前台中断路径仍有效（翻转前 abort=取消）
+    const a2 = new AbortController();
+    const ctx2 = baseMctx({ env: { STANDARD_CODE_AUTO_BACKGROUND_TASKS: "200" }, registry: createTaskRegistry({ evictAfterMs: 0 }), notifications: [] });
+    const p2 = callMcpToolWithAutoBackground(client, "mcp__fx__fg", "fg", {}, { signal: a2.signal, registerProcess: () => {} }, ctx2);
+    a2.abort();
+    await expect(p2).rejects.toThrow(/cancelled/);
+  }, 15_000);
+
   it("TaskStop 取消链：runtime.abort→notifications/cancelled 发出+fail 落账", async () => {
     const registry = createTaskRegistry({ evictAfterMs: 0 });
     const notes: string[] = [];
