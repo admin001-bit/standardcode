@@ -169,7 +169,7 @@ export function renderReport(results: TaskResult[], version: string): string {
   const passed = results.filter((r) => r.pass).length;
   const pct = ((passed / results.length) * 100).toFixed(1);
   const lines = [
-    `# evals 基准集 ${version} 出分记录（WP-11，M3 DoD②）`,
+    `# evals 基准集 ${version} 出分记录（WP-11；M3 v0 基座+M4 DoD② 扩列）`,
     "",
     `> 生成法：\`npm run evals:run\`（recorded 模式，零网络）。本报告由 evals/benchmark/benchmark.test.ts 与运行结果逐字节守卫（漂移=红，重采集=UPDATE_EVALS=1）。`,
     `> 结论模型版本号（ENG-030"结论附模型版本号"）：**${BENCHMARK_MODEL}**（recorded 夹具标定面）；基准集独立版本化=\`evals/benchmark/VERSION\`=${version}。live 模式=M5 门禁（B-03 不进本板）。`,

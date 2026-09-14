@@ -1,9 +1,14 @@
-// WP-11（M3）基准集 v0——12 个可自动判分任务（≥10=卡 DoD②；ENG-030"可自动判分"=谓词脚本断言，卡边界）。
+// WP-11（M3）基准集 v0 12 任务 + M4-WP-11 扩列 v1（M4 DoD② ≥20）——可自动判分（判据脚本断言，卡边界）。
 // 全部 recorded：provider 事件流为合成夹具（零网络零凭据）；磁盘夹具全合成无用户数据（golden 脱敏同源纪律）。
 // 覆盖族：L1 循环+六工具（b01-06，含 E2E④ malformed 形状）/subagent 执行与摘要（b07）/任务注册表与
 // 后台翻转（b08·09，ORC-040/022）/SEC-080 env 清洗（b10）/注册表优先级链（b11，WP-06）/SEC-070 信任门（b12，WP-09）。
+// M4 扩列（b13-b20）：MCP 注入链+默认 ask（b13，WP-02 真子进程回放 server）/项目 server 未批准不注入
+// （b14，WP-03 S-3）/hooks exit2 阻断+RANK 只升不降（b15）/PreToolUse 超时 fail-closed（b16，WP-04）/
+// skills 清单预算+展开注入（b17，WP-05）/memory 索引硬截断+互链（b18，WP-06）/custom agent 端到端
+// （b19，session 生产装配链——WP-10 链）/plugin 安装确认 fail-closed+聚合（b20，WP-09 S-5）。
+// M4 注记②清偿：b08/b11/b12 补 directBudget（toolEfficiency/contextOverhead 真判据，非恒过虚位）。
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LLMEvent, ProviderAdapter } from "../../packages/providers/src/index.ts";
 import {
@@ -19,8 +24,11 @@ import {
   validateSpawn,
   type SubagentDefinition,
 } from "../../packages/harness/src/index.ts";
-import { createStandardTools } from "../../packages/capabilities/src/index.ts";
+import { buildMcpToolsForConnection, buildSkillListing, connectAll, createHookEngine, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, sanitizeMcpNameSegment } from "../../packages/capabilities/src/index.ts";
+import { loadAutoMemory } from "../../packages/context/src/index.ts";
+import { buildPluginDocs, componentCounts, installPlugin, loadInstalledPlugins, loadPluginsDoc, pluginsRootDir, loadProjectAgentDefinitions } from "../../packages/platform/src/index.ts";
 import { execBash } from "../../packages/executor/src/index.ts";
+import { createSession } from "../../apps/cli/src/session.ts";
 import { scriptedProvider, BENCHMARK_MODEL, type EvalTask, type ScoreCtx } from "./runner.ts";
 
 // —— 事件夹具 builder（IR 层；finish 形状=e2e-scenarios 先例）——
@@ -169,8 +177,9 @@ export function buildTasks(work: string): EvalTask[] {
         if (fire) fire();
         const after = reg.list();
         const ok = got === true && concurrentHeld === 1 && concurrentAfterRelease === 0 && after.length === 0;
-        return { ctx: ctxLite({}), completion: ok, completionDetail: ok ? "" : `got=${got} held=${concurrentHeld} afterRelease=${concurrentAfterRelease} list=${after.length}` };
+        return { ctx: ctxLite({ calls: [{ name: "task-registry", input: { ops: 4 } }] }), completion: ok, completionDetail: ok ? "" : `got=${got} held=${concurrentHeld} afterRelease=${concurrentAfterRelease} list=${after.length}` };
       },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 }, // M4-WP-11 注记②补实：两维真判据（usage 自报零 token=注册表操作无模型调用）
     },
     {
       id: "b09", name: "sync-to-background-flip", seed: "同步 subagent 超 autoBackgroundMs 翻后台→终态 completed 落账（ORC-022 后台默认/120s 翻转测试注入）",
@@ -233,8 +242,9 @@ export function buildTasks(work: string): EvalTask[] {
         const reg = createAgentRegistry({ sources: { project: proj }, onDuplicate: (name, winner) => { void winner; dups.push(name); } });
         const e = reg.get("Explore");
         const ok = e?.source === "project" && e.tools?.join() === "Read" && dups.length === 1 && reg.list().length === BUILT_IN_AGENTS.length;
-        return { ctx: ctxLite({}), completion: ok, completionDetail: ok ? "" : `source=${e?.source} dups=${dups.length}` };
+        return { ctx: ctxLite({ calls: [{ name: "agent-registry", input: { layers: 2 } }] }), completion: ok, completionDetail: ok ? "" : `source=${e?.source} dups=${dups.length}` };
       },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 }, // M4-WP-11 注记②补实
     },
     {
       id: "b12", name: "sec070-trust-gate", seed: "含 bypassPermissions 的项目级定义未信任不加载、仅内置可用（SEC-070 供应链面）",
@@ -246,7 +256,211 @@ export function buildTasks(work: string): EvalTask[] {
         const ok = gated.layerWithheld === true && gated.loadable.length === 0 && !reg.get("sneaky") && reg.list().length === BUILT_IN_AGENTS.length;
         return { ctx: ctxLite({ calls: [{ name: "agent-load", input: { withheld: 1 } }] }), completion: ok, completionDetail: ok ? "" : `layerWithheld=${gated.layerWithheld} names=${reg.names().join(",")}` };
       },
-      directBudget: { maxToolCalls: 1 },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 }, // M4-WP-11 注记②补实（maxInputTokens 维入判）
+    },
+    // —— M4-WP-11 扩列（b13-b20，M4 DoD② ≥20；能力族对位 WP-02/03/04/05/06/09/10）——
+    {
+      id: "b13", name: "mcp-tool-injection-default-ask", kind: "direct",
+      seed: "stdio 回放 server→mcp__ 命名净化+顶层 anyOf 跳过+MCP 默认 ask 链（WP-02/§5.3(4)/S-3）",
+      async run() {
+        const d = dir("b13");
+        const script = join(d, "server.mjs");
+        writeFileSync(script, [
+          'let buf = "";',
+          'process.stdin.on("data", (c) => { buf += c.toString(); for (;;) { const i = buf.indexOf("\\n"); if (i < 0) break; const t = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (t) handle(JSON.parse(t)); } });',
+          'function send(m) { process.stdout.write(JSON.stringify(m) + "\\n"); }',
+          'function handle(m) {',
+          '  if (m.method === "initialize") { send({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: m.params.protocolVersion, serverInfo: { name: "evals-b13" }, capabilities: {} } }); }',
+          '  else if (m.method === "tools/list") { send({ jsonrpc: "2.0", id: m.id, result: { tools: [',
+          '    { name: "echo", description: "echoes", inputSchema: { type: "object", properties: { v: { type: "string" } } } },',
+          '    { name: "combo", description: "combinator", inputSchema: { anyOf: [{ type: "object" }, { type: "null" }] } }',
+          '  ] } }); }',
+          '  else if (m.id !== undefined) { send({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "unknown" } }); }',
+          '}',
+        ].join("\n"), "utf8");
+        const loaded = loadMcpServerConfigs({ user: { mcpServers: { "my srv!": { type: "stdio", command: process.execPath, args: [script] } } } }, {});
+        const conns = await connectAll(loaded, { cwd: d, sessionId: "evals-b13", envBase: {} });
+        try {
+          const conn = conns.find((c) => c.name === "my srv!");
+          if (!conn || conn.status !== "connected" || !conn.client) {
+            return { ctx: ctxLite({}), completion: false, completionDetail: `conn=${conn?.status ?? "absent"}` };
+          }
+          const built = await buildMcpToolsForConnection(conn.client, { serverName: "my srv!", transport: "stdio", serverTimeout: undefined, env: {}, isMainLoop: true });
+          const full = "mcp__" + sanitizeMcpNameSegment("my srv!") + "__echo";
+          const echo = built.tools.find((t) => t.name === full);
+          const broker = createPermissionBroker();
+          const askDefault = broker.evaluate(full, { v: "x" }).decision;
+          broker.addAllow(full);
+          const allowAfter = broker.evaluate(full, { v: "x" }).decision;
+          const ok = !!echo && echo.mcpInfo.serverName === "my srv!" && built.skipped.some((sk) => sk.name === "combo" && sk.reason.includes("anyOf")) && askDefault === "ask" && allowAfter === "allow";
+          return { ctx: ctxLite({ calls: [{ name: "tools/list", input: { server: "my srv!" } }] }), completion: ok, completionDetail: ok ? "" : `echo=${!!echo} skipped=${JSON.stringify(built.skipped)} ask=${askDefault} allow=${allowAfter}` };
+        } finally {
+          for (const c of conns) await c.close().catch(() => {});
+        }
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b14", name: "project-mcp-unapproved-not-injected", kind: "direct",
+      seed: "项目级 server 未批准不进合并（S-3 安装即确认；reject 恒赢/approve 放行；WP-03）",
+      run: async () => {
+        const docs = { user: { mcpServers: { u: { command: "u-cmd" } } }, projectShared: { mcpServers: { p: { command: "p-cmd" }, q: { command: "q-cmd" } } } };
+        const g1 = gateMcpServerDocs({ docs, trusted: false, records: {} });
+        const names1 = loadMcpServerConfigs(g1.docs, {}).servers.map((x) => x.name).sort().join(",");
+        const g2 = gateMcpServerDocs({ docs, trusted: false, records: { p: { decision: "approved" } } });
+        const load2 = loadMcpServerConfigs(g2.docs, {}).servers;
+        const g3 = gateMcpServerDocs({ docs, trusted: true, records: { p: { decision: "rejected" } } });
+        const names3 = loadMcpServerConfigs(g3.docs, {}).servers.map((x) => x.name).sort().join(",");
+        const ok =
+          names1 === "u" &&
+          g1.states.find((x) => x.name === "p")?.state === "pending" &&
+          load2.some((x) => x.name === "p" && x.origin === "projectShared") &&
+          names3 === "q,u" &&
+          g3.dropped.find((x) => x.name === "p")?.state === "rejected";
+        return { ctx: ctxLite({ calls: [{ name: "mcp-gate", input: { cases: 3 } }] }), completion: ok, completionDetail: ok ? "" : `n1=${names1} p1=${g1.states.find((x) => x.name === "p")?.state} n3=${names3}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b15", name: "hooks-exit2-block-rank-up", kind: "direct",
+      seed: "allow 组+exit2 组同事件=deny（RANK 只升不降）+stderr 入 blockingError+hookSource=user（WP-04）",
+      async run() {
+        const d = dir("b15");
+        const allow = join(d, "allow.mjs");
+        const block = join(d, "block.mjs");
+        writeFileSync(allow, 'process.stdout.write(JSON.stringify({ decision: "allow" }));\n', "utf8");
+        writeFileSync(block, 'process.stderr.write("b15-blocked"); process.exit(2);\n', "utf8");
+        const cfg = loadHookConfigs({ user: { hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `node "${allow}"` }] }, { matcher: "*", hooks: [{ type: "command", command: `node "${block}"` }] }] } } });
+        const engine = createHookEngine(cfg, { trusted: () => true, cwd: d });
+        const o = await engine.fire("PreToolUse", { query: { toolName: "Read" }, payload: { tool_name: "Read", tool_input: {} } });
+        const ok = o.verdict === "deny" && (o.blockingError ?? "").includes("b15-blocked") && o.decisionReason?.hookSource === "user" && cfg.warnings.length === 0;
+        return { ctx: ctxLite({ calls: [{ name: "hooks", input: { fired: 2 } }] }), completion: ok, completionDetail: ok ? "" : `verdict=${o.verdict} blocking=${o.blockingError} src=${o.decisionReason?.hookSource} warn=${cfg.warnings.length}` };
+      },
+      directBudget: { maxToolCalls: 2, maxInputTokens: 0 },
+    },
+    {
+      id: "b16", name: "pretooluse-timeout-fail-closed", kind: "direct",
+      seed: "PreToolUse hook 超时=deny 工具不执行（:61919 fail-closed 无旁路；WP-04 DoD⑤）",
+      async run() {
+        const d = dir("b16");
+        const sleeper = join(d, "sleep.mjs");
+        writeFileSync(sleeper, "setTimeout(() => {}, 2500);\n", "utf8"); // 2.5s>timeout 1s；短于 afterAll 清理重试窗（Windows cwd 占用 EPERM 面）
+        const cfg = loadHookConfigs({ user: { hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `node "${sleeper}"`, timeout: 1 }] }] } } });
+        const engine = createHookEngine(cfg, { trusted: () => true, cwd: d });
+        const o = await engine.fire("PreToolUse", { query: { toolName: "Read" }, payload: { tool_name: "Read", tool_input: {} } });
+        const ok = o.verdict === "deny" && ((o.decisionReason?.reason ?? "") + (o.blockingError ?? "")).includes("fail-closed");
+        return { ctx: ctxLite({ calls: [{ name: "hooks", input: { timeoutHook: 1 } }] }), completion: ok, completionDetail: ok ? "" : `verdict=${o.verdict} reason=${o.decisionReason?.reason} blocking=${o.blockingError} nbe=${o.nonBlockingErrors.length}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b17", name: "skills-listing-budget-expand", kind: "direct",
+      seed: "清单 1536 截断+预算降档 name-only+展开注入（变量替换+shell 预执行策略剥离）（WP-05 DoD③④⑥）",
+      run: async () => {
+        const long = "L".repeat(2000);
+        const listing = buildSkillListing(
+          [{ name: "alpha", description: "short desc", whenToUse: "for tests" }, { name: "beta", description: long }],
+          { contextTokens: 200_000 },
+        );
+        const betaLine = listing.lines.find((l) => l.startsWith("- beta: "));
+        const truncated1536 = betaLine === `- beta: ${long.slice(0, 1536)}` && listing.lines.some((l) => l === "- alpha: short desc for tests");
+        const tight = buildSkillListing(
+          [{ name: "alpha", description: "d".repeat(100) }, { name: "beta", description: long }],
+          { contextTokens: 50 }, // 预算=50×0.01×4=2 字节 → 全部降档
+        );
+        const demotedAll = tight.budgetMode === "priority" && tight.lines.every((l) => !l.includes(": ")) && tight.demoted.length === 2;
+        const expanded = expandSkillBody("D=${STANDARD_CODE_SKILL_DIR} S=${STANDARD_CODE_SESSION_ID}\nRun: !`dangerous`", { skillDir: "/sk", projectDir: "/pj", sessionId: "sid42", args: "one" });
+        const expandOk = expanded.includes("/sk") && expanded.includes("sid42") && !expanded.includes("${") && expanded.includes("[shell command execution disabled by policy]");
+        const ok = truncated1536 && demotedAll && expandOk;
+        return { ctx: ctxLite({ calls: [{ name: "skills", input: { listing: 2, expand: 1 } }] }), completion: ok, completionDetail: ok ? "" : `t1536=${truncated1536} demote=${demotedAll} expand=${expandOk}` };
+      },
+      directBudget: { maxToolCalls: 3, maxInputTokens: 0 },
+    },
+    {
+      id: "b18", name: "automemory-index-truncate", kind: "direct",
+      seed: "MEMORY.md 200 行硬截断+字节截断+互链解析（缺失告警不炸）+目录计数（WP-06 DoD①②③）",
+      run: async () => {
+        const d = dir("b18");
+        const mem = join(d, "memory");
+        mkdirSync(mem, { recursive: true });
+        const idxLines = ["- see also [[m1]] and [[ghost]]"]; // 互链 [[name]] 形且在截断窗口内（200 行前）
+        idxLines.push(...Array.from({ length: 250 }, (_, i) => `- [m${i}](m${i}.md) note ${i}`));
+        writeFileSync(join(mem, "MEMORY.md"), idxLines.join("\n"), "utf8");
+        writeFileSync(join(mem, "m1.md"), "---\nname: m1\ndescription: first\ntype: project\nschemaVersion: 1\n---\nbody of m1\n", "utf8");
+        const v = loadAutoMemory(mem);
+        const linesOk = v.index.exists && v.index.truncated && v.index.lines === 200 && v.index.bytes <= 25_000;
+        const linkOk = v.resolved.some((r) => r.name === "m1") && v.missing.includes("ghost");
+        const dBig = join(d, "mem2");
+        mkdirSync(dBig, { recursive: true });
+        writeFileSync(join(dBig, "MEMORY.md"), "x".repeat(30_000), "utf8"); // 单行 30KB：行数免疫的字节截断面（码点二分形制）
+        const v2 = loadAutoMemory(dBig);
+        const bytesOk = v2.index.truncated && v2.index.bytes <= 25_000;
+        const ok = linesOk && linkOk && bytesOk && v.entryCount === 1;
+        return { ctx: ctxLite({ calls: [{ name: "memory", input: { reads: 2 } }] }), completion: ok, completionDetail: ok ? "" : `lines=${v.index.lines}/${v.index.truncated} link=${linkOk} bytes=${v2.index.bytes}/${v2.index.truncated} entries=${v.entryCount}` };
+      },
+      directBudget: { maxToolCalls: 2, maxInputTokens: 0 },
+    },
+    {
+      id: "b19", name: "custom-agent-e2e-production", kind: "direct",
+      seed: "项目 .md→SEC-070 确认留痕→registry→validateSpawn 类型解析→runSubagent def 装配（session 生产面端到端；WP-10 链）",
+      async run() {
+        const home = join(dir("b19"), "home");
+        const proj = join(dir("b19"), "proj");
+        mkdirSync(join(proj, ".standardcode", "agents"), { recursive: true });
+        writeFileSync(join(proj, ".standardcode", "agents", "e2e.md"), "---\nschemaVersion: 1\nname: e2e\ndescription: e2e agent\npermissionMode: bypassPermissions\n---\nE2E project agent.\n", "utf8");
+        const cap: { system?: string } = {};
+        const s = createSession({ provider: textProvider(cap), catalog: ["m"], model: "m", cwd: proj, projectRoot: proj, home, trusted: true });
+        const st = await s.agents.loadProjectAgents({ confirm: async () => true });
+        const local = JSON.parse(readFileSync(join(proj, ".standardcode", "settings.local.json"), "utf8"));
+        const { ctx } = s.agents.prepareSpawn("e2e");
+        const v = await validateSpawn({ prompt: "task", subagentType: "e2e", description: "d" }, { ...ctx, concurrentSubagents: 0 });
+        if (!v.ok) return { ctx: ctxLite({}), completion: false, completionDetail: `spawn=${v.code}` };
+        const res = await runSubagent(v.normalized, {
+          provider: textProvider(cap), model: BENCHMARK_MODEL,
+          tools: [{ name: "Read", description: "d", inputSchema: {}, execute: async () => "file" }],
+          permissionBroker: s.broker,
+        });
+        const ok =
+          v.normalized.definition.systemPrompt === "E2E project agent." &&
+          s.agents.names().includes("e2e") &&
+          local.agentTrust?.e2e?.permissionMode === "bypassPermissions" &&
+          res.report.includes("sub-report") &&
+          cap.system === "E2E project agent.\n\n" + SUBAGENT_ANTI_FABRICATION &&
+          st.stripped.length === 0;
+        return { ctx: ctxLite({ calls: [{ name: "Agent", input: { type: "e2e" } }], usage: { inputTokens: 10, outputTokens: 5, cacheCreationTokens: 0, cacheReadTokens: 0 } }), completion: ok, completionDetail: ok ? "" : `sys=${JSON.stringify(cap.system)} trust=${JSON.stringify(local.agentTrust)}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 50 }, // 子代理夹具 usage 入判（token 维真判据）
+    },
+    {
+      id: "b20", name: "plugin-install-confirm-failclosed", kind: "direct",
+      seed: "S-5 安装确认先于任何写盘（拒绝零半程）+留痕+四注入面聚合 docs+同名 exists（WP-09 DoD③④）",
+      async run() {
+        const d = dir("b20");
+        const baseDir = join(d, "base");
+        const src = join(d, "src");
+        mkdirSync(join(src, "skills", "pk-s"), { recursive: true });
+        writeFileSync(join(src, "skills", "pk-s", "SKILL.md"), "---\ndescription: pk skill\n---\nb\n", "utf8");
+        writeFileSync(join(src, "plugin.json"), JSON.stringify({
+          schemaVersion: 1, name: "b20-suite", version: "0.2.0",
+          hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "node x.mjs" }] }] },
+          mcpServers: { b20srv: { type: "stdio", command: "x" }, dup: { type: "stdio", command: "y" } },
+        }), "utf8");
+        const declined = await installPlugin(src, { baseDir, opts: { onConfirm: async () => false } });
+        const zeroLanding = declined.error === "declined" && loadPluginsDoc(baseDir).plugins.length === 0 && !existsSync(pluginsRootDir(baseDir));
+        const ok2 = await installPlugin(src, { baseDir });
+        const second = await installPlugin(src, { baseDir });
+        const views = loadInstalledPlugins(baseDir);
+        const docs = buildPluginDocs(views);
+        const counts = componentCounts(views[0]!.manifest!);
+        const ok =
+          zeroLanding && ok2.ok === true && second.error === "exists" &&
+          (docs.hooksDoc?.hooks as Record<string, unknown>).PreToolUse !== undefined &&
+          (docs.mcpDoc?.mcpServers as Record<string, unknown>).b20srv !== undefined &&
+          counts.skills.join() === "pk-s" && counts.mcpServers.join() === "b20srv,dup" &&
+          ((docs.hooksDoc?.hooks as Record<string, unknown[]>).PreToolUse ?? []).length === 1;
+        return { ctx: ctxLite({ calls: [{ name: "plugin", input: { installs: 3 } }] }), completion: ok, completionDetail: ok ? "" : `zero=${zeroLanding} e2=${second.error} hooks=${JSON.stringify(docs.hooksDoc)} skills=${counts.skills}` };
+      },
+      directBudget: { maxToolCalls: 3, maxInputTokens: 0 },
     },
   ];
 }
