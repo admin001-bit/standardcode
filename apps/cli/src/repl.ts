@@ -510,6 +510,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       }
       return { text: r.text };
     },
+    t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,
   };
 }
@@ -734,7 +735,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       else if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
     }
     transcriptAppend(deps, { kind: "done", reason: "error" });
-    deps.io.write(`\n[error] ${err instanceof Error ? err.message : String(err)}\n`);
+    deps.io.write(`\n${deps.session.i18n.t("repl.error.prefix", { value: err instanceof Error ? err.message : String(err) })}\n`);
   } finally {
     s.activeAbort = null;
   }
@@ -776,7 +777,8 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
   }
   const cmd = commands.get(name);
   if (!cmd) {
-    deps.io.write(`[command] unknown: /${name}（B-03：五命令之外不注册，try /help）\n`);
+    deps.io.write(`${deps.session.i18n.t("repl.command.unknown", { value: name })}
+`);
     return;
   }
   try {

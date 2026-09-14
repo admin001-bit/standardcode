@@ -2,7 +2,7 @@
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import type { TokenUsage } from "@standardcode/providers";
-import { sessionDiff, redactSecrets } from "@standardcode/platform";
+import { sessionDiff, redactSecrets, tEn } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
 
 // —— WP-10 /usage 价格表（ENG-046 "内置价格表"；卡边界=按 §10 落固定内置表 [自定] 登记偏差）。
@@ -155,6 +155,8 @@ export interface CommandContext {
   usage(): { text: string };
   /** WP-03 /mcp：server 清单视图（状态/传输/来源/连接态）。 */
   mcpList(): { text: string };
+  /** M4-WP-07：i18n 渲染（ADR-0042；lang=会话级快照）。 */
+  t(key: string, params?: Record<string, string | number>): string;
   /** WP-03 /mcp：approve|reject|enable|disable（local 层留痕 ADR-0037 形制+按现行门控重装配）。 */
   mcpAction(action: "approve" | "reject" | "enable" | "disable", name: string): Promise<{ text: string }>;
   /** WP-06 /memory：双轨可视化（用户轨来源与顺序 MEM-044+自动轨索引摘要）。 */
@@ -191,31 +193,31 @@ export interface SlashCommand {
 export const CLI_COMMANDS: readonly SlashCommand[] = [
   {
     name: "help",
-    description: "list all available commands",
+    description: tEn("cmd.help.desc"),
     execute(_args, ctx) {
-      ctx.write("commands:");
+      ctx.write(ctx.t("repl.help.header"));
       for (const c of CLI_COMMANDS) ctx.write(`  /${c.name}${c.usage ? ` ${c.usage}` : ""} — ${c.description}`);
     },
   },
   {
     name: "clear",
-    description: "clear conversation history (keeps this session)",
+    description: tEn("cmd.clear.desc"),
     execute(_args, ctx) {
       ctx.clearHistory();
-      ctx.write("[clear] conversation history cleared");
+      ctx.write(ctx.t("repl.done.cleared"));
     },
   },
   {
     name: "exit",
-    description: "exit standardcode",
+    description: tEn("cmd.exit.desc"),
     execute(_args, ctx) {
       ctx.requestExit();
     },
   },
   {
     name: "model",
-    usage: "[name]",
-    description: "show or switch the model (WP-01 provider catalog)",
+    usage: tEn("cmd.model.usage"),
+    description: tEn("cmd.model.desc"),
     execute(args, ctx) {
       const target = args.trim();
       if (target === "") {
@@ -224,32 +226,32 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         return;
       }
       ctx.switchModel(target);
-      ctx.write(`[model] switched to ${ctx.currentModel()}`);
+      ctx.write(ctx.t("repl.model.switched", { value: ctx.currentModel() }));
     },
   },
   {
     name: "permission",
-    usage: "[default|acceptEdits|plan|bypassPermissions]",
-    description: "cycle (no args, EXE-001 order) or set the permission mode",
+    usage: tEn("cmd.permission.usage"),
+    description: tEn("cmd.permission.desc"),
     execute(args, ctx) {
       const target = args.trim();
       if (target === "") {
         const next = ctx.cyclePermissionMode();
-        ctx.write(`[permission] mode: ${PERMISSION_LABEL[next]} (${next})`);
+        ctx.write(ctx.t("repl.permission.mode", { label: PERMISSION_LABEL[next], value: next }));
         return;
       }
       const mode = target as PermissionMode;
       if (!PERMISSION_CYCLE.includes(mode)) {
-        throw new Error(`unknown mode: ${target}（可选 ${PERMISSION_CYCLE.join("|")}）`);
+        throw new Error(ctx.t("cmd.permission.err.unknown", { value: target, choices: PERMISSION_CYCLE.join("|") }));
       }
       ctx.setPermissionMode(mode);
-      ctx.write(`[permission] mode: ${PERMISSION_LABEL[mode]} (${mode})`);
+      ctx.write(ctx.t("repl.permission.mode", { label: PERMISSION_LABEL[mode], value: mode }));
     },
   },
   {
     name: "rewind",
-    usage: "<N>",
-    description: "restore files to the state before snapshot N (file-history, EXE-040)",
+    usage: tEn("cmd.rewind.usage"),
+    description: tEn("cmd.rewind.desc"),
     async execute(args, ctx) {
       const raw = args.trim();
       if (raw === "") {
@@ -257,8 +259,8 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         return;
       }
       const n = Number(raw);
-      if (!Number.isInteger(n) || n < 1) throw new Error(`/rewind N: N must be a positive integer (got ${raw})`);
-      if (n > ctx.snapshotCount()) throw new Error(`/rewind N: N (${n}) exceeds latest snapshot (${ctx.snapshotCount()})`);
+      if (!Number.isInteger(n) || n < 1) throw new Error(ctx.t("cmd.rewind.err.notInteger", { value: raw }));
+      if (n > ctx.snapshotCount()) throw new Error(ctx.t("cmd.rewind.err.exceeds", { value: n, latest: ctx.snapshotCount() }));
       const r = await ctx.rewind(n);
       const files = r.undone > 0 ? "\n  " + r.files.join("\n  ") : "";
       ctx.write(`[rewind] restored to before snapshot ${n}: ${r.undone} file(s) reverted${files}`);
@@ -266,14 +268,14 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "context",
-    description: "show context window breakdown with real usage reconciliation (CTX-038; ADR-0027)",
+    description: tEn("cmd.context.desc"),
     execute(_args, ctx) {
       ctx.write(ctx.contextGrid().text);
     },
   },
   {
     name: "diff",
-    description: "show session file changes vs pre-write snapshots (self-implemented unified diff, ADR-0032 rework; S-10 redaction)",
+    description: tEn("cmd.diff.desc"),
     async execute(args, ctx) {
       // ADR-0032 决策 1【勘误 2026-09-08】：用户裁决改自实现——/diff 语义=会话文件变更面（file-history 快照基线 vs 当前）
       const r = await ctx.sessionDiff();
@@ -289,33 +291,33 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "new",
-    description: "start a new session (previous transcript stays intact and resumable, CTX-101)",
+    description: tEn("cmd.new.desc"),
     async execute(_args, ctx) {
       await ctx.newSession();
     },
   },
   {
     name: "resume",
-    usage: "[query]",
-    description: "pick a past session (search + preview) and restore it (UI-030)",
+    usage: tEn("cmd.resume.usage"),
+    description: tEn("cmd.resume.desc"),
     async execute(_args, ctx) {
       await ctx.resumeSession();
     },
   },
   {
     name: "rename",
-    usage: "<title>",
-    description: "rename the current session (shows in /resume list)",
+    usage: tEn("cmd.rename.usage"),
+    description: tEn("cmd.rename.desc"),
     async execute(args, ctx) {
       await ctx.renameSession(args);
-      ctx.write(`[rename] session renamed`);
+      ctx.write(ctx.t("repl.rename.done"));
     },
   },
   // —— WP-11：M2 分期余量（§8.2；/context 已于 WP-05 注册）——
   {
     name: "compact",
-    usage: "[window | partial <msgIndex>]",
-    description: "manually compact the conversation (9-section summary, CTX-036; window 100k-1M)",
+    usage: tEn("cmd.compact.usage"),
+    description: tEn("cmd.compact.desc"),
     async execute(args, ctx) {
       const a = args.trim();
       let window: number | undefined;
@@ -327,7 +329,7 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         } else {
           const w = Number(a);
           if (!Number.isInteger(w) || w < 100_000 || w > 1_000_000) {
-            throw new Error("/compact window: must be integer in [100000, 1000000] (CTX-036 manual window)");
+            throw new Error(ctx.t("cmd.compact.err.window"));
           }
           window = w;
         }
@@ -338,8 +340,8 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "config",
-    usage: "[key [value]]",
-    description: "show merged settings (5-source order, WP-01) or set key into local layer",
+    usage: tEn("cmd.config.usage"),
+    description: tEn("cmd.config.desc"),
     async execute(args, ctx) {
       const r = await ctx.config(args);
       ctx.write(r.text);
@@ -347,15 +349,15 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "provider",
-    usage: "[anthropic|openai]",
-    description: "show or switch provider (takes effect next turn, MDL-010~013)",
+    usage: tEn("cmd.provider.usage"),
+    description: tEn("cmd.provider.desc"),
     execute(args, ctx) {
       ctx.write(ctx.switchProvider(args.trim() || undefined).text);
     },
   },
   {
     name: "doctor",
-    description: "environment health check with minimal self-repair (ENG-043, S-10 hints, ENG-080 migration)",
+    description: tEn("cmd.doctor.desc"),
     async execute(_args, ctx) {
       const r = await ctx.doctor();
       ctx.write(r.text);
@@ -363,26 +365,26 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "cd",
-    usage: "<dir>",
-    description: "change the working directory (tools re-created; transcript project follows cwd)",
+    usage: tEn("cmd.cd.usage"),
+    description: tEn("cmd.cd.desc"),
     async execute(args, ctx) {
-      if (args.trim() === "") throw new Error("/cd <dir>: directory required");
+      if (args.trim() === "") throw new Error(ctx.t("cmd.cd.err.required"));
       ctx.write(ctx.changeDir(args.trim()).text);
     },
   },
   {
     name: "add-dir",
-    usage: "<dir>",
-    description: "allow an additional working directory (gated by workspace trust, §8.3)",
+    usage: tEn("cmd.add-dir.usage"),
+    description: tEn("cmd.add-dir.desc"),
     async execute(args, ctx) {
-      if (args.trim() === "") throw new Error("/add-dir <dir>: directory required");
+      if (args.trim() === "") throw new Error(ctx.t("cmd.add-dir.err.required"));
       const r = await ctx.addDir(args.trim());
       ctx.write(r.text);
     },
   },
   {
     name: "reload",
-    description: "reload memory (WP-02) and settings (WP-01) from disk",
+    description: tEn("cmd.reload.desc"),
     execute(_args, ctx) {
       ctx.write(ctx.reload().text);
     },
@@ -390,15 +392,15 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-05：M3 任务面板（§8.2 M3 增 /tasks /background；ORC-032 Kimi 语义逐键）——
   {
     name: "tasks",
-    usage: "[all] [limit 1-100]",
-    description: "list tasks (active_only default true, limit 1-100 default 20 — ORC-032)",
+    usage: tEn("cmd.tasks.usage"),
+    description: tEn("cmd.tasks.desc"),
     execute(args, ctx) {
       ctx.write(ctx.tasks(args).text);
     },
   },
   {
     name: "background",
-    description: "list backgrounded tasks (挂后台清单，ORC-032)",
+    description: tEn("cmd.background.desc"),
     execute(_args, ctx) {
       ctx.write(ctx.background().text);
     },
@@ -406,19 +408,19 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-07：M3 分期余量三件（§8.2 M3 增 /subtask /effort /init）——
   {
     name: "subtask",
-    usage: "<prompt>",
-    description: "run a synchronous subtask via subagent spawn and inject the result (M6 前仅同步语义)",
+    usage: tEn("cmd.subtask.usage"),
+    description: tEn("cmd.subtask.desc"),
     async execute(args, ctx) {
       const prompt = args.trim();
-      if (prompt === "") throw new Error("/subtask <prompt>: prompt required");
+      if (prompt === "") throw new Error(ctx.t("cmd.subtask.err.required"));
       const r = await ctx.subtask(prompt);
       ctx.write(r.text);
     },
   },
   {
     name: "effort",
-    usage: "[off|low|medium|high]",
-    description: "show or set the reasoning effort level (writes model.thinking, takes effect next turn — MDL-010~013)",
+    usage: tEn("cmd.effort.usage"),
+    description: tEn("cmd.effort.desc"),
     async execute(args, ctx) {
       const r = await ctx.effort(args.trim());
       ctx.write(r.text);
@@ -426,7 +428,7 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "init",
-    description: "generate an AGENTS.md skeleton in the project root (never overwrites an existing file)",
+    description: tEn("cmd.init.desc"),
     async execute(_args, ctx) {
       const r = await ctx.init();
       ctx.write(r.text);
@@ -435,14 +437,14 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-10：M3 分期余量两件（§8.2；CTX-102/ENG-046/ADR-0027 权威口径）——
   {
     name: "status",
-    description: "session state overview (model/provider/permission mode/context water level/task count — real-time)",
+    description: tEn("cmd.status.desc"),
     execute(_args, ctx) {
       ctx.write(ctx.status().text);
     },
   },
   {
     name: "usage",
-    description: "token four-column session totals + cache hit rate (in-session real-time) + built-in price table cost estimate (CTX-102/ENG-046)",
+    description: tEn("cmd.usage.desc"),
     execute(_args, ctx) {
       ctx.write(ctx.usage().text);
     },
@@ -450,57 +452,56 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-03：M4 分期首件（§8.2 M4 增 /mcp；S-3 安装即确认+/mcp 可视化管控）——
   {
     name: "mcp",
-    usage: "[list | approve|reject|enable|disable <server>]",
-    description: "MCP servers: per-server approval state/transport/origin (S-3); manage approval and disable (persists to local layer)",
+    usage: tEn("cmd.mcp.usage"),
+    description: tEn("cmd.mcp.desc"),
     async execute(args, ctx) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
       if (sub === "list") {
-        if (parts.length > 1) throw new Error(`/mcp list: unexpected argument(s): ${parts.slice(1).join(" ")}`);
+        if (parts.length > 1) throw new Error(ctx.t("cmd.mcp.err.listExtra", { value: parts.slice(1).join(" ") }));
         ctx.write(ctx.mcpList().text);
         return;
       }
       if (sub === "approve" || sub === "reject" || sub === "enable" || sub === "disable") {
         const name = parts[1];
-        if (!name) throw new Error(`/mcp ${sub} <server>: server name required`);
-        if (parts.length > 2) throw new Error(`/mcp ${sub}: exactly one server name expected (got: ${parts.slice(1).join(" ")})`);
+        if (!name) throw new Error(ctx.t("cmd.mcp.err.nameRequired", { sub }));
+        if (parts.length > 2) throw new Error(ctx.t("cmd.mcp.err.oneName", { sub, value: parts.slice(1).join(" ") }));
         const r = await ctx.mcpAction(sub, name);
         ctx.write(r.text);
         return;
       }
-      throw new Error(`unknown /mcp subcommand: ${sub}（可选 list | approve | reject | enable | disable）`);
+      throw new Error(ctx.t("cmd.mcp.err.unknownSub", { value: sub }));
     },
   },
   // —— WP-05：M4 分期（§8.2 M4 增 /skills；S-5 allowed-tools 白名单+SEC-070 信任门）——
   {
     name: "skills",
-    usage: "[list | run <name> [args]]",
-    description: "list skills (name/description/source/state) or invoke a skill by name (user invocation bypasses disable-model-invocation)",
+    usage: tEn("cmd.skills.usage"),
+    description: tEn("cmd.skills.desc"),
     execute(args, ctx) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
       if (sub === "list") {
-        if (parts.length > 1) throw new Error(`/skills list: unexpected argument(s): ${parts.slice(1).join(" ")}`);
+        if (parts.length > 1) throw new Error(ctx.t("cmd.skills.err.listExtra", { value: parts.slice(1).join(" ") }));
         ctx.write(ctx.skillsList().text);
         return;
       }
       if (sub === "run") {
         const name = parts[1];
-        if (!name) throw new Error("/skills run <name> [args]: skill name required");
+        if (!name) throw new Error(ctx.t("cmd.skills.err.nameRequired"));
         const r = ctx.skillsRun(name, parts.length > 2 ? parts.slice(2).join(" ") : undefined);
         ctx.write(r.text);
         return;
       }
-      throw new Error(`unknown /skills subcommand: ${sub}（可选 list | run）`);
+      throw new Error(ctx.t("cmd.skills.err.unknownSub", { value: sub }));
     },
   },
   // —— WP-06：M4 分期（§8.2 M4 增 /memory；MEM-044 可视化+§9.1 ② 自动轨）——
   {
     name: "memory",
-    usage: "",
-    description: "show memory dual-track view (user-track sources & order MEM-044 + auto-track index summary)",
+    description: tEn("cmd.memory.desc"),
     execute(_args, ctx) {
-      if (_args.trim() !== "") throw new Error("/memory takes no arguments");
+      if (_args.trim() !== "") throw new Error(ctx.t("cmd.memory.err.args"));
       ctx.write(ctx.memoryView().text);
     },
   },

@@ -8,7 +8,7 @@ import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, ty
 import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
-import { applySettingsEnv, loadSettings, managedSettingsPath, settingsValue, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { applySettingsEnv, createI18n, loadSettings, managedSettingsPath, resolveLang, settingsValue, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
@@ -125,6 +125,8 @@ export interface Session {
   hooks: SessionHooks;
   /** M4-WP-05：skills 门面（三源发现+清单增量+allowed-tools 收窄+用户点名豁免）。 */
   skills: SessionSkills;
+  /** M4-WP-07：i18n 面（lang=会话级快照：env STANDARD_CODE_LANG > settings.language > en；ADR-0042）。 */
+  i18n: I18n;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -292,6 +294,7 @@ export function createSession(init: SessionInit = {}): Session {
     thinking,
     autocompact,
     trust,
+    i18n: createI18n("en"),
     env,
     additionalDirectories: [...(settingsValue<string[]>(gatedSettings, "additionalDirectories") ?? [])],
     ...(init.home !== undefined ? { home: init.home } : {}),
@@ -439,6 +442,8 @@ export function createSession(init: SessionInit = {}): Session {
   }
   session.mcpReady = runMcpAssembly();
   session.refreshMcp = () => runMcpAssembly();
+  // —— M4-WP-07：i18n（会话级 lang 快照；env > settings.language > en，非法值告警回退——ADR-0042）——
+  session.i18n = createI18n(resolveLang(env, settingsValue<string>(session.trust.settings, "language")));
   // —— M4-WP-04：hooks 引擎（§9.3 附注 13 事件；settings 五来源+disableAllHooks+信任门运行时判定 :262013）——
   const hookEngine: HookEngine = createHookEngine(loadHookConfigs(session.trust.settings.docs), {
     trusted: () => session.trust.trusted,

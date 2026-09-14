@@ -7,3 +7,5 @@ export * from "./diff.ts";
 export * from "./trust.ts";
 export * from "./agent-discovery.ts";
 export * from "./mcp-trust.ts";
+// M4-WP-07：i18n 双包（catalog 单一事实源+选择链+缺失回退；ADR-0042）。
+export * from "./i18n.ts";
