@@ -278,7 +278,7 @@ describe("DoD③ 确认清单计数（componentCounts：N commands/N agents/N sk
       commands: ["one", "two", "three"],
       hooks: { PreToolUse: [], Notification: [] },
       mcpServers: { zeta: {}, alpha: {} },
-    }, { "agents/a1.md": "x", "agents/nested/a2.md": "y", "agents/readme.txt": "not-md", "skills/s1/SKILL.md": "z", "skills/s2/other.md": "no-skill-md", "skills/empty/": "" });
+    }, { "agents/a1.md": "x", "agents/nested/a2.md": "y", "agents/readme.txt": "not-md", "skills/s1/SKILL.md": "z", "skills/s2/other.md": "no-skill-md", "skills/no-skill/readme.md": "dir exists without SKILL.md" });
     const r = readPluginManifest(srcDir);
     const c = componentCounts(r.manifest!);
     expect(c.commands).toEqual(["one", "two", "three"]);
