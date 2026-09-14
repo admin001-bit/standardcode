@@ -48,7 +48,7 @@ describe("DoD①/② runner recorded 全绿+基准集（v0 ≥10；v1 ≥20=M4 D
   });
 });
 
-describe("DoD③ 出分记录落盘（docs/evals/v0.md 逐字节守卫+VERSION 独立版本化）", () => {
+describe("DoD③ 出分记录落盘（docs/evals/<VERSION>.md 逐字节守卫+VERSION 独立版本化【勘误 2026-09-15 V：题头 v0 字样随 v1 更新】）", () => {
   it("报告与运行结果一致（漂移=红；UPDATE_EVALS=1 重采集）", () => {
     const rendered = renderReport(results, version);
     if (process.env.UPDATE_EVALS === "1") {

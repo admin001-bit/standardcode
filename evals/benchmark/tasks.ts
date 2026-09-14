@@ -26,7 +26,7 @@ import {
 } from "../../packages/harness/src/index.ts";
 import { buildMcpToolsForConnection, buildSkillListing, connectAll, createHookEngine, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, sanitizeMcpNameSegment } from "../../packages/capabilities/src/index.ts";
 import { loadAutoMemory } from "../../packages/context/src/index.ts";
-import { buildPluginDocs, componentCounts, installPlugin, loadInstalledPlugins, loadPluginsDoc, pluginsRootDir, loadProjectAgentDefinitions } from "../../packages/platform/src/index.ts";
+import { buildPluginDocs, componentCounts, installPlugin, loadInstalledPlugins, loadPluginsDoc, pluginsRootDir } from "../../packages/platform/src/index.ts";
 import { execBash } from "../../packages/executor/src/index.ts";
 import { createSession } from "../../apps/cli/src/session.ts";
 import { scriptedProvider, BENCHMARK_MODEL, type EvalTask, type ScoreCtx } from "./runner.ts";
