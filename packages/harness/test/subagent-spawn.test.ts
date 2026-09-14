@@ -135,13 +135,18 @@ describe("DoD① 校验序列逐段（顺序+各自拒绝语义）", () => {
     const remote = await validateSpawn({ prompt: "p", description: "d", isolation: "remote" }, CTX_BASE);
     expect(remote).toMatchObject({ ok: false, code: "remote_unsupported" });
 
-    // requiredMCP 钩子：M4 前缺省恒跳过（无钩子 trace 仍含 requiredMcp 段）；提供且恒 pending → 30s 超时拒绝
+    // requiredMCP（WP-10/ADR-0043 决策 5 真接，勘误 2026-09-14：原"M4 前恒跳过"契约升级）：
+    // def 无要求=恒直通；有要求无钩子=fail-closed 拒绝；有要求+钩子恒 pending=30s 超时拒绝；钩子清空=放行
+    const reqDef = { ...CTX_BASE, definitionsOf: (n: string) => ({ name: n, description: "d", mcpServers: ["ctx"] }) };
+    const noHook = await validateSpawn({ prompt: "p", description: "d" }, reqDef);
+    expect(noHook).toMatchObject({ ok: false, code: "mcp_required_missing" });
+    if (!noHook.ok) expect(noHook.message).toContain("no MCP client");
     let polls = 0;
     const mcp = await validateSpawn(
       { prompt: "p", description: "d" },
       {
-        ...CTX_BASE,
-        pendingRequiredMcp: () => ["ctx"],
+        ...reqDef,
+        pendingRequiredMcp: (required) => required,
         sleep: async () => {
           polls++;
         },
@@ -149,6 +154,12 @@ describe("DoD① 校验序列逐段（顺序+各自拒绝语义）", () => {
       },
     );
     expect(mcp).toMatchObject({ ok: false, code: "mcp_required_missing" });
+    if (!mcp.ok) expect(mcp.message).toContain("ctx");
+    const mcpOk = await validateSpawn(
+      { prompt: "p", description: "d" },
+      { ...reqDef, pendingRequiredMcp: (required) => required.filter((s) => s !== "ctx") },
+    );
+    expect(mcpOk.ok).toBe(true);
   });
 });
 
@@ -210,6 +221,28 @@ describe("DoD②/③ 执行器：独立上下文+摘要回传+<subagent_tokens>"
     if (!v.ok) throw new Error("unreachable");
     const r = await runSubagent(v.normalized, { provider: p, model: "m", tools: TOOLS });
     expect(r.content).toBe("(Subagent completed but returned no output.)");
+  });
+
+  it("WP-10 DoD④ initialPrompt 消费=首轮预热注入（primed 之后、任务 prompt 之前；ADR-0043 决策 6）", async () => {
+    let captured: any;
+    const p = textProvider("x");
+    p.stream = async function* (req) {
+      captured = JSON.parse(JSON.stringify(req.messages));
+      yield { type: "text_delta", text: "x" } as LLMEvent;
+      yield { type: "finish", reason: "completed", raw: "end_turn" } as LLMEvent;
+    };
+    const v = await validateSpawn(
+      { prompt: "task body", subagentType: "ip", description: "d" },
+      { ...CTX_BASE, availableTypes: ["ip"], definitionsOf: () => ({ name: "ip", description: "d", initialPrompt: "warm: load context first", systemPrompt: "sp" }) },
+    );
+    if (!v.ok) throw new Error("unreachable");
+    await runSubagent(v.normalized, { provider: p, model: "m", tools: TOOLS, primedAgentMemory: "mem1" });
+    expect(captured.map((m: any) => m.content[0].text)).toEqual([
+      "<agent-memory>mem1</agent-memory>",
+      "warm: load context first",
+      "task body",
+    ]);
+    // 缺席形=现状零影响（既有独立上下文用例 :167 同断）
   });
 });
 

@@ -56,8 +56,8 @@ export const EN: Record<string, string> = {
   "cmd.tasks.usage": "[all] [limit 1-100]",
   "cmd.tasks.desc": "list tasks (active_only default true, limit 1-100 default 20 — ORC-032)",
   "cmd.background.desc": "list backgrounded tasks (ORC-032)",
-  "cmd.subtask.usage": "<prompt>",
-  "cmd.subtask.desc": "run a synchronous subtask via subagent spawn and inject the result (sync-only before M6)",
+  "cmd.subtask.usage": "[[type] prompt]",
+  "cmd.subtask.desc": "run a synchronous subtask via subagent spawn and inject the result (optional leading registered agent type【WP-10】; sync-only before M6)",
   "cmd.effort.usage": "[off|low|medium|high]",
   "cmd.effort.desc": "show or set the reasoning effort level (writes model.thinking, takes effect next turn — MDL-010~013)",
   "cmd.init.desc": "generate an AGENTS.md skeleton in the project root (never overwrites an existing file)",
@@ -133,8 +133,8 @@ export const ZH_CN: Record<string, string> = {
   "cmd.tasks.usage": "[all] [limit 1-100]",
   "cmd.tasks.desc": "列任务（active_only 缺省 true、limit 1-100 缺省 20 — ORC-032）",
   "cmd.background.desc": "列挂后台的任务（ORC-032）",
-  "cmd.subtask.usage": "<prompt>",
-  "cmd.subtask.desc": "经 subagent spawn 跑同步子任务并注入结果（M6 前仅同步语义）",
+  "cmd.subtask.usage": "[[type] prompt]",
+  "cmd.subtask.desc": "经 subagent spawn 跑同步子任务并注入结果（首词可选 registered agent 类型【WP-10】；M6 前仅同步语义）",
   "cmd.effort.usage": "[off|low|medium|high]",
   "cmd.effort.desc": "查看或设置推理力度档位（写 model.thinking，下一 turn 生效 — MDL-010~013）",
   "cmd.init.desc": "在项目根生成 AGENTS.md 骨架（绝不覆盖既有文件）",
@@ -309,6 +309,8 @@ Object.assign(EN, {
   "repl.plugin.notFound": "[plugin] not found (local path, git URL, or configured marketplaces): {value}",
   "repl.plugin.marketAdded": "[plugin] marketplace \"{name}\" ({source}) added — {value} entries",
   "repl.plugin.removed": "[plugin] removed {value} (install dir cleaned + record deleted)",
+  // —— M4-WP-10：项目级 agent 二次确认（SEC-070 生产接线，ADR-0043）——
+  "repl.agents.confirmDetail": "SEC-070: project-level agent requests escalating field(s) [{value}] — explicit confirmation required and persisted to local layer",
 });
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
@@ -444,6 +446,8 @@ Object.assign(ZH_CN, {
   "repl.plugin.notFound": "[plugin] 未找到插件（本地路径、git URL 或已配置市场均无）：{value}",
   "repl.plugin.marketAdded": "[plugin] 已添加市场 \"{name}\"（{source}）——{value} 个条目",
   "repl.plugin.removed": "[plugin] 已卸载 {value}（安装目录已清理 + 留痕已删）",
+  // —— M4-WP-10：项目级 agent 二次确认（SEC-070 生产接线，ADR-0043）——
+  "repl.agents.confirmDetail": "SEC-070：项目级 agent 请求提权字段 [{value}]——须显式确认并落 local 层留痕",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };

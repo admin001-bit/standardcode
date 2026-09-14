@@ -59,9 +59,20 @@ export interface SubagentDefinition {
   initialPrompt?: string;
   /**
    * WP-09（A 级 §5.3 hooks `PAo` 70251-70259；SEC-070 提权字段之一）：hooks 键在场标记。
-   * M4 前无实体消费（卡边界），但存在即构成提权请求（信任门/二次确认判定输入）。
+   * WP-10（ADR-0043 决策 6）：frontmatter 单行 JSON 可达实体时另落 def.hooks（本位仍为 SEC-070 判定输入）；
+   * 值不可达实体=仅本标记（提权语义不变）。
    */
   hooksRequested?: boolean;
+  /**
+   * WP-10（ADR-0043 决策 6）：定义级 hooks 实体（settings.hooks 事件映射同形，单行 JSON 声明）——
+   * 经 SEC-070 确认/留痕后由接线层注入子代理执行面引擎；未确认=gate 剥离本键。
+   */
+  hooks?: Record<string, unknown>;
+  /**
+   * WP-10（ADR-0043 决策 5；dig-05 §2.4 :156421 字符串名最小形）：requiredMCP 服务器名引用
+   * （磁盘配置解析——ORC-022 校验序列 requiredMCP 30s 段消费）。
+   */
+  mcpServers?: string[];
   /**
    * WP-06（MEM-030；[CC] memory 键 :70398-70406 三值）：agent 记忆启用——只读三件套自动补
    * （DoD⑤）+primed 预热注入（SubagentRunContext.primedAgentMemory）+独立记忆目录（三作用域，cli 侧定位）。
@@ -101,10 +112,11 @@ export interface SpawnValidationContext {
   /** 后台任务禁用否决位（CC §4.1 D=dc() 同构；缺省 false）。 */
   backgroundDisabled?: boolean;
   /**
-   * requiredMCP 等待钩子（M4 前恒缺省=恒跳过）：返回仍处 pending 的必需 server 名。
-   * 提供时最多等 30s（500ms 轮询，CC §4.1 step8 同构），超时缺服务器 → mcp_required_missing。
+   * requiredMCP 等待钩子（WP-10/ADR-0043 决策 5 真接）：入参=定义要求的服务器名，返回仍 pending 者。
+   * 定义有要求而钩子缺席=拒绝（fail-closed）；提供时最多等 30s（500ms 轮询，CC §4.1 step8 同构），
+   * 超时缺服务器 → mcp_required_missing。
    */
-  pendingRequiredMcp?: () => string[];
+  pendingRequiredMcp?: (required: string[]) => string[];
   /** 测试注入（轮询 sleep/时钟）。 */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -232,16 +244,25 @@ export async function validateSpawn(
       description: "general-purpose agent that can use all tools",
     };
 
-  // ⑦ requiredMCP 30s（M4 前恒跳过：钩子缺省=无 pending；提供时 30s/500ms 轮询，CC §4.1 step8 同构）
+  // ⑦ requiredMCP 30s（WP-10 真接，ADR-0043 决策 5——不弱化为恒跳过：required 非空无钩子=fail-closed 拒绝）
   trace.push("requiredMcp");
-  if (ctx.pendingRequiredMcp) {
+  const requiredMcp = definition.mcpServers ?? [];
+  if (requiredMcp.length > 0) {
+    if (!ctx.pendingRequiredMcp) {
+      return {
+        ok: false,
+        trace,
+        code: "mcp_required_missing",
+        message: `Agent '${resolvedName}' requires MCP server(s): ${requiredMcp.join(", ")} — no MCP client is available in this session to wait on them.`,
+      };
+    }
     const sleep = ctx.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const now = ctx.now ?? Date.now;
     const deadline = now() + 30_000;
-    let pending = ctx.pendingRequiredMcp();
+    let pending = ctx.pendingRequiredMcp(requiredMcp);
     while (pending.length > 0 && now() < deadline) {
       await sleep(500);
-      pending = ctx.pendingRequiredMcp();
+      pending = ctx.pendingRequiredMcp(requiredMcp);
     }
     if (pending.length > 0) {
       return { ok: false, trace, code: "mcp_required_missing", message: `Required MCP server(s) not connected: ${pending.join(", ")}.` };
@@ -286,6 +307,8 @@ export interface SubagentRunContext {
   signal?: AbortSignal;
   /** WP-05（ORC-032 TaskStop）：工具派生子进程上报（透传 agent-loop——任务级追踪面）。 */
   onProcess?(child: import("node:child_process").ChildProcess): void;
+  /** WP-10（ADR-0043 决策 6/DoD⑤）：定义级 hooks 执行面（接线层经 SEC-070 确认/留痕后构造注入；透传 runAgentLoop——子代理工具链过 agent 级引擎）。 */
+  hooks?: LoopOptions["hooks"];
   /**
    * WP-06（ORC-022 omit 规则消费面）：父会话可传入记忆/gitStatus 段进子 agent 系统提示词组装；
    * 定义位 omitClaudeMd/omitGitStatus 置真时对应段省略（子代理上下文本就隔离，omit 作用于提示词组装）。
@@ -371,9 +394,11 @@ export async function runSubagent(
   const system = buildSubagentSystem(def, run.parentContext);
 
   // 独立上下文（DoD②）：不携带父会话任何消息；MEM-030 primed 预热注入（agent 记忆摘要面——
-  // cli 装配读目录填 run.primedAgentMemory；不进 buildSubagentSystem=Golden 基线零影响 [自定]）
+  // cli 装配读目录填 run.primedAgentMemory；不进 buildSubagentSystem=Golden 基线零影响 [自定]）；
+  // WP-10（DoD④）initialPrompt 消费=首轮预热注入（primed 之后、任务 prompt 之前的 user 载体——同形制不进系统提示词面）
   const messages = [
     ...(run.primedAgentMemory ? [{ role: "user" as const, content: [{ type: "text" as const, text: `<agent-memory>${run.primedAgentMemory}</agent-memory>` }] }] : []),
+    ...(def.initialPrompt !== undefined && def.initialPrompt !== "" ? [{ role: "user" as const, content: [{ type: "text" as const, text: def.initialPrompt }] }] : []),
     { role: "user" as const, content: [{ type: "text" as const, text: normalized.prompt }] },
   ];
 
@@ -395,6 +420,7 @@ export async function runSubagent(
     stateRef,
     maxToolRounds: def.maxTurns,
     onProcess: run.onProcess,
+    ...(run.hooks ? { hooks: run.hooks } : {}),
     agentKind: "subagent", // WP-02（M4）：MCP 转后台生效条件之"主循环"面（:296642 同构）
   })) {
     switch (ev.type) {

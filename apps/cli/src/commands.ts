@@ -82,6 +82,18 @@ export function parseTasksArgs(raw: string): { activeOnly: boolean; limit: numbe
   return { activeOnly, limit };
 }
 
+/** WP-10（M4）/subtask 类型首词解析 [自定]（DoD②/ADR-0043）：首词命中注册表类型名（大小写不敏感）=类型，
+ * 余文=prompt；不命中=整段为 prompt（现状恒 general-purpose 路）。单 token/空输入不拆（防 prompt 置空）。 */
+export function splitSubtaskType(input: string, names: readonly string[]): { type?: string; prompt: string } {
+  const parts = input.trim().split(/\s+/);
+  if (parts.length > 1 && names.length > 0) {
+    const byLower = new Map(names.map((n) => [n.toLowerCase(), n]));
+    const hit = byLower.get(parts[0]!.toLowerCase());
+    if (hit !== undefined) return { type: hit, prompt: parts.slice(1).join(" ").trim() };
+  }
+  return { prompt: input.trim() };
+}
+
 /** WP-07 /subtask 名派生（CC fork 引擎 Te :347 逐字同构：prompt 前 3 词→小写→清洗→截 24 字符，兜底 "subtask"——CC 兜底字面 "fork" 因本命令语境改名 [自定]）。
  */
 export function deriveSubtaskName(prompt: string): string {

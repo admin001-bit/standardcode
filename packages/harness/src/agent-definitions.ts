@@ -155,12 +155,45 @@ export function parseAgentMarkdown(text: string, file: string): ParsedAgentFile 
   const ip = asString(f.initialPrompt);
   if (ip !== undefined && ip !== "") def.initialPrompt = ip;
 
-  // hooks（:70451-70463 表内 `PAo` 70251-70259）：M4 前无实体消费（卡边界），但键在场=SEC-070 提权请求判定输入。
-  if (f.hooks !== undefined) def.hooksRequested = true;
+  // hooks（:70451-70463 表内 `PAo` 70251-70259；SEC-070 提权字段之一）：键在场恒置 hooksRequested（SEC-070 判定输入）；
+  // WP-10（ADR-0043 决策 6）：值=单行 JSON 且解析成事件映射对象 → def.hooks 实体（settings.hooks 同形，接线层经确认后注入子代理执行面）；
+  // 不可达实体（嵌套 YAML 映射/非法 JSON/非对象）=仅在场标记。
+  if (f.hooks !== undefined) {
+    def.hooksRequested = true;
+    const hooksRaw = asString(f.hooks);
+    if (hooksRaw !== undefined && hooksRaw !== "") {
+      let hooksVal: unknown;
+      try {
+        hooksVal = JSON.parse(hooksRaw);
+      } catch {
+        hooksVal = undefined;
+      }
+      if (hooksVal !== null && typeof hooksVal === "object" && !Array.isArray(hooksVal)) {
+        def.hooks = hooksVal as Record<string, unknown>;
+      } else {
+        warnings.push(`${file}: hooks not a single-line JSON event-map object — presence flag only (SEC-070 gate input retained)`);
+      }
+    }
+  }
 
-  // skills / mcpServers（70442 / 70451-70463）：卡边界=解析告警不实现（M4）。
+
+  // skills（70442）：卡边界=解析告警不实现（M4 无消费条目，B-03）。
   if (f.skills !== undefined) warnings.push(`${file}: skills ignored (M4 — not implemented)`);
-  if (f.mcpServers !== undefined) warnings.push(`${file}: mcpServers ignored (M4 — not implemented)`);
+
+  // mcpServers（70451-70463）：WP-10（ADR-0043 决策 5）=名称引用最小形（dig-05 §2.4 :156421 boundDial
+  // 字符串 shape——服务器名引用磁盘配置）；行内/块列表字符串解析，非字符串条目丢弃+告警。
+  if (f.mcpServers !== undefined) {
+    const list = Array.isArray(f.mcpServers) ? f.mcpServers : undefined;
+    if (list) {
+      const names = list.filter((x): x is string => typeof x === "string" && x.trim() !== "");
+      if (names.length < list.length) warnings.push(`${file}: mcpServers dropped ${list.length - names.length} non-string entry(ies) (only server-name strings resolve from disk config)`);
+      if (names.length > 0) def.mcpServers = names;
+    } else {
+      const inline = typeof f.mcpServers === "string" && f.mcpServers !== "" ? asList(f.mcpServers) : undefined;
+      if (inline && inline.length > 0) def.mcpServers = inline;
+      else warnings.push(`${file}: mcpServers must be a non-empty list of server-name strings — ignored`);
+    }
+  }
 
   // 其余 §5.3 键（本里程碑无消费面）：枚举合法=丢键告警；非法值=值面告警。
   for (const key of NOT_CONSUMED_KEYS) {
@@ -275,6 +308,7 @@ export async function gateProjectAgentDefinitions(defs: ParsedAgentFile[], ctx: 
         }
         if (need.includes("hooks")) {
           delete def.hooksRequested;
+          delete def.hooks; // WP-10（ADR-0043 决策 6）：实体键同剥——未确认=hooks 不生效（提权字段剥离语义一致）
           gone.push("hooks (unconfirmed)");
         }
         stripped.push({ file: parsed.file, name: def.name, fields: gone });

@@ -91,6 +91,13 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
     spillFile = path.join(opts.spill.dir, `standardcode-tool-output-${process.pid}-${Date.now()}.txt`);
     try {
       spillStream = createWriteStream(spillFile, { encoding: "utf8" });
+      // WP-10（M3-WP-12 观察②清偿，G 门移交）：异步 'error' 监听——磁盘满/EIO/ENOENT 等写入期错误
+      // 不再成为未捕获异常；失败=spill 关闭（后续写入短路+引用抹除，stdout/stderr 截断面既有形制不受损）。
+      spillStream.on("error", () => {
+        spillFailed = true;
+        spillStream = null;
+        spillFile = undefined;
+      });
     } catch {
       spillFailed = true;
       spillStream = null;
@@ -137,8 +144,12 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
   const drainSpill = (): Promise<void> =>
     spillStream
       ? new Promise((res) => {
-          spillStream!.end(() => res());
+          const st = spillStream!;
           spillStream = null;
+          st.end(() => res());
+          // WP-10（G 门移交观察②连面）：end flush 期错误=finish 回调不触发，once('error') 保证 drain 返回
+          //（常态由 ensureSpill 常驻监听落 spillFailed+抹引用，此处只管解挂）。
+          st.once("error", () => res());
         })
       : Promise.resolve();
 

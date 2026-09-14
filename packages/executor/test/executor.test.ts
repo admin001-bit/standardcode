@@ -203,3 +203,23 @@ describe("runProcess abort (WP-13 V 观察⑤：树杀原语测试缺口)", () =
     expect(result.code === 0).toBe(false); // 非正常退出
   }, 15000);
 });
+
+// —— M4-WP-10（G 门移交观察②清偿，M3-1 §WP-12 复验/§G 门审）：ensureSpill 异步 'error' 监听 ——
+describe("WP-10 DoD⑧ spill 流异步错误=失败关闭不炸（M3 观察②）", () => {
+  it("spill dir 不存在→createWriteStream 异步 ENOENT 被监听吞落：resolve 正常+truncated 保留+引用抹除（spill 关闭面）", async () => {
+    const { runProcess } = await import("../src/index.ts");
+    const badDir = join(tmpdir(), `sc-wp10-missing-${process.pid}-${Date.now()}`, "nope"); // 全程不 mkdir=异步 ENOENT
+    const r = await runProcess({
+      command: process.execPath,
+      args: ["-e", "for(let i=0;i<2000;i++)process.stdout.write('x'.repeat(500))"],
+      cwd: process.cwd(),
+      maxOutputChars: 1000,
+      spill: { dir: badDir },
+      timeoutMs: 30000,
+    });
+    expect(r.truncated).toBe(true); // stdout 截断面既有形制不受损
+    expect(r.stdout).toContain("[output truncated]");
+    expect(r.spillFile).toBeUndefined(); // 失败=落盘面抹引用（bash 引用行自然缺席）
+    expect(r.code).toBe(0); // 不炸：任务正常完成
+  }, 40000);
+});

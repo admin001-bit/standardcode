@@ -64,8 +64,11 @@ export interface LoadedHooksConfig {
 
 /** settings 来源高→低序（managed 最高优先；与 SETTINGS_SOURCE_ORDER 反序，此处自持避免反向依赖）。
  * plugin 位 [自定 2026-09-14 WP-09]：五 settings 源之下最低（组先执行序=最后）——插件 hooks 是安装确认过的
- * 第三方配置，不得压过用户本机设置；doc 由 cli 装配层聚合注入（platform/plugin/installer.ts buildPluginDocs）。 */
-const SOURCE_HIGH_TO_LOW: readonly McpSourceName[] = ["managed", "flag", "projectLocal", "projectShared", "user", "plugin"];
+ * 第三方配置，不得压过用户本机设置；doc 由 cli 装配层聚合注入（platform/plugin/installer.ts buildPluginDocs）。
+ * agent 位 [自定 2026-09-14 WP-10/ADR-0043 决策 6]：定义级 hooks 最低——agent 声明只追加于全会话源之后，
+ * 经 SEC-070 确认/留痕由接线层注入（session.agents.hooksFor），source 标签"agent"供 decisionReason.hookSource 消费。 */
+export type HookSourceName = McpSourceName | "agent";
+const SOURCE_HIGH_TO_LOW: readonly HookSourceName[] = ["managed", "flag", "projectLocal", "projectShared", "user", "plugin", "agent"];
 
 function parseHookConfig(raw: unknown, source: string, warnings: string[]): HookConfig | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -92,7 +95,7 @@ function parseHookConfig(raw: unknown, source: string, warnings: string[]): Hook
  * 五来源合并（DoD①）：每事件 matcher 组按高→低来源拼接（managed 组先执行=最高优先）；
  * disableAllHooks=最高来源定义 true 即总闸（dig-04 §3.1/§7.5 形状）。坏件告警继续（WP-01 loader 同口径）。
  */
-export function loadHookConfigs(docs: Partial<Record<McpSourceName, Record<string, unknown> | null>>): LoadedHooksConfig {
+export function loadHookConfigs(docs: Partial<Record<HookSourceName, Record<string, unknown> | null>>): LoadedHooksConfig {
   const warnings: string[] = [];
   const events: Partial<Record<HookEventName, HookMatcherGroup[]>> = {};
   const allowedHttpHookUrls = new Set<string>();

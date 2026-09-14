@@ -102,15 +102,29 @@ describe("DoD④/⑤ 解析失败告警继续 + schemaVersion 迁移提示", () 
     expect(future.warnings.some((w) => w.includes("unknown schemaVersion"))).toBe(true);
   });
 
-  it("未知键告警忽略；skills/mcpServers=M4 不实现告警（卡边界）；hooks 在场=hooksRequested", () => {
+  it("未知键告警忽略；skills=不实现告警（卡边界）；mcpServers=名称引用【勘误 2026-09-14 WP-10 ADR-0043 决策 5：原『M4 不实现』改真接】；hooks 在场=hooksRequested", () => {
     const { def, warnings } = parseAgentMarkdown(
-      "---\nschemaVersion: 1\nname: x\ndescription: d\nskills: a\nmcpServers: b\nweirdKey: c\nhooks:\n  - PreToolUse\n---\n",
+      "---\nschemaVersion: 1\nname: x\ndescription: d\nskills: a\nmcpServers:\n  - alpha\n  - 42\nweirdKey: c\nhooks:\n  - PreToolUse\n---\n",
       "l.md",
     );
-    expect(def!.hooksRequested).toBe(true);
+    expect(def!.hooksRequested).toBe(true); // 块形 hooks（单行 JSON 不可达）=仅在场标记
+    expect(def!.hooks).toBeUndefined();
+    expect(warnings.some((w) => w.includes("hooks not a single-line JSON"))).toBe(true);
     expect(warnings.some((w) => w.includes("skills ignored (M4"))).toBe(true);
-    expect(warnings.some((w) => w.includes("mcpServers ignored (M4"))).toBe(true);
+    expect(def!.mcpServers).toEqual(["alpha", "42"]); // 字符串名引用=真消费（块列表经最小 YAML 子集全为字符串；非字符串条目防御丢弃分支见 parse 面）
+    expect(warnings.some((w) => w.includes("mcpServers"))).toBe(false);
     expect(warnings.some((w) => w.includes("unknown frontmatter key 'weirdKey'"))).toBe(true);
+  });
+
+  it("WP-10 hooks 单行 JSON 实体解析（ADR-0043 决策 6）+mcpServers 行内列表形", () => {
+    const { def, warnings } = parseAgentMarkdown(
+      '---\nschemaVersion: 1\nname: hkv\ndescription: d\nhooks: {"PreToolUse":[{"hooks":[{"type":"command","command":"node deny.js"}]}]}\nmcpServers: [srv-a, srv-b]\n---\n',
+      "hkv.md",
+    );
+    expect(def!.hooksRequested).toBe(true);
+    expect(Object.keys(def!.hooks ?? {})).toEqual(["PreToolUse"]);
+    expect(def!.mcpServers).toEqual(["srv-a", "srv-b"]);
+    expect(warnings).toEqual([]);
   });
 });
 
@@ -191,7 +205,17 @@ describe("DoD③ 提权字段二次确认+local 留痕", () => {
     });
     expect(fields).toEqual(["hooks"]); // plan 非提权（更严）——确认请求只含 hooks
     expect(r.loadable[0].permissionMode).toBe("plan");
-    expect(r.loadable[0].hooksRequested).toBe(true); // 确认后保留（M4 前无实体消费=另一告警面，不在本门职责）
+    expect(r.loadable[0].hooksRequested).toBe(true); // 确认后保留（块形无实体=仅标记面）
+  });
+
+  it("WP-10 实体联动（ADR-0043 决策 6）：单行 JSON hooks 确认=实体保留；拒绝=hooksRequested+def.hooks 同剥", async () => {
+    const mk = () => parseAgentMarkdown('---\nschemaVersion: 1\nname: ent\ndescription: d\nhooks: {"PreToolUse":[{"hooks":[{"type":"command","command":"c"}]}]}\n---\n', "ent.md");
+    const approved = await gateProjectAgentDefinitions([mk()], { trusted: true, confirm: async () => true });
+    expect(approved.loadable[0].hooks).toMatchObject({ PreToolUse: [{}] });
+    const declined = await gateProjectAgentDefinitions([mk()], { trusted: true, confirm: async () => false });
+    expect(declined.loadable[0].hooks).toBeUndefined();
+    expect(declined.loadable[0].hooksRequested).toBeUndefined();
+    expect(declined.stripped[0].fields.join(" ")).toContain("hooks");
   });
 });
 

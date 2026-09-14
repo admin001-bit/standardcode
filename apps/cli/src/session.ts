@@ -8,7 +8,8 @@ import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, ty
 import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
-import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadSettings, managedSettingsPath, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
@@ -80,6 +81,30 @@ export interface SessionPlugins {
   warnings(): string[];
 }
 
+/** M4-WP-10（ADR-0043）：项目级 agent 生产接线门面——同步启动（built-in+plugin）+首轮异步补装（project 层）。 */
+export interface AgentsLoadState {
+  /** loadProjectAgents 已执行（true=装配尝试过，含失败降级）。 */
+  loaded: boolean;
+  /** 整层未装载（未信任 SEC-070 门/禁用位/装配异常降级）。 */
+  layerWithheld: boolean;
+  /** settings agents.projectDisabled=true（DoD⑥ [自定] 键位）。 */
+  disabled: boolean;
+  /** 提权字段未确认剥离留痕（gate 输出）。 */
+  stripped: { file: string; name: string; fields: string[] }[];
+  warnings: string[];
+}
+
+export interface SessionAgents {
+  /** 当前注册表（built-in+plugin；补装后含 project——整体替换重建，ADR-0043 决策 3）。 */
+  registry(): AgentRegistry;
+  names(): string[];
+  /** 首轮异步补装（isTrusted→load→gate(confirm UI)→注入；未信任/禁用/异常=整层不加载降级，不抛）。 */
+  loadProjectAgents(deps?: { confirm?: (name: string, fields: string[]) => Promise<boolean> }): Promise<AgentsLoadState>;
+  state(): AgentsLoadState;
+  /** spawn 接线统一 ctx（DoD②③：names() 真消费+requiredMCP 连接态投影+Agent(X) deny 提取）+定义级 hooks 执行面（DoD⑤）。 */
+  prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks?: ToolHooks };
+}
+
 export interface Session {
   /** 当前会话 ID（WP-10：转录文件名+锁键+/resume 目标；repl 初始化时赋 UUID）。 */
   id: string;
@@ -141,6 +166,8 @@ export interface Session {
   skills: SessionSkills;
   /** M4-WP-09：plugin 门面（四注入面装配聚合+安装记录）。 */
   plugins: SessionPlugins;
+  /** M4-WP-10：项目级 agent 生产接线门面（ADR-0043 时序=同步启动+首轮异步补装）。 */
+  agents: SessionAgents;
   /** M4-WP-07：i18n 面（lang=会话级快照：env STANDARD_CODE_LANG > settings.language > en；ADR-0042）。 */
   i18n: I18n;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
@@ -283,6 +310,67 @@ export function createSession(init: SessionInit = {}): Session {
     }
   }
 
+  // —— M4-WP-10：项目级 agent 生产接线（ADR-0043 决策 1：同步启动+首轮异步补装；注册表生产装配
+  // 含 built-in+plugin 层=板头接缝④激活+WP-09 O3 义务；project 层=gate 确认后整体替换重建）——
+  const agentsProjectRoot = init.projectRoot ?? sessionCwd;
+  let agentsRegistry = createAgentRegistry({ sources: { plugin: pluginAgentDefs } });
+  const agentsState: AgentsLoadState = { loaded: false, layerWithheld: false, disabled: false, stripped: [], warnings: [] };
+  function extractDeniedAgentTypes(): string[] {
+    // 校验段③权限规则的 deniedAgentTypes 供给（ctx 注释契约=从 Agent(X) deny 规则原文提取；settings+init 通道合并）
+    const deny = [...(settingsValue<string[]>(session.trust.settings, "permissions.deny") ?? []), ...(init.rules?.deny ?? [])];
+    const out: string[] = [];
+    for (const raw of deny) {
+      const m = /^Agent\(([^)]+)\)$/.exec(raw.trim());
+      if (m?.[1] !== undefined && m[1].trim() !== "") out.push(m[1].trim());
+    }
+    return out;
+  }
+  async function loadProjectAgents(deps?: { confirm?: (name: string, fields: string[]) => Promise<boolean> }): Promise<AgentsLoadState> {
+    agentsState.loaded = true;
+    try {
+      const disabled = settingsValue<boolean>(session.trust.settings, "agents.projectDisabled") === true; // DoD⑥（[自定] 键位=ADR-0043 决策 7）
+      agentsState.disabled = disabled;
+      if (disabled) {
+        agentsState.layerWithheld = true;
+        agentsState.stripped = [];
+        agentsState.warnings = ["project agent definitions disabled by settings agents.projectDisabled=true"];
+        agentsRegistry = createAgentRegistry({ sources: { plugin: pluginAgentDefs } });
+        return { ...agentsState, stripped: [], warnings: [...agentsState.warnings] };
+      }
+      const files = loadProjectAgentDefinitions(agentsProjectRoot); // 每次装载新对象=ADR-0043 决策 4（DoD⑦：跨轮不携带 gate mutation）
+      const gated = await gateProjectAgentDefinitions(files.parsed, {
+        trusted: session.trust.trusted,
+        records: readAgentTrust(agentsProjectRoot),
+        ...(deps?.confirm !== undefined ? { confirm: deps.confirm } : {}),
+        onConfirmed: (name, rec) => {
+          recordAgentTrust(agentsProjectRoot, name, rec); // SEC-070 留痕=local 层 agentTrust（ADR-0037 形制，M3 WP-09 读写面）
+        },
+      });
+      agentsState.layerWithheld = gated.layerWithheld;
+      agentsState.stripped = gated.stripped;
+      agentsState.warnings = [...files.warnings, ...gated.warnings];
+      agentsRegistry = createAgentRegistry({ sources: { plugin: pluginAgentDefs, project: gated.loadable } }); // 整体替换重建（决策 3）
+    } catch (err) {
+      // 补装异常=零项目层+告警（降级不阻塞会话——MCP 降级面同族；ADR-0043 决策 1）
+      agentsState.layerWithheld = true;
+      agentsState.warnings = [...agentsState.warnings, `project agent load failed (degraded): ${err instanceof Error ? err.message : String(err)}`];
+      agentsRegistry = createAgentRegistry({ sources: { plugin: pluginAgentDefs } });
+    }
+    return { ...agentsState, stripped: [...agentsState.stripped], warnings: [...agentsState.warnings] };
+  }
+  function prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks?: ToolHooks } {
+    const hit = agentsRegistry.get(subagentType ?? "general-purpose");
+    const ctx: Omit<SpawnValidationContext, "concurrentSubagents"> = {
+      depth: 0,
+      availableTypes: agentsRegistry.names(), // DoD②：类型解析真消费 names()（repl 硬编码 ["general-purpose"] 退役）
+      definitionsOf: (n) => agentsRegistry.get(n),
+      deniedAgentTypes: extractDeniedAgentTypes(),
+      // DoD③ requiredMCP 真接：要求服务器未 connected（含 failed/缺席）=pending→校验面 30s 等待（连接态每次调用实读）
+      pendingRequiredMcp: (required) => required.filter((n) => !session.mcpConnections.some((c) => c.name.toLowerCase() === n.toLowerCase() && c.status === "connected")),
+    };
+    return { ctx, definition: hit, ...(hit?.hooks !== undefined ? { hooks: agentHooksFor(hit) } : {}) };
+  }
+
   // 记忆用户轨（WP-02）：precedence/autoRead 自 settings（ADR-0030 memory.* 键）；MEM-043 项目工作区检测
   const memory = loadMemory({
     cwd: sessionCwd,
@@ -396,6 +484,13 @@ export function createSession(init: SessionInit = {}): Session {
       installed: () => loadInstalledPlugins(pluginBaseDir),
       agents: () => pluginAgentDefs,
       warnings: () => [...pluginDocs.warnings, ...pluginSkillWarnings, ...pluginAgentWarnings],
+    },
+    agents: {
+      registry: () => agentsRegistry,
+      names: () => agentsRegistry.names(),
+      loadProjectAgents,
+      state: () => ({ ...agentsState, stripped: [...agentsState.stripped], warnings: [...agentsState.warnings] }),
+      prepareSpawn,
     },
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
@@ -524,31 +619,46 @@ export function createSession(init: SessionInit = {}): Session {
     cwd: sessionCwd,
     ...(session.id ? { sessionId: session.id } : {}),
   });
+  /** ToolHooks 装配（WP-10 提取共用：父会话引擎与 agent 级引擎同形制——原内联闭包零行为变化）。 */
+  function makeToolHooks(engine: HookEngine): ToolHooks {
+    return {
+      preToolUse: async (name, input) => {
+        const o = await engine.fire("PreToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
+        if (o.verdict === "deny") return { decision: "deny", reason: o.blockingError ?? o.decisionReason?.reason ?? "PreToolUse hook denied" };
+        if (o.verdict === "ask") return { decision: "ask", reason: o.decisionReason?.reason };
+        return null;
+      },
+      postToolUse: async (name, input, content) => {
+        await engine.fire("PostToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, tool_response: content } });
+      },
+      postToolUseFailure: async (name, input, error) => {
+        await engine.fire("PostToolUseFailure", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, error } });
+      },
+      permissionRequest: async (name, input) => {
+        await engine.fire("PermissionRequest", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
+        // Notification 触发面：权限确认请求（[CC] Notification 语义对位；MCP 后台通知 drain 循环另有触发位）
+        await engine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
+      },
+    };
+  }
+  /** WP-10 DoD⑤（ADR-0043 决策 6）：定义级 hooks 执行面——SEC-070 确认/留痕保留的 def.hooks 实体
+   * 经 agent 源位引擎（loadHookConfigs "agent" 最低位+引擎信任门运行时判定）注入子代理工具链。 */
+  function agentHooksFor(def: SubagentDefinition): ToolHooks | undefined {
+    if (def.hooks === undefined) return undefined;
+    const engine = createHookEngine(loadHookConfigs({ agent: { hooks: def.hooks } }), {
+      trusted: () => session.trust.trusted,
+      cwd: sessionCwd,
+      ...(session.id ? { sessionId: session.id } : {}),
+    });
+    return makeToolHooks(engine);
+  }
   session.hooks = {
     gate: async (event, query, payload, stopHookActive) =>
       hookEngine.fire(event, { ...(query !== undefined ? { query } : {}), payload, ...(stopHookActive ? { stopHookActive: true } : {}) }),
     fire: (event, query, payload) => {
       void hookEngine.fire(event, { ...(query !== undefined ? { query } : {}), payload }).catch(() => {});
     },
-    toolAdapter: () => ({
-      preToolUse: async (name, input) => {
-        const o = await hookEngine.fire("PreToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
-        if (o.verdict === "deny") return { decision: "deny", reason: o.blockingError ?? o.decisionReason?.reason ?? "PreToolUse hook denied" };
-        if (o.verdict === "ask") return { decision: "ask", reason: o.decisionReason?.reason };
-        return null;
-      },
-      postToolUse: async (name, input, content) => {
-        await hookEngine.fire("PostToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, tool_response: content } });
-      },
-      postToolUseFailure: async (name, input, error) => {
-        await hookEngine.fire("PostToolUseFailure", { query: { toolName: name }, payload: { tool_name: name, tool_input: input, error } });
-      },
-      permissionRequest: async (name, input) => {
-        await hookEngine.fire("PermissionRequest", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
-        // Notification 触发面：权限确认请求（[CC] Notification 语义对位；MCP 后台通知 drain 循环另有触发位）
-        await hookEngine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
-      },
-    }),
+    toolAdapter: () => makeToolHooks(hookEngine),
   };
   // —— M4-WP-06：自动记忆轨（§9.1 ②；memory.autoTrack [自定] 缺省开=MEM-042 同向；索引/互链+纪律段）——
   const autoTrackEnabled = settingsValue<boolean>(session.trust.settings, "memory.autoTrack") ?? true;

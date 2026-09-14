@@ -12,7 +12,7 @@ import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitl
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
+import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, splitSubtaskType, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
@@ -326,14 +326,18 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       return { text: s.i18n.t("repl.reload.done", { files: s.memory.files.length, sources: s.settings.effectiveSources.join(", ") }) };
     },
     // —— WP-07：M3 分期余量三件（§8.2；/subtask 走 spawn——M6 前仅同步语义）——
-    subtask: async (prompt) => {
+    // M4-WP-10（DoD②）：类型首词解析（首词∈注册表名=类型，余=任务 prompt；无匹配=现状 general-purpose）；
+    // availableTypes/definitionsOf/requiredMCP/agent hooks 全经 session.agents.prepareSpawn 生产接线。
+    subtask: async (input) => {
       const s = deps.session;
       // CC /subtask 守卫同构（chunk-g7bantgw.js :328，A 级报告 §3.3）
       if (s.messages.length === 0) throw new Error(s.i18n.t("repl.subtask.guard"));
+      const { type, prompt } = splitSubtaskType(input, s.agents.names());
+      const spawn = s.agents.prepareSpawn(type);
       const launch = await spawnSubagentTask(
-        { prompt, description: deriveSubtaskName(prompt), runInBackground: false },
-        { depth: 0, availableTypes: ["general-purpose"] }, // M3 恒 general-purpose（内置集发现链=WP-06）
-        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker },
+        { prompt, ...(type !== undefined ? { subagentType: type } : {}), description: deriveSubtaskName(prompt), runInBackground: false },
+        spawn.ctx,
+        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
         {
           registry: s.taskRegistry,
           env: {}, // env 空=autoBackgroundMs 0 → 同步恒同步
@@ -585,6 +589,19 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   if (assets) sessionAssets.set(s0, assets);
   // M4-WP04：SessionStart（source=startup [自定] 单值；/resume /clear 变体不区分）
   await s0.hooks.gate("SessionStart", { source: "startup" }, { source: "startup" });
+  // M4-WP-10（ADR-0043 决策 1）：项目级 agent 首轮补装——isTrusted→load→gate(二次确认 UI)→registry project 层；
+  // 未信任=整层不加载（SEC-070）；无确认通道=gate fail-closed 剥离提权字段（M3-WP-09 既有契约）；异常=降级不阻塞。
+  const confirmPrompt = deps.confirm;
+  await s0.agents.loadProjectAgents(
+    confirmPrompt
+      ? {
+          confirm: async (name, fields) => {
+            const choice = await confirmPrompt.confirm(`agent:${name}`, s0.i18n.t("repl.agents.confirmDetail", { value: fields.join(", ") }));
+            return choice !== "deny"; // once/always 皆批准（留痕经 gate onConfirmed→recordAgentTrust 落 local 层）
+          },
+        }
+      : {},
+  );
   const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
   for await (const raw of deps.io.lines) {
     const line = raw.trim();
