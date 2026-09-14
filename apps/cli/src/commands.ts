@@ -2,7 +2,7 @@
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import type { TokenUsage } from "@standardcode/providers";
-import { sessionDiff, redactSecrets, tEn } from "@standardcode/platform";
+import { sessionDiff, redactSecrets, t } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid } from "@standardcode/context";
 
 // —— WP-10 /usage 价格表（ENG-046 "内置价格表"；卡边界=按 §10 落固定内置表 [自定] 登记偏差）。
@@ -70,12 +70,12 @@ export function parseTasksArgs(raw: string): { activeOnly: boolean; limit: numbe
     if (p === "all") activeOnly = false;
     else nums.push(p);
   }
-  if (nums.length > 1) throw new Error(`/tasks: expected [all] [limit 1-100], got multiple numbers: ${nums.join(" ")}`);
+  if (nums.length > 1) throw new Error(t("cmd.tasks.err.multiple", { value: nums.join(" ") }));
   let limit = 20;
   if (nums.length === 1) {
     const n = Number(nums[0]);
     if (!Number.isInteger(n) || n < 1 || n > 100) {
-      throw new Error(`/tasks limit must be integer in [1,100] (ORC-032), got: ${nums[0]}`);
+      throw new Error(t("cmd.tasks.err.limit", { value: nums[0] }));
     }
     limit = n;
   }
@@ -193,7 +193,9 @@ export interface SlashCommand {
 export const CLI_COMMANDS: readonly SlashCommand[] = [
   {
     name: "help",
-    description: tEn("cmd.help.desc"),
+    get description() {
+      return t("cmd.help.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.t("repl.help.header"));
       for (const c of CLI_COMMANDS) ctx.write(`  /${c.name}${c.usage ? ` ${c.usage}` : ""} — ${c.description}`);
@@ -201,7 +203,9 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "clear",
-    description: tEn("cmd.clear.desc"),
+    get description() {
+      return t("cmd.clear.desc");
+    },
     execute(_args, ctx) {
       ctx.clearHistory();
       ctx.write(ctx.t("repl.done.cleared"));
@@ -209,19 +213,25 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "exit",
-    description: tEn("cmd.exit.desc"),
+    get description() {
+      return t("cmd.exit.desc");
+    },
     execute(_args, ctx) {
       ctx.requestExit();
     },
   },
   {
     name: "model",
-    usage: tEn("cmd.model.usage"),
-    description: tEn("cmd.model.desc"),
+    get usage() {
+      return t("cmd.model.usage");
+    },
+    get description() {
+      return t("cmd.model.desc");
+    },
     execute(args, ctx) {
       const target = args.trim();
       if (target === "") {
-        ctx.write(`models (current: ${ctx.currentModel()}):`);
+        ctx.write(ctx.t("repl.model.header", { value: ctx.currentModel() }));
         for (const m of ctx.catalog()) ctx.write(`  ${m === ctx.currentModel() ? "*" : " "} ${m}`);
         return;
       }
@@ -231,8 +241,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "permission",
-    usage: tEn("cmd.permission.usage"),
-    description: tEn("cmd.permission.desc"),
+    get usage() {
+      return t("cmd.permission.usage");
+    },
+    get description() {
+      return t("cmd.permission.desc");
+    },
     execute(args, ctx) {
       const target = args.trim();
       if (target === "") {
@@ -250,8 +264,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "rewind",
-    usage: tEn("cmd.rewind.usage"),
-    description: tEn("cmd.rewind.desc"),
+    get usage() {
+      return t("cmd.rewind.usage");
+    },
+    get description() {
+      return t("cmd.rewind.desc");
+    },
     async execute(args, ctx) {
       const raw = args.trim();
       if (raw === "") {
@@ -268,14 +286,18 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "context",
-    description: tEn("cmd.context.desc"),
+    get description() {
+      return t("cmd.context.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.contextGrid().text);
     },
   },
   {
     name: "diff",
-    description: tEn("cmd.diff.desc"),
+    get description() {
+      return t("cmd.diff.desc");
+    },
     async execute(args, ctx) {
       // ADR-0032 决策 1【勘误 2026-09-08】：用户裁决改自实现——/diff 语义=会话文件变更面（file-history 快照基线 vs 当前）
       const r = await ctx.sessionDiff();
@@ -291,23 +313,33 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "new",
-    description: tEn("cmd.new.desc"),
+    get description() {
+      return t("cmd.new.desc");
+    },
     async execute(_args, ctx) {
       await ctx.newSession();
     },
   },
   {
     name: "resume",
-    usage: tEn("cmd.resume.usage"),
-    description: tEn("cmd.resume.desc"),
+    get usage() {
+      return t("cmd.resume.usage");
+    },
+    get description() {
+      return t("cmd.resume.desc");
+    },
     async execute(_args, ctx) {
       await ctx.resumeSession();
     },
   },
   {
     name: "rename",
-    usage: tEn("cmd.rename.usage"),
-    description: tEn("cmd.rename.desc"),
+    get usage() {
+      return t("cmd.rename.usage");
+    },
+    get description() {
+      return t("cmd.rename.desc");
+    },
     async execute(args, ctx) {
       await ctx.renameSession(args);
       ctx.write(ctx.t("repl.rename.done"));
@@ -316,8 +348,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-11：M2 分期余量（§8.2；/context 已于 WP-05 注册）——
   {
     name: "compact",
-    usage: tEn("cmd.compact.usage"),
-    description: tEn("cmd.compact.desc"),
+    get usage() {
+      return t("cmd.compact.usage");
+    },
+    get description() {
+      return t("cmd.compact.desc");
+    },
     async execute(args, ctx) {
       const a = args.trim();
       let window: number | undefined;
@@ -335,13 +371,17 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         }
       }
       const r = await ctx.compact(window, partialIdx);
-      ctx.write(`[compact] ${r.preTokens} -> ${r.postTokens} tokens（摘要 ${r.summary.length} chars，已替换历史）`);
+      ctx.write(ctx.t("repl.compact.done", { pre: r.preTokens, post: r.postTokens, chars: r.summary.length }));
     },
   },
   {
     name: "config",
-    usage: tEn("cmd.config.usage"),
-    description: tEn("cmd.config.desc"),
+    get usage() {
+      return t("cmd.config.usage");
+    },
+    get description() {
+      return t("cmd.config.desc");
+    },
     async execute(args, ctx) {
       const r = await ctx.config(args);
       ctx.write(r.text);
@@ -349,15 +389,21 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "provider",
-    usage: tEn("cmd.provider.usage"),
-    description: tEn("cmd.provider.desc"),
+    get usage() {
+      return t("cmd.provider.usage");
+    },
+    get description() {
+      return t("cmd.provider.desc");
+    },
     execute(args, ctx) {
       ctx.write(ctx.switchProvider(args.trim() || undefined).text);
     },
   },
   {
     name: "doctor",
-    description: tEn("cmd.doctor.desc"),
+    get description() {
+      return t("cmd.doctor.desc");
+    },
     async execute(_args, ctx) {
       const r = await ctx.doctor();
       ctx.write(r.text);
@@ -365,8 +411,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "cd",
-    usage: tEn("cmd.cd.usage"),
-    description: tEn("cmd.cd.desc"),
+    get usage() {
+      return t("cmd.cd.usage");
+    },
+    get description() {
+      return t("cmd.cd.desc");
+    },
     async execute(args, ctx) {
       if (args.trim() === "") throw new Error(ctx.t("cmd.cd.err.required"));
       ctx.write(ctx.changeDir(args.trim()).text);
@@ -374,8 +424,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "add-dir",
-    usage: tEn("cmd.add-dir.usage"),
-    description: tEn("cmd.add-dir.desc"),
+    get usage() {
+      return t("cmd.add-dir.usage");
+    },
+    get description() {
+      return t("cmd.add-dir.desc");
+    },
     async execute(args, ctx) {
       if (args.trim() === "") throw new Error(ctx.t("cmd.add-dir.err.required"));
       const r = await ctx.addDir(args.trim());
@@ -384,7 +438,9 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "reload",
-    description: tEn("cmd.reload.desc"),
+    get description() {
+      return t("cmd.reload.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.reload().text);
     },
@@ -392,15 +448,21 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-05：M3 任务面板（§8.2 M3 增 /tasks /background；ORC-032 Kimi 语义逐键）——
   {
     name: "tasks",
-    usage: tEn("cmd.tasks.usage"),
-    description: tEn("cmd.tasks.desc"),
+    get usage() {
+      return t("cmd.tasks.usage");
+    },
+    get description() {
+      return t("cmd.tasks.desc");
+    },
     execute(args, ctx) {
       ctx.write(ctx.tasks(args).text);
     },
   },
   {
     name: "background",
-    description: tEn("cmd.background.desc"),
+    get description() {
+      return t("cmd.background.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.background().text);
     },
@@ -408,8 +470,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-07：M3 分期余量三件（§8.2 M3 增 /subtask /effort /init）——
   {
     name: "subtask",
-    usage: tEn("cmd.subtask.usage"),
-    description: tEn("cmd.subtask.desc"),
+    get usage() {
+      return t("cmd.subtask.usage");
+    },
+    get description() {
+      return t("cmd.subtask.desc");
+    },
     async execute(args, ctx) {
       const prompt = args.trim();
       if (prompt === "") throw new Error(ctx.t("cmd.subtask.err.required"));
@@ -419,8 +485,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "effort",
-    usage: tEn("cmd.effort.usage"),
-    description: tEn("cmd.effort.desc"),
+    get usage() {
+      return t("cmd.effort.usage");
+    },
+    get description() {
+      return t("cmd.effort.desc");
+    },
     async execute(args, ctx) {
       const r = await ctx.effort(args.trim());
       ctx.write(r.text);
@@ -428,7 +498,9 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "init",
-    description: tEn("cmd.init.desc"),
+    get description() {
+      return t("cmd.init.desc");
+    },
     async execute(_args, ctx) {
       const r = await ctx.init();
       ctx.write(r.text);
@@ -437,14 +509,18 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-10：M3 分期余量两件（§8.2；CTX-102/ENG-046/ADR-0027 权威口径）——
   {
     name: "status",
-    description: tEn("cmd.status.desc"),
+    get description() {
+      return t("cmd.status.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.status().text);
     },
   },
   {
     name: "usage",
-    description: tEn("cmd.usage.desc"),
+    get description() {
+      return t("cmd.usage.desc");
+    },
     execute(_args, ctx) {
       ctx.write(ctx.usage().text);
     },
@@ -452,8 +528,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-03：M4 分期首件（§8.2 M4 增 /mcp；S-3 安装即确认+/mcp 可视化管控）——
   {
     name: "mcp",
-    usage: tEn("cmd.mcp.usage"),
-    description: tEn("cmd.mcp.desc"),
+    get usage() {
+      return t("cmd.mcp.usage");
+    },
+    get description() {
+      return t("cmd.mcp.desc");
+    },
     async execute(args, ctx) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
@@ -476,8 +556,12 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-05：M4 分期（§8.2 M4 增 /skills；S-5 allowed-tools 白名单+SEC-070 信任门）——
   {
     name: "skills",
-    usage: tEn("cmd.skills.usage"),
-    description: tEn("cmd.skills.desc"),
+    get usage() {
+      return t("cmd.skills.usage");
+    },
+    get description() {
+      return t("cmd.skills.desc");
+    },
     execute(args, ctx) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const sub = (parts[0] ?? "list").toLowerCase();
@@ -499,7 +583,9 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
   // —— WP-06：M4 分期（§8.2 M4 增 /memory；MEM-044 可视化+§9.1 ② 自动轨）——
   {
     name: "memory",
-    description: tEn("cmd.memory.desc"),
+    get description() {
+      return t("cmd.memory.desc");
+    },
     execute(_args, ctx) {
       if (_args.trim() !== "") throw new Error(ctx.t("cmd.memory.err.args"));
       ctx.write(ctx.memoryView().text);

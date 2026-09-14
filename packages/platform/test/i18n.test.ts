@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { EN, I18N_TERMS_KEEP, ZH_CN, createI18n, resolveLang, tEn } from "../src/index.ts";
+import { EN, I18N_TERMS_KEEP, ZH_CN, configureI18n, createI18n, resolveLang, tEn } from "../src/index.ts";
 
 describe("DoD③ 双包键集合全等", () => {
   it("ZH_CN 与 EN 键集合相等（双向）", () => {
@@ -28,6 +28,15 @@ describe("DoD② 选择链（env > settings.language > en）", () => {
   });
 });
 
+describe("O2/O3 加固（复验后）", () => {
+  it("settings.language 非字符串→告警回退（不崩）", () => {
+    expect(resolveLang({}, 42 as unknown as string)).toBe("en");
+  });
+  it("env 空串=未设置→落 settings.language", () => {
+    expect(resolveLang({ STANDARD_CODE_LANG: "  " }, "zh-CN")).toBe("zh-CN");
+  });
+});
+
 describe("DoD③ 缺失策略", () => {
   it("zh 缺失键→回退 EN 同键（DoD③）", () => {
     const e = createI18n("zh-CN");
@@ -46,19 +55,51 @@ describe("DoD③ 缺失策略", () => {
   });
 });
 
-describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策 4）", () => {
-  const src = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/commands.ts"), "utf8");
-  it("commands.ts 零残留 description:/usage: 英文字面量（全经 tEn）", () => {
-    expect(src).not.toMatch(/description: "/);
-    expect(src).not.toMatch(/usage: "[^[ ]/); // usage: tEn(...) 或 usage: ""（memory 空参形状）
-    expect((src.match(/tEn\("cmd\./g) ?? []).length).toBeGreaterThanOrEqual(43); // 28 desc + 15 usage（13 命令无 usage 参数形=可选字段缺席）
+describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策 4，复验后全量形）", () => {
+  const cmdSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/commands.ts"), "utf8");
+  const replSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/repl.ts"), "utf8");
+  const sessSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/session.ts"), "utf8");
+  it("commands.ts 零残留 description/usage 字面量（全经运行时 getter t）", () => {
+    expect(cmdSrc).not.toMatch(/description: "/);
+    expect(cmdSrc).not.toMatch(/usage: "/);
+    expect((cmdSrc.match(/get description\(\) \{/g) ?? []).length).toBe(28);
+    expect((cmdSrc.match(/get usage\(\) \{/g) ?? []).length).toBe(15);
   });
-  it("commands.ts 引用的全部 catalog 键 ∈ EN（含运行时 t 键）", () => {
+  it("全部 catalog 键被消费（死键守卫；动态拼装基名豁免）", () => {
+    const allSrc = cmdSrc + replSrc + sessSrc;
+    const dynamicAssembled = new Set(["repl.mcp.done.approve", "repl.mcp.done.reject", "repl.mcp.done.enable", "repl.mcp.done.disable", "repl.skills.state.active", "repl.skills.state.userOnly", "repl.skills.state.model"]);
+    const dead: string[] = [];
+    for (const key of Object.keys(EN)) {
+      if (dynamicAssembled.has(key)) continue;
+      if (!allSrc.includes(`"${key}"`)) dead.push(key);
+    }
+    expect(dead).toEqual([]);
+  });
+  it("repl.ts 渲染写点零固定字面（io.write 参数仅模板含 t() 或纯动态）", () => {
+    const lits = [...replSrc.matchAll(/io\.write\("([^"]*)"/g)].map((m) => m[1]!).filter((v) => v !== "\n" && v.trim() !== "");
+    expect(lits).toEqual([]);
+  });
+  it("引用的全部 catalog 键 ∈ EN（含运行时 t 键）", () => {
     const keys = new Set<string>();
-    for (const m of src.matchAll(/tEn\("(cmd\.[\w.-]+)"\)/g)) keys.add(m[1]!);
-    for (const m of src.matchAll(/ctx\.t\("(cmd\.[\w.-]+|repl\.[\w.-]+)"/g)) keys.add(m[1]!);
-    expect(keys.size).toBeGreaterThanOrEqual(45);
+    for (const m of cmdSrc.matchAll(/t\("(cmd\.[\w.-]+|repl\.[\w.-]+)"/g)) keys.add(m[1]!);
+    for (const m of replSrc.matchAll(/i18n\.t\("(cmd\.[\w.-]+|repl\.[\w.-]+)"/g)) keys.add(m[1]!);
+    for (const m of sessSrc.matchAll(/i18n\.t\("(cmd\.[\w.-]+|repl\.[\w.-]+)"/g)) keys.add(m[1]!);
+    expect(keys.size).toBeGreaterThanOrEqual(80);
     for (const k of keys) expect(EN[k], `missing key ${k}`).toBeTypeOf("string");
+  });
+});
+
+describe("R3 修复：命令面/渲染运行时按 active lang（zh 消费实证）", () => {
+  it("configureI18n(zh-CN) → CLI_COMMANDS description 出中文；恢复 en", async () => {
+    const { CLI_COMMANDS } = await import("../../../apps/cli/src/commands.ts");
+    configureI18n("zh-CN");
+    try {
+      expect(CLI_COMMANDS.find((c) => c.name === "help")!.description).toBe("列出全部可用命令");
+      expect(CLI_COMMANDS.find((c) => c.name === "model")!.usage).toBe("[name]");
+    } finally {
+      configureI18n("en");
+    }
+    expect(CLI_COMMANDS.find((c) => c.name === "help")!.description).toBe("list all available commands");
   });
 });
 

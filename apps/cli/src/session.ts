@@ -8,7 +8,7 @@ import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, ty
 import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
-import { applySettingsEnv, createI18n, loadSettings, managedSettingsPath, resolveLang, settingsValue, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { applySettingsEnv, configureI18n, createI18n, loadSettings, managedSettingsPath, resolveLang, settingsValue, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import path from "node:path";
@@ -444,6 +444,7 @@ export function createSession(init: SessionInit = {}): Session {
   session.refreshMcp = () => runMcpAssembly();
   // —— M4-WP-07：i18n（会话级 lang 快照；env > settings.language > en，非法值告警回退——ADR-0042）——
   session.i18n = createI18n(resolveLang(env, settingsValue<string>(session.trust.settings, "language")));
+  configureI18n(session.i18n.lang); // 模块级 active 同步（R3：命令面/运行时 t() 与会话同语言）
   // —— M4-WP-04：hooks 引擎（§9.3 附注 13 事件；settings 五来源+disableAllHooks+信任门运行时判定 :262013）——
   const hookEngine: HookEngine = createHookEngine(loadHookConfigs(session.trust.settings.docs), {
     trusted: () => session.trust.trusted,
@@ -553,7 +554,7 @@ export function createSession(init: SessionInit = {}): Session {
       activeSkillState = { name: s.name, ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}) }; // 用户点名同激活白名单 [自定]
       if (sentSkillHashes.has(s.contentHash)) return { text: `[skills] ${name}: ${SKILL_ALREADY_LOADED_NOTE}`, injected: null };
       sentSkillHashes.add(s.contentHash);
-      return { text: `[skills] invoked ${name}（内容已注入会话）`, injected: expandSkillBody(s.body, { skillDir: s.dir, projectDir: sessionCwd, sessionId: session.id, args }) };
+      return { text: session.i18n.t("repl.skills.invoked", { value: name }), injected: expandSkillBody(s.body, { skillDir: s.dir, projectDir: sessionCwd, sessionId: session.id, args }) };
     },
   };
   session.mcpServers = () => {

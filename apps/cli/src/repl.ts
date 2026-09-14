@@ -80,7 +80,7 @@ async function createSessionAssets(deps: ReplDeps, sessionId: string): Promise<S
     const writer = await ResilientTranscriptWriter.create(deps.session.cwd, sessionId, ...baseDirArgs);
     return { sessionId, lock, writer, chain: Promise.resolve() };
   } catch (err) {
-    deps.io.write(`[session] transcript unavailable (${err instanceof Error ? err.message : String(err)}) — session continues without persistence\n`);
+    deps.io.write(`${deps.session.i18n.t("repl.session.transcriptUnavailable", { value: err instanceof Error ? err.message : String(err) })}\n`);
     return null;
   }
 }
@@ -121,7 +121,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
   return {    catalog: () => s.catalog,
     currentModel: () => s.model,
     switchModel: (name) => {
-      if (!s.catalog.includes(name)) throw new Error(`unknown model: ${name}（可用：${s.catalog.join(", ")}）`);
+      if (!s.catalog.includes(name)) throw new Error(s.i18n.t("cmd.model.err.unknownModel", { value: name, list: s.catalog.join(", ") }));
       s.model = name;
     },
     permissionMode: () => s.broker.mode(),
@@ -165,29 +165,29 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     resumeSession: async () => {
       const { sessions } = await listSessions(deps.session.cwd, deps.baseDir);
       if (sessions.length === 0) {
-        deps.io.write("[resume] no sessions recorded for this project\n");
+        deps.io.write(`${deps.session.i18n.t("repl.resume.none")}\n`);
         return false;
       }
       if (!deps.sessionPicker) {
-        deps.io.write("[resume] interactive picker unavailable（非交互环境；索引如下）\n");
+        deps.io.write(`${deps.session.i18n.t("repl.resume.noPicker")}\n`);
         for (const e of sessions) deps.io.write(`  ${e.sessionId.slice(0, 8)}  ${e.title || "(no title)"}  (${e.messageCount} msgs, last ${e.lastActivityAt ?? "?"})\n`);
         return false;
       }
       const chosen = await deps.sessionPicker.pick(sessions);
       if (!chosen) {
-        deps.io.write("[resume] cancelled\n");
+        deps.io.write(`${deps.session.i18n.t("repl.resume.cancelled")}\n`);
         return false;
       }
       // R2 修复（V 退回 2026-09-09）：选择器内重命名（附录 A 要素三）——picker 侧对历史会话设标题后重新枚举
       await deps.sessionPicker.rename(chosen, deps.session.cwd);
       const r = await resumeFrom(chosen.filePath);
       await switchSession(deps, { sessionId: chosen.sessionId, messages: r.messages });
-      deps.io.write(`[resume] ${chosen.sessionId.slice(0, 8)} — ${chosen.title || "(no title)"}：${r.messages.length} message(s) restored${r.lastReason ? `（上次终态 ${r.lastReason}）` : ""}\n`);
+      deps.io.write(`${deps.session.i18n.t("repl.resume.restored", { id: chosen.sessionId.slice(0, 8), title: chosen.title || "(no title)", n: r.messages.length, tail: r.lastReason ? deps.session.i18n.t("repl.resume.lastReason", { reason: r.lastReason }) : "" })}\n`);
       return true;
     },
     renameSession: async (title) => {
       const session = currentSessionMeta(deps);
-      if (!title.trim()) throw new Error("/rename <title>: title required");
+      if (!title.trim()) throw new Error(deps.session.i18n.t("cmd.rename.err.required"));
       await renameSessionTitle(deps.session.cwd, session.sessionId, title, deps.baseDir);
     },
     // —— WP-11（§8.2 M2 余量；ENG-043/S-10/ENG-080/MDL-010~013/CTX-036）——
@@ -225,17 +225,17 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const s = deps.session;
       const parts = args.trim().split(/\s+/).filter(Boolean);
       if (parts.length === 0) {
-        const lines = [`effective sources (high->low): ${s.settings.effectiveSources.join(", ")}`];
+        const lines = [s.i18n.t("repl.config.sourcesHeader", { value: s.settings.effectiveSources.join(", ") })];
         for (const [source, doc] of Object.entries(s.settings.docs)) {
-          lines.push(`${source}: ${doc ? Object.keys(doc).filter((k) => k !== "schemaVersion").join(", ") || "(empty)" : "(absent)"}`);
+          lines.push(s.i18n.t("repl.config.sourceLine", { source, keys: doc ? Object.keys(doc).filter((k) => k !== "schemaVersion").join(", ") || s.i18n.t("repl.config.sourceEmpty") : s.i18n.t("repl.config.sourceAbsent") }));
         }
-        lines.push(`merged keys: ${Object.keys(s.settings.merged).sort().join(", ") || "(none)"}`);
+        lines.push(s.i18n.t("repl.config.mergedLine", { value: Object.keys(s.settings.merged).sort().join(", ") || s.i18n.t("repl.config.none") }));
         return { text: lines.join("\n") };
       }
       const [key, ...rest] = parts;
       if (rest.length === 0) {
         const v = s.settings.merged[key!];
-        return { text: `${key} = ${v === undefined ? "(unset)" : JSON.stringify(v)}` };
+        return { text: `${key} = ${v === undefined ? s.i18n.t("repl.config.unset") : JSON.stringify(v)}` };
       }
       let value: unknown;
       try {
@@ -245,22 +245,22 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       }
       setLocalSetting(s.cwd, key!, value);
       s.reload(); // 编辑即时生效（重载走门控与粘滞注入）
-      return { text: `[config] ${key} = ${JSON.stringify(value)} -> .standardcode/settings.local.json（已重载）` };
+      return { text: s.i18n.t("repl.config.set", { key: key!, value: JSON.stringify(value) }) };
     },
     switchProvider: (name) => {
       const s = deps.session;
       if (!name) return { text: `provider: ${s.providerName}（可用：anthropic|openai；/provider <name> 切换，下一 turn 生效——MDL-010~013）` };
       const before = s.provider;
       s.switchProvider(name);
-      return { text: `[provider] ${s.providerName}（切换即时生效于下一 turn；adapter ${before === s.provider ? "未变" : "已重建"}）` };
+      return { text: s.i18n.t("repl.provider.switched", { name: s.providerName, state: before === s.provider ? s.i18n.t("repl.provider.unchanged") : s.i18n.t("repl.provider.rebuilt") }) };
     },
     doctor: async () => {
       const s = deps.session;
       const fixed: string[] = [];
-      const lines: string[] = ["doctor: environment health check (ENG-043)"];
+      const lines: string[] = [s.i18n.t("repl.doctor.header")];
       // ① settings 可读性（WP-01 loadSettings 告警=坏 JSON/schemaVersion）
-      for (const w of s.settings.warnings) lines.push(`  [warn] settings ${w.source} (${w.path}): ${w.reason}`);
-      if (s.settings.warnings.length === 0) lines.push("  [ok] settings sources readable");
+      for (const w of s.settings.warnings) lines.push(s.i18n.t("repl.doctor.settingsWarn", { source: w.source, path: w.path, reason: w.reason }));
+      if (s.settings.warnings.length === 0) lines.push(s.i18n.t("repl.doctor.settingsOk"));
       // ② 目录权限+自修复最小集（ENG-043）：缺失才创建并 [fix] 上屏（自修复如实登记）；写删探针文件验可写
       //（V O3 修复=原版硬编码 [ok] 无探针、无条件 mkdir、catch 把失败谎报为 "restored"）
       const stdDir = join(s.cwd, ".standardcode");
@@ -268,9 +268,9 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         try {
           mkdirSync(stdDir, { recursive: true });
           fixed.push("created missing project .standardcode");
-          lines.push("  [fix] created missing project .standardcode");
+          lines.push(s.i18n.t("repl.doctor.dirFix"));
         } catch (err) {
-          lines.push(`  [warn] project .standardcode missing and could not be created: ${err instanceof Error ? err.message : String(err)}`);
+          lines.push(s.i18n.t("repl.doctor.dirWarn", { value: err instanceof Error ? err.message : String(err) }));
         }
       }
       if (existsSync(stdDir)) {
@@ -278,9 +278,9 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           const probe = join(stdDir, `.doctor-probe-${process.pid}`);
           writeFileSync(probe, "probe", "utf8");
           rmSync(probe, { force: true });
-          lines.push("  [ok] directories writable");
+          lines.push(s.i18n.t("repl.doctor.writableOk"));
         } catch (err) {
-          lines.push(`  [warn] project .standardcode not writable: ${err instanceof Error ? err.message : String(err)}`);
+          lines.push(s.i18n.t("repl.doctor.writableWarn", { value: err instanceof Error ? err.message : String(err) }));
         }
       }
       // ③ transcript 清理提示（S-10）：枚举转录+体积
@@ -293,20 +293,20 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           /* 文件消失 */
         }
       }
-      lines.push(`  [info] transcripts: ${sessions.length} session(s), ${(totalBytes / 1024).toFixed(1)} KiB total${totalBytes > 10 * 1024 * 1024 ? "（S-10 提示：体积较大，考虑清理旧转录）" : ""}`);
+      lines.push(s.i18n.t("repl.doctor.transcripts", { n: sessions.length, kib: (totalBytes / 1024).toFixed(1), big: totalBytes > 10 * 1024 * 1024 ? s.i18n.t("repl.doctor.transcriptsBig") : "" }));
       // ④ frontmatter/迁移提示（ENG-080）：settings 文件缺 schemaVersion 计数
       const noSchema = Object.entries(s.settings.docs).filter(([, d]) => d !== null && (d as Record<string, unknown>).schemaVersion === undefined).length;
-      if (noSchema > 0) lines.push(`  [warn] ${noSchema} settings file(s) missing schemaVersion (ENG-080: migration hint)`);
-      if (fixed.length === 0) lines.push("  [ok] no self-repair needed");
+      if (noSchema > 0) lines.push(s.i18n.t("repl.doctor.schemaWarn", { value: noSchema }));
+      if (fixed.length === 0) lines.push(s.i18n.t("repl.doctor.noRepair"));
       return { text: lines.join("\n"), fixed };
     },
     changeDir: (path) => {
       const s = deps.session;
       const d = resolve(s.cwd, path);
-      if (!statSync(d).isDirectory()) throw new Error(`/cd: not a directory: ${d}`);
+      if (!statSync(d).isDirectory()) throw new Error(s.i18n.t("repl.cd.notDir", { value: d }));
       s.cwd = d;
       s.tools = createStandardTools({ cwd: d }); // 工具面随目录重建（transcript 项目归属不迁移=偏差登记）
-      return { text: `[cd] working directory: ${d}` };
+      return { text: s.i18n.t("repl.cd.working", { value: d }) };
     },
     addDir: async (path) => {
       const s = deps.session;
@@ -314,22 +314,22 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       try {
         s.addAdditionalDirectory(d);
       } catch (err) {
-        throw new Error(`/add-dir: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(s.i18n.t("repl.adddir.err", { value: err instanceof Error ? err.message : String(err) }));
       }
       const untrustedRepo = existsSync(join(d, ".git")) && !isTrusted(d);
-      const note = untrustedRepo ? "\n  ! directory is an untrusted git repository — shared settings there stay gated (§8.3)" : "";
-      return { text: `[add-dir] authorized: ${d}${note}` };
+      const note = untrustedRepo ? s.i18n.t("repl.adddir.trustNote") : "";
+      return { text: s.i18n.t("repl.adddir.authorized", { value: d }) + note };
     },
     reload: () => {
       const s = deps.session;
       s.reload();
-      return { text: `[reload] memory (${s.memory.files.length} file(s)) and settings (sources: ${s.settings.effectiveSources.join(", ")}) reloaded` };
+      return { text: s.i18n.t("repl.reload.done", { files: s.memory.files.length, sources: s.settings.effectiveSources.join(", ") }) };
     },
     // —— WP-07：M3 分期余量三件（§8.2；/subtask 走 spawn——M6 前仅同步语义）——
     subtask: async (prompt) => {
       const s = deps.session;
       // CC /subtask 守卫同构（chunk-g7bantgw.js :328，A 级报告 §3.3）
-      if (s.messages.length === 0) throw new Error("Cannot start a subtask before the first conversation turn");
+      if (s.messages.length === 0) throw new Error(s.i18n.t("repl.subtask.guard"));
       const launch = await spawnSubagentTask(
         { prompt, description: deriveSubtaskName(prompt), runInBackground: false },
         { depth: 0, availableTypes: ["general-purpose"] }, // M3 恒 general-purpose（内置集发现链=WP-06）
@@ -346,46 +346,46 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           },
         },
       );
-      if (launch.status === "refused") return { text: `[subtask] refused: ${launch.message}` };
-      if (launch.status !== "completed") return { text: `[subtask] unexpected channel: ${launch.status}（M3 /subtask 恒同步）` };
+      if (launch.status === "refused") return { text: s.i18n.t("repl.subtask.refused", { value: launch.message }) };
+      if (launch.status !== "completed") return { text: s.i18n.t("repl.subtask.unexpected", { value: launch.status }) };
       // 结果注入（DoD①）：报告以 user 消息入会话（下一 turn 模型可见）+落转录保 resume 等价
       const injected = {
         role: "user" as const,
         content: [
           {
             type: "text" as const,
-            text: `<subtask agent="${launch.result.agentType}" tokens="${launch.result.totalTokens}">\n${launch.result.report}\n</subtask>`,
+            text: s.i18n.t("repl.subtask.injected", { type: launch.result.agentType, tokens: launch.result.totalTokens, report: launch.result.report }),
           },
         ],
       };
       s.messages.push(injected);
       transcriptAppend(deps, { kind: "user_message", message: injected });
       return {
-        text: `[subtask] ${launch.result.agentType} completed (${launch.result.totalTokens} tokens / ${launch.result.totalToolUseCount} tool uses)\n${launch.result.content}`,
+        text: s.i18n.t("repl.subtask.completed", { type: launch.result.agentType, tokens: launch.result.totalTokens, uses: launch.result.totalToolUseCount }) + "\n" + launch.result.content,
       };
     },
     effort: async (args) => {
       const s = deps.session;
       if (args === "") {
         return {
-          text: `[effort] current: ${effortLabel(s.thinking)}（可选 ${EFFORT_LEVELS.join("|")}；写 model.thinking local 层，下一 turn 生效——MDL-010~013 同构）`,
+          text: s.i18n.t("repl.effort.current", { label: effortLabel(s.thinking), levels: EFFORT_LEVELS.join("|") }),
         };
       }
       if (!(EFFORT_LEVELS as readonly string[]).includes(args)) {
-        throw new Error(`unknown effort: ${args}（可选 ${EFFORT_LEVELS.join("|")}）`);
+        throw new Error(s.i18n.t("repl.effort.unknown", { value: args, levels: EFFORT_LEVELS.join("|") }));
       }
       const level = args as EffortLevel;
       setLocalSetting(s.cwd, "model.thinking", EFFORT_TO_THINKING[level]);
       s.reload(); // settings 重载（local 层并入）
       s.thinking = resolveThinking(undefined, s.env, s.settings); // 下一 turn 生效（env 逃逸舱优先序不变）
-      return { text: `[effort] ${level}（model.thinking=${EFFORT_TO_THINKING[level]}，下一 turn 生效）` };
+      return { text: s.i18n.t("repl.effort.set", { value: level, thinking: EFFORT_TO_THINKING[level] }) };
     },
     init: async () => {
       const s = deps.session;
       const p = join(s.cwd, "AGENTS.md");
-      if (existsSync(p)) return { text: "[init] AGENTS.md already exists — left unchanged（只生成不覆盖）" };
+      if (existsSync(p)) return { text: s.i18n.t("repl.init.exists") };
       writeFileSync(p, AGENTS_SKELETON, "utf8");
-      return { text: `[init] created ${p}（骨架）` };
+      return { text: s.i18n.t("repl.init.created", { value: p }) };
     },
     // —— WP-05：/tasks /background（ORC-032：TaskList 语义=active_only 默认 true、limit 1–100 默认 20）——
     tasks: (args) => {
@@ -393,19 +393,19 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const { activeOnly, limit } = parseTasksArgs(args);
       const all = s.taskRegistry.list(activeOnly ? { activeOnly: true } : undefined);
       const shown = all.slice(0, limit);
-      if (shown.length === 0) return { text: `[tasks] ${activeOnly ? "no active tasks" : "no tasks"}（注册表共 ${s.taskRegistry.list().length} 条）` };
+      if (shown.length === 0) return { text: s.i18n.t("repl.tasks.none", { which: activeOnly ? s.i18n.t("repl.tasks.noneActive") : s.i18n.t("repl.tasks.noneAll"), total: s.taskRegistry.list().length }) };
       const lines = shown.map((t) => {
         const bg = t.isBackgrounded ? " bg" : "";
         const usage = t.result ? ` ${t.result.totalTokens}tok/${t.result.totalToolUseCount}tools` : "";
         return `  ${t.taskId} [${t.status}]${bg} ${t.agentType} "${t.description}"${usage}`;
       });
-      return { text: `[tasks] ${shown.length}/${all.length}${activeOnly ? "（active_only；/tasks all 含终态）" : ""}\n${lines.join("\n")}` };
+      return { text: s.i18n.t("repl.tasks.header", { shown: shown.length, all: all.length, mode: activeOnly ? s.i18n.t("repl.tasks.activeOnly") : "" }) + "\n" + lines.join("\n") };
     },
     background: () => {
       const s = deps.session;
       const bg = s.taskRegistry.list().filter((t) => t.isBackgrounded);
-      if (bg.length === 0) return { text: "[background] 无挂后台任务" };
-      return { text: `[background] ${bg.length} 条\n${bg.map((t) => `  ${t.taskId} [${t.status}] ${t.agentType} "${t.description}"`).join("\n")}` };
+      if (bg.length === 0) return { text: s.i18n.t("repl.background.none") };
+      return { text: s.i18n.t("repl.background.header", { value: bg.length }) + "\n" + bg.map((t) => `  ${t.taskId} [${t.status}] ${t.agentType} "${t.description}"`).join("\n") };
     },
     // —— WP-10：/status /usage（§8.2 M3 分期；全字段实时读态——DoD① 判据面）——
     status: () => {
@@ -425,28 +425,28 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const active = s.taskRegistry.list({ activeOnly: true });
       return {
         text: [
-          "[status]",
-          `  model: ${s.model}（provider: ${s.providerName}；catalog: ${s.catalog.join(", ")}）`,
-          `  permission: ${s.broker.mode()}`,
-          `  context: ${occupied}/${grid.window} tokens（${((occupied / grid.window) * 100).toFixed(1)}%，grid 估算占用=/context 同源）`,
-          `  tasks: ${active.length} active / ${all.length} total`,
-          `  session: ${currentSessionMeta(deps).sessionId.slice(0, 8)}（cwd=${s.cwd}；memory=${s.memory.files.length} file(s)；turns=${s.meter.turns}）`,
+          s.i18n.t("repl.status.header"),
+          s.i18n.t("repl.status.model", { model: s.model, provider: s.providerName, catalog: s.catalog.join(", ") }),
+          s.i18n.t("repl.status.permission", { value: s.broker.mode() }),
+          s.i18n.t("repl.status.context", { occupied, window: grid.window, pct: ((occupied / grid.window) * 100).toFixed(1) }),
+          s.i18n.t("repl.status.tasks", { active: active.length, total: all.length }),
+          s.i18n.t("repl.status.session", { id: currentSessionMeta(deps).sessionId.slice(0, 8), cwd: s.cwd, files: s.memory.files.length, turns: s.meter.turns }),
         ].join("\n"),
       };
     },
     usage: () => {
       const s = deps.session;
       const t = s.meter.snapshot();
-      const hit = t.inputTokens > 0 ? `${((t.cacheReadTokens / t.inputTokens) * 100).toFixed(1)}%` : "n/a（no input usage yet）";
+      const hit = t.inputTokens > 0 ? `${((t.cacheReadTokens / t.inputTokens) * 100).toFixed(1)}%` : s.i18n.t("repl.usage.noInput");
       const rate = priceTableRow(s.model);
       const price = rate
-        ? `  cost estimate: $${usageCostUsd(t, rate).toFixed(6)}（四列×单价行合计；内置固定价格表 [自定] 结构性占位，官方标定缺位登记未解决）in=$${rate.inputUsdPerMTok}/M out=$${rate.outputUsdPerMTok}/M cacheW=$${rate.cacheWriteUsdPerMTok}/M cacheR=$${rate.cacheReadUsdPerMTok}/M`
-        : `  cost estimate: n/a（${s.model} 不在内置价格表——env 自定目录模型不设价，拒绝静默套价）`;
+        ? s.i18n.t("repl.usage.costKnown", { usd: usageCostUsd(t, rate).toFixed(6), input: rate.inputUsdPerMTok, output: rate.outputUsdPerMTok, cw: rate.cacheWriteUsdPerMTok, cr: rate.cacheReadUsdPerMTok })
+        : s.i18n.t("repl.usage.costUnknown", { model: s.model });
       return {
         text: [
-          "[usage] session totals（API usage=唯一权威口径 ADR-0027；本地估算不位移展示值——DP-4 显式>隐式）",
-          `  input=${t.inputTokens} output=${t.outputTokens} cache_creation=${t.cacheCreationTokens} cache_read=${t.cacheReadTokens}`,
-          `  cache hit rate（会话内实时，M1 WP-05 同源=cache_read/input）: ${hit}`,
+          s.i18n.t("repl.usage.header"),
+          s.i18n.t("repl.usage.totals", { input: t.inputTokens, output: t.outputTokens, cacheCreation: t.cacheCreationTokens, cacheRead: t.cacheReadTokens }),
+          s.i18n.t("repl.usage.hitrate", { value: hit }),
           price,
         ].join("\n"),
       };
@@ -454,51 +454,51 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— WP-03：/mcp（S-3 安装即确认；可视化管控面，§8.2 M4 增）——
     mcpList: () => {
       const views = deps.session.mcpServers();
-      const lines = [`[mcp] ${views.length} server(s)`];
+      const lines = [s.i18n.t("repl.mcp.header", { value: views.length })];
       for (const v of views) {
         const status = v.status ?? "-";
-        lines.push(`  ${v.name}  ${v.transport}  ${v.origin}  ${v.state}  ${status}${v.error ? `  error: ${v.error}` : ""}`);
+        lines.push(`  ${v.name}  ${v.transport}  ${v.origin}  ${v.state}  ${status}${v.error ? ` ${s.i18n.t("repl.mcp.errorCol", { value: v.error })}` : ""}`);
       }
       if (views.some((v) => v.state === "pending")) {
-        lines.push("  pending project server(s) are not active until approved: /mcp approve <name> (S-3)");
+        lines.push(s.i18n.t("repl.mcp.pendingHint"));
       }
       return { text: lines.join("\n") };
     },
     mcpAction: async (action, name) => {
       await deps.session.mcpRecord(action, name);
-      const done = { approve: "approved", reject: "rejected", enable: "enabled", disable: "disabled" }[action];
+      const doneWord = s.i18n.t(`repl.mcp.done.${action}`);
       const v = deps.session.mcpServers().find((x) => x.name.toLowerCase() === name.toLowerCase());
-      const suffix = v ? ` — ${v.state}${v.status ? ` (${v.status})` : ""}` : "";
-      const hint = action === "enable" && v?.state === "rejected" ? "（decision=rejected 仍在——恢复批准用 /mcp approve）" : "";
-      return { text: `[mcp] ${done} ${name}${suffix}${hint}` };
+      const suffix = v ? s.i18n.t("repl.mcp.suffix", { state: v.state, status: v.status ? s.i18n.t("repl.mcp.suffixStatus", { value: v.status }) : "" }) : "";
+      const hint = action === "enable" && v?.state === "rejected" ? s.i18n.t("repl.mcp.hintRejected") : "";
+      return { text: s.i18n.t("repl.mcp.action", { done: doneWord, name, suffix, hint }) };
     },
     // —— WP-05：/skills（S-5+SEC-070；DoD⑦ list 形状+DoD④ run 豁免面）——
     skillsList: () => {
       const s = deps.session;
       const all = s.skills.all();
       const active = s.skills.active();
-      const lines = [`[skills] ${all.length} skill(s)`];
+      const lines = [s.i18n.t("repl.skills.header", { value: all.length })];
       for (const sk of all) {
-        const state = active?.name === sk.name ? "active" : sk.disableModelInvocation ? "user-only" : "model";
+        const state = active?.name === sk.name ? s.i18n.t("repl.skills.state.active") : sk.disableModelInvocation ? s.i18n.t("repl.skills.state.userOnly") : s.i18n.t("repl.skills.state.model");
         const desc = [sk.description, sk.whenToUse].filter((x) => x !== undefined && x !== "").join(" ");
         lines.push(`  ${sk.name}  ${sk.source}  ${state}${sk.argumentHint ? `  (${sk.argumentHint})` : ""}${desc ? `  ${desc}` : ""}`);
       }
-      for (const w of s.skills.warnings()) lines.push(`  [warn] ${w}`);
-      if (active) lines.push(`  active: ${active.name}${active.allowedTools ? `（tools: ${active.allowedTools.join(", ")}）` : ""}`);
+      for (const w of s.skills.warnings()) lines.push(s.i18n.t("repl.skills.warnPrefix", { value: w }));
+      if (active) lines.push(s.i18n.t("repl.skills.activeLine", { name: active.name, tools: active.allowedTools ? s.i18n.t("repl.skills.activeTools", { list: active.allowedTools.join(", ") }) : "" }));
       return { text: lines.join("\n") };
     },
     // —— WP-06：/memory（MEM-044 双轨可视化：用户轨来源与顺序+自动轨索引摘要）——
     memoryView: () => {
       const s = deps.session;
-      const lines = ["[memory] 用户编写轨（加载序=数组序，MEM-044 双读 CLAUDE.md→AGENTS.md）:"];
+      const lines = [s.i18n.t("repl.memory.userHeader")];
       for (const f of s.memory.files) lines.push(`  [${f.scope}] ${f.kind} ${f.path}`);
-      if (s.memory.files.length === 0) lines.push("  (empty)");
-      lines.push(`[memory] 自动轨（§9.1 ②；${s.autoMemory ? "enabled" : "disabled (memory.autoTrack=false)"}）`);
+      if (s.memory.files.length === 0) lines.push(s.i18n.t("repl.memory.userEmpty"));
+      lines.push(s.i18n.t("repl.memory.autoHeader", { state: s.autoMemory ? s.i18n.t("repl.memory.autoEnabled") : s.i18n.t("repl.memory.autoDisabled") }));
       if (s.autoMemory) {
         const v = s.autoMemory;
-        lines.push(`  索引: ${v.index.exists ? `${v.index.lines} 行 / ${v.index.bytes} 字节${v.index.truncated ? "（已硬截断）" : ""}` : "(no MEMORY.md)"}`);
-        lines.push(`  记忆文件: ${v.entryCount} 个`);
-        if (v.missing.length > 0) lines.push(`  未写链接: ${v.missing.join(", ")}`);
+        lines.push(s.i18n.t("repl.memory.indexLine", { detail: v.index.exists ? s.i18n.t("repl.memory.indexDetail", { lines: v.index.lines, bytes: v.index.bytes, truncated: v.index.truncated ? s.i18n.t("repl.memory.indexTruncated") : "" }) : s.i18n.t("repl.memory.indexNone") }));
+        lines.push(s.i18n.t("repl.memory.filesLine", { value: v.entryCount }));
+        if (v.missing.length > 0) lines.push(s.i18n.t("repl.memory.missingLine", { value: v.missing.join(", ") }));
       }
       return { text: lines.join("\n") };
     },
@@ -560,7 +560,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   if (s.hooks) {
     const up = await s.hooks.gate("UserPromptSubmit", undefined, { prompt: text }).catch(() => null);
     if (up?.blockingError) {
-      deps.io.write(`[hooks] prompt blocked by UserPromptSubmit hook: ${up.blockingError}\n`);
+      deps.io.write(`${deps.session.i18n.t("repl.hooks.promptBlocked", { value: up.blockingError })}\n`);
       return;
     }
   }
@@ -719,10 +719,10 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       if (so?.blockingError) {
         if (stopBlocks < 8) {
           stopBlocks++;
-          s.messages.push({ role: "user", content: [{ type: "text", text: `[Stop hook] ${so.blockingError}` }] });
+          s.messages.push({ role: "user", content: [{ type: "text", text: s.i18n.t("repl.hooks.stopFeedback", { value: so.blockingError }) }] });
           continue; // 反馈消息在下一轮 iterBase 之后落转录
         }
-        deps.io.write(`\n[hooks] Stop hook blocked ${stopBlocks} times — returning control to user\n`);
+        deps.io.write(`\n${deps.session.i18n.t("repl.hooks.stopBlocked", { value: stopBlocks })}\n`);
       }
     }
     break;
@@ -744,7 +744,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
 /** !shell：本地直接执行，不进模型轮次（卡边界）；截断口径与 Bash 工具一致（30K）。 */
 function runShellLine(deps: ReplDeps, command: string): void {
   if (command === "") {
-    deps.io.write("[shell] usage: !<command>\n");
+    deps.io.write(`${deps.session.i18n.t("repl.shell.usage")}\n`);
     return;
   }
   const r = spawnSync(command, { shell: true, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
@@ -757,14 +757,14 @@ function runShellLine(deps: ReplDeps, command: string): void {
 /** @file：读文件注入用户消息（进模型轮次；卡边界"注入文件引用"）。 */
 async function runFileTurn(deps: ReplDeps, path: string, rest: string): Promise<void> {
   if (path === "") {
-    deps.io.write("[file] usage: @<path> [prompt]\n");
+    deps.io.write(`${deps.session.i18n.t("repl.file.usage")}\n`);
     return;
   }
   let content: string;
   try {
     content = await readFile(resolve(deps.session.cwd, path), "utf8");
   } catch {
-    deps.io.write(`[file] not found: ${path}\n`);
+    deps.io.write(`${deps.session.i18n.t("repl.file.notFound", { value: path })}\n`);
     return;
   }
   await runPromptTurn(deps, `${rest ? `${rest}\n\n` : ""}[attached file: ${path}]\n\n${content}`);
@@ -772,7 +772,7 @@ async function runFileTurn(deps: ReplDeps, path: string, rest: string): Promise<
 
 async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, name: string, args: string): Promise<void> {
   if (name === "") {
-    deps.io.write("[command] usage: /<command> — try /help\n");
+    deps.io.write(`${deps.session.i18n.t("repl.command.usage")}\n`);
     return;
   }
   const cmd = commands.get(name);
