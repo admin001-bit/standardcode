@@ -11,3 +11,6 @@ export * from "./mcp-trust.ts";
 export * from "./i18n.ts";
 // M4-WP-09：Plugin（manifest/marketplace/安装器+聚合视图；ECO-030~033，纯 fs 面不引 capabilities）。
 export * from "./plugin/index.ts";
+// M4-WP-08：/update（ENG-041+附录 E npm registry 通道；env 基线剥离共享面+registry 查询/版本比对/npm 执行，全注入面离线）。
+export * from "./env-baseline.ts";
+export * from "./updater.ts";

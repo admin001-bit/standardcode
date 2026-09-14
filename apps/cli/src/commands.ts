@@ -183,6 +183,8 @@ export interface CommandContext {
   pluginInstall(target: string): Promise<{ text: string }>;
   /** M4-WP-09 /plugin remove：目录级清理+留痕删。 */
   pluginRemove(name: string): { text: string };
+  /** M4-WP-08 /update：查 npm registry 最新版→同版显示当前/新版提示并执行全局安装（DoD①；注入面离线测试）。 */
+  updateNow(): Promise<{ text: string }>;
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -642,6 +644,19 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
         return;
       }
       throw new Error(ctx.t("cmd.plugin.err.unknownSub", { value: sub }));
+    },
+  },
+  // —— WP-08：M4 分期收口件（§8.2 M4 增 /update；ENG-041+附录 E npm registry 通道；命令清单第 30 件）——
+  {
+    name: "update",
+    get description() {
+      return t("cmd.update.desc");
+    },
+    async execute(args, ctx) {
+      // 无子命令无参数（DoD① 形状 [自定]：检查/提示形状无一手锚，卡参考资料栏预登记）。
+      if (args.trim() !== "") throw new Error(ctx.t("cmd.update.err.args"));
+      const r = await ctx.updateNow();
+      ctx.write(r.text);
     },
   },
 ];

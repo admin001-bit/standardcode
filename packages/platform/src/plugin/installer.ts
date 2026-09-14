@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PLUGIN_SCHEMA_VERSION, readPluginManifest, type PluginManifest } from "./manifest.ts";
 import { MARKETPLACE_FILE, isGitSource, parseMarketplace } from "./marketplace.ts";
+import { stripEnvBaseline } from "../env-baseline.ts";
 
 export interface PluginRecord {
   name: string;
@@ -122,13 +123,8 @@ function normName(n: string): string {
 /** git clone 注入面（测试可换桩；缺省真子进程 shell:false+env 基线剥离）。 */
 export type GitRunner = (args: string[], env: NodeJS.ProcessEnv) => { status: number | null; stderr?: string };
 
-const GIT_ENV_STRIP = /^(STANDARD_CODE_.*|.*_KEY|.*_TOKEN|.*_SECRET|GIT_CONFIG_.*|NODE_OPTIONS|BASH_ENV|ENV)$/; // SEC-080 规则子集对位（platform 侧最小实现 [自定]）
-
-function gitEnvBase(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(source)) if (!GIT_ENV_STRIP.test(k)) out[k] = v;
-  return out;
-}
+// WP-08：SEC-080 剥离规则提取至 env-baseline.ts 共享（行为零变——正则与遍历语义逐字节对位；
+// updater npm 子进程与 git clone "清洗同面" DoD①）。
 
 export const defaultGitRunner: GitRunner = (args, env) => {
   const r = spawnSync("git", args, { encoding: "utf8", env, windowsHide: true });
@@ -137,7 +133,7 @@ export const defaultGitRunner: GitRunner = (args, env) => {
 
 function gitClone(source: string, destDir: string, runGit: GitRunner, env: NodeJS.ProcessEnv): string | null {
   mkdirSync(path.dirname(destDir), { recursive: true });
-  const r = runGit(["clone", "--depth", "1", "--", source, destDir], gitEnvBase(env));
+  const r = runGit(["clone", "--depth", "1", "--", source, destDir], stripEnvBaseline(env));
   if (r.status !== 0) return `git clone failed (status ${String(r.status)}): ${(r.stderr ?? "").trim().slice(0, 300) || source}`;
   return null;
 }

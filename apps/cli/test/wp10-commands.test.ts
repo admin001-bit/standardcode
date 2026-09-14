@@ -166,14 +166,17 @@ describe("DoD③ 价格表行合计（内置固定表 [自定] 占位）", () =>
 });
 
 describe("DoD④ 两命令 Tab 补全", () => {
-  it("/st 唯一命中 /status、/u 唯一命中 /usage（insert 面）；候选列表含前缀重叠件；命令全集恰 29【勘误 2026-09-14：WP-03 /mcp 25→26；WP-05 /skills 26→27；WP-06 /memory 27→28；WP-09 /plugin 28→29】", () => {
+  it("/st 唯一命中 /status；/us 唯一命中 /usage、/u 双义（insert 面）；候选列表含前缀重叠件；命令全集恰 30【勘误 2026-09-14：WP-03 /mcp 25→26；WP-05 /skills 26→27；WP-06 /memory 27→28；WP-09 /plugin 28→29；2026-09-15：WP-08 /update 29→30，/u 双义化=/e 先例形制】", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
     expect(names).toContain("status");
     expect(names).toContain("usage");
-    expect(names.length).toBe(29);
+    expect(names.length).toBe(30);
     expect(completeInput("/st", CLI_COMMANDS).insert).toBe("/status ");
-    expect(completeInput("/us", CLI_COMMANDS).insert).toBe("/usage ");
-    expect(completeInput("/u", CLI_COMMANDS).insert).toBe("/usage "); // /update=M4 未注册（B-03），/u 唯一命中
+    expect(completeInput("/us", CLI_COMMANDS).insert).toBe("/usage "); // 四路唯一仍走 insert
+    const cu = completeInput("/u", CLI_COMMANDS); // WP-08 /update 注册后 /u 双义（/e 先例形制）
+    expect(cu.insert).toBeNull();
+    expect(cu.candidates).toEqual(["/usage", "/update"]); // 注册序过滤（usage=25 在 update=30 前，非字典序）
+    expect(completeInput("/upd", CLI_COMMANDS).insert).toBe("/update ");
     expect(completeInput("/", CLI_COMMANDS).candidates).toContain("/status");
     expect(completeInput("/", CLI_COMMANDS).candidates).toContain("/usage");
   });

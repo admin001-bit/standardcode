@@ -9,6 +9,8 @@ import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
 import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue } from "@standardcode/platform";
 import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
+import { checkRegistryLatest, compareVersions, runNpmUpdate, AUTO_UPDATE_ENV_KEY, type UpdateCheckResult, type NpmRunResult, type NpmRunner } from "@standardcode/platform";
+import { CLI_VERSION } from "./version.ts";
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
@@ -44,6 +46,29 @@ export interface ReplDeps {
   baseDir?: string;
   /** /resume 选择器（WP-10；测试注入桩/非交互=不可用报错）。 */
   sessionPicker?: SessionPicker;
+  /** WP-08 /update 注入面（离线测试桩；缺席=真 registry+npm 子进程，缺省零网络请求依赖 env 门）。 */
+  update?: UpdateDeps;
+}
+
+/**
+ * WP-08：/update 依赖注入面（全可选；测试注入离线桩）。check/runNpm 缺席=转 platform 缺省实现，
+ * fetchImpl/timeoutMs/runner/env 透传至 platform 层（网络注入面离线测试，卡交付物口径）。
+ */
+export interface UpdateDeps {
+  /** 覆写 registry 查询（返回 UpdateCheckResult；缺席=checkRegistryLatest）。 */
+  check?: () => Promise<UpdateCheckResult>;
+  /** 覆写 npm 执行（缺席=runNpmUpdate）。 */
+  runNpm?: () => Promise<NpmRunResult>;
+  /** 当前版本比对基准（缺席=CLI_VERSION）。 */
+  currentVersion?: string;
+  /** 透传 platform：registry fetch。 */
+  fetchImpl?: typeof fetch;
+  /** 透传 platform：registry 超时。 */
+  timeoutMs?: number;
+  /** 透传 platform：npm 子进程 runner。 */
+  runner?: NpmRunner;
+  /** 透传 platform：npm 子进程 env 源（SEC-080 基线剥离入参）。 */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -576,9 +601,46 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       if (!r.removed) throw new Error(s.i18n.t("repl.plugin.notFound", { value: name }));
       return { text: [s.i18n.t("repl.plugin.removed", { value: name }), ...r.warnings.map((w) => s.i18n.t("repl.plugin.warn", { value: w }))].join("\n") };
     },
+    // —— M4-WP-08：/update（DoD①：registry 查询→同版=显示当前/新版=提示并执行 npm 全局安装；
+    // 两路失败=ADR-0034 三件套+手动兜底文案；env 清洗=SEC-080 共享面见 platform/runNpmUpdate）——
+    updateNow: async () => {
+      const s = deps.session;
+      const u = deps.update ?? {};
+      const current = u.currentVersion ?? CLI_VERSION;
+      const check = u.check ? await u.check() : await checkRegistryLatest({ fetchImpl: u.fetchImpl, timeoutMs: u.timeoutMs });
+      if (!check.ok) throw new Error(s.i18n.t("cmd.update.queryFailed", { value: check.reason }));
+      if (compareVersions(check.latest, current) <= 0) return { text: s.i18n.t("cmd.update.latest", { version: current, latest: check.latest }) };
+      deps.io.write(`${s.i18n.t("cmd.update.found", { latest: check.latest, version: current })}\n`); // "提示并执行"：提示先上屏，再 await 安装子进程
+      const run = u.runNpm ? await u.runNpm() : await runNpmUpdate({ runner: u.runner, env: u.env });
+      if (run.status !== 0) {
+        // Windows 文件锁 EBUSY/EPERM 形态=stderr 尾进入 {value}（三件套含手动兜底——卡 DoD①）。
+        throw new Error(s.i18n.t("cmd.update.installFailed", { value: run.error ?? `exit=${run.status}${run.stderrTail ? `; stderr: ${run.stderrTail}` : ""}` }));
+      }
+      return { text: s.i18n.t("cmd.update.installed", { latest: check.latest }) };
+    },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,
   };
+}
+
+/**
+ * M4-WP-08 DoD②③④：STANDARD_CODE_AUTO_UPDATE=1 启动后台非阻塞检查（附录 C 行 616；调用点不 await=
+ * 不挂冷启动门禁，计时器面=AbortSignal.timeout 内部 unref）。env≠"1"=零请求（DoD④ 缺省关；其余值=关，
+ * 取严方向 [自定]）；新版=仅一行提示不自动装（卡边界"不静默安装"）；任何失败=静默不影响会话（DoD③）。
+ * 返回 settled promise 供测试确定性等待（生产调用点丢弃返回值）。
+ */
+export function startAutoUpdateCheck(deps: ReplDeps, env: NodeJS.ProcessEnv = deps.update?.env ?? process.env): Promise<void> {
+  if (env[AUTO_UPDATE_ENV_KEY] !== "1") return Promise.resolve();
+  const s = deps.session;
+  const u = deps.update ?? {};
+  const current = u.currentVersion ?? CLI_VERSION;
+  return (u.check ? u.check() : checkRegistryLatest({ fetchImpl: u.fetchImpl, timeoutMs: u.timeoutMs }))
+    .then((r) => {
+      if (r.ok && compareVersions(r.latest, current) > 0) {
+        deps.io.write(`${s.i18n.t("repl.update.available", { latest: r.latest, version: current })}\n`);
+      }
+    })
+    .catch(() => {}); // DoD③ 静默（含注入桩抛错形态）
 }
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
@@ -602,6 +664,9 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
         }
       : {},
   );
+  // M4-WP-08（ENG-041/附录 C）：STANDARD_CODE_AUTO_UPDATE 启动后台检查——fire-and-forget 不 await=
+  // 不挂冷启动门禁（DoD②）；env 未设=零请求（DoD④）；失败静默（DoD③）。
+  void startAutoUpdateCheck(deps);
   const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
   for await (const raw of deps.io.lines) {
     const line = raw.trim();

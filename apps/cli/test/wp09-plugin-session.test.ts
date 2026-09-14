@@ -209,7 +209,7 @@ describe("DoD③ S-5 安装确认对话框（once=落盘/非 once=零落地/无 
   });
 });
 
-describe("DoD⑤⑥：list/remove+命令清单 29 适配", () => {
+describe("DoD⑤⑥：list/remove+命令清单 29→30 适配", () => {
   it("remove：目录级清理+留痕删（大小写不敏感）；未知名报错", async () => {
     await installSuite();
     const s = makeSession();
@@ -232,9 +232,9 @@ describe("DoD⑤⑥：list/remove+命令清单 29 适配", () => {
     out = await runLines(s, ["/plugin list extra", "/exit"]);
     expect(out).toContain("unexpected argument");
   });
-  it("命令清单恰 29（DoD⑥：/plugin 为 M4 第 29 件注册；计划编号 30 含 /update=WP-08 未注册）", () => {
+  it("命令清单恰 30（DoD⑥：/plugin 为 M4 第 29 件注册【勘误 2026-09-15：WP-08 注册 /update=第 30 件，计划编号 30 兑现，断言 29→30 随清单递增】）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(29);
+    expect(names).toHaveLength(30);
     expect(names).toContain("plugin");
   });
 });

@@ -1,13 +1,12 @@
 // CLI 入口装配（§5.1 L0 装配 L1/L3/L5；version 门禁与冷启动门禁不经此路径——bin 对 --version 短路）。
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
 import { CLI_COMMANDS } from "./commands.ts";
 import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink, type SessionIndexEntry } from "@standardcode/platform";
 import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
-
-const VERSION = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
+// WP-08：版本号单一来源收敛入 version.ts（横幅与 /update/auto-check 的 registry 比对基准同源）。
+import { CLI_VERSION } from "./version.ts";
 
 /**
  * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
@@ -148,7 +147,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     if (session.activeAbort) session.activeAbort.abort();
     else process.stdout.write("\n(输入 /exit 退出)\n");
   });
-  process.stdout.write(`standardcode ${VERSION} — /help 查看命令，/exit 退出\n`);
+  process.stdout.write(`standardcode ${CLI_VERSION} — /help 查看命令，/exit 退出\n`);
   await runRepl({
     session,
     io: { lines: router.lines, write: (s) => process.stdout.write(s), close: () => rl.close() },
