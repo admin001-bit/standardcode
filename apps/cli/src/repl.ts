@@ -154,7 +154,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       return { text: renderContextGrid(grid) };
     },
     rewind: async (seq) => {
-      if (!deps.fileHistory) throw new Error("file-history unavailable（/rewind 需要 file-history store）");
+      if (!deps.fileHistory) throw new Error(s.i18n.t("repl.rewind.noStore"));
       return deps.fileHistory.rewindTo(seq);
     },
     // —— WP-10 会话命令（CTX-101 交接终点/UI-030）——
@@ -198,7 +198,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       // M2 WP-11 登记级①收口（WP-08 DoD③）：直调面同样 fail-closed——界外值拒绝，不静默回落默认窗。
       if (window !== undefined) {
         if (!Number.isInteger(window) || window < MANUAL_WINDOW_MIN || window > MANUAL_WINDOW_MAX) {
-          throw new Error(`compact window: must be integer in [${MANUAL_WINDOW_MIN}, ${MANUAL_WINDOW_MAX}] (CTX-036 manual window; fail-closed)`);
+          throw new Error(s.i18n.t("repl.compact.errManual", { min: MANUAL_WINDOW_MIN, max: MANUAL_WINDOW_MAX }));
         }
       s.autocompact = createCompactionCoordinator(
         resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
@@ -249,7 +249,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     },
     switchProvider: (name) => {
       const s = deps.session;
-      if (!name) return { text: `provider: ${s.providerName}（可用：anthropic|openai；/provider <name> 切换，下一 turn 生效——MDL-010~013）` };
+      if (!name) return { text: s.i18n.t("repl.provider.switchHint", { name: s.providerName }) };
       const before = s.provider;
       s.switchProvider(name);
       return { text: s.i18n.t("repl.provider.switched", { name: s.providerName, state: before === s.provider ? s.i18n.t("repl.provider.unchanged") : s.i18n.t("repl.provider.rebuilt") }) };
@@ -749,9 +749,9 @@ function runShellLine(deps: ReplDeps, command: string): void {
   }
   const r = spawnSync(command, { shell: true, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
   let out = (r.stdout ?? "") + (r.stderr ? (r.stdout ? "\n[stderr]\n" : "") + r.stderr : "");
-  if (out.length > SHELL_OUTPUT_TRUNCATE_CHARS) out = out.slice(0, SHELL_OUTPUT_TRUNCATE_CHARS) + "\n[output truncated]";
+  if (out.length > SHELL_OUTPUT_TRUNCATE_CHARS) out = out.slice(0, SHELL_OUTPUT_TRUNCATE_CHARS) + "\n" + deps.session.i18n.t("repl.shell.truncated");
   deps.io.write(out + (out.endsWith("\n") || out === "" ? "" : "\n"));
-  if (r.status !== 0) deps.io.write(`[shell] exit code ${r.status}\n`);
+  if (r.status !== 0) deps.io.write(`${deps.session.i18n.t("repl.shell.exitCode", { value: r.status ?? "unknown" })}\n`);
 }
 
 /** @file：读文件注入用户消息（进模型轮次；卡边界"注入文件引用"）。 */
@@ -784,7 +784,7 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
   try {
     await cmd.execute(args, createCommandContext(deps));
   } catch (err) {
-    deps.io.write(`[command] /${name} failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
   }
 }
 

@@ -67,7 +67,7 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
   });
   it("全部 catalog 键被消费（死键守卫；动态拼装基名豁免）", () => {
     const allSrc = cmdSrc + replSrc + sessSrc;
-    const dynamicAssembled = new Set(["repl.mcp.done.approve", "repl.mcp.done.reject", "repl.mcp.done.enable", "repl.mcp.done.disable", "repl.skills.state.active", "repl.skills.state.userOnly", "repl.skills.state.model"]);
+    const dynamicAssembled = new Set(["repl.mcp.done.approve", "repl.mcp.done.reject", "repl.mcp.done.enable", "repl.mcp.done.disable"]);
     const dead: string[] = [];
     for (const key of Object.keys(EN)) {
       if (dynamicAssembled.has(key)) continue;
@@ -75,9 +75,18 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
     }
     expect(dead).toEqual([]);
   });
-  it("repl.ts 渲染写点零固定字面（io.write 参数仅模板含 t() 或纯动态）", () => {
+  it("repl.ts 渲染写点零固定字面（双引号+反引号模板头+throw 三路扫描）", () => {
     const lits = [...replSrc.matchAll(/io\.write\("([^"]*)"/g)].map((m) => m[1]!).filter((v) => v !== "\n" && v.trim() !== "");
     expect(lits).toEqual([]);
+    const bt = [...replSrc.matchAll(/io\.write\(`([^`$]*)$/g)].map((m) => m[1]!).filter((v) => v.trim() !== "" && v !== "\n");
+    expect(bt).toEqual([]);
+    const th = [...replSrc.matchAll(/throw new Error\(`([^`$]*)$/g)].map((m) => m[1]!).filter((v) => v.trim() !== "");
+    expect(th).toEqual([]);
+    const thLit = [...replSrc.matchAll(/throw new Error\("([^"]*)"\)/g)].map((m) => m[1]!).filter((v) => v.trim() !== "");
+    expect(thLit).toEqual([]);
+  });
+  it("session 装配点钉（R3：configureI18n 接线不得静默脱落）", () => {
+    expect(sessSrc).toContain("configureI18n(session.i18n.lang)");
   });
   it("引用的全部 catalog 键 ∈ EN（含运行时 t 键）", () => {
     const keys = new Set<string>();
