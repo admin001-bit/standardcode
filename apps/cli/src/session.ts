@@ -6,11 +6,13 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
-import { createPermissionBroker, createTaskRegistry, type PermissionBroker, type Ruleset, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
-import { applySettingsEnv, configureI18n, createI18n, loadSettings, managedSettingsPath, resolveLang, settingsValue, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
+import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadSettings, managedSettingsPath, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
+import { readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
@@ -64,6 +66,18 @@ export interface SessionSkills {
   toolFace(base: StandardTool[]): StandardTool[];
   /** 用户点名豁免（/skills run；不经 Skill tool=免 disable-model-invocation 限制，DoD④ 双轨）。 */
   runByName(name: string, args?: string): { text: string; injected: string | null };
+}
+
+/** M4-WP-09：plugin 门面（会话装配期聚合四注入面消费；生效时点=会话创建，/reload 不重建装配面与 skills/hooks 既有口径一致 [自定] 登记偏差）。 */
+export interface SessionPlugins {
+  /** 插件基目录（=<home>/.standardcode；installer 落盘/留痕根，/plugin 命令动作面消费）。 */
+  baseDir(): string;
+  /** 安装记录视图（每次读盘刷新——/plugin list 即时反映 install/remove）。 */
+  installed(): InstalledPluginView[];
+  /** plugin 层 agent 定义（注册表 sources.plugin 消费形制；链位 built-in<plugin<user ORC-022）。 */
+  agents(): SubagentDefinition[];
+  /** 聚合告警（坏件/缺目录/同名抑制——/plugin list 消费面）。 */
+  warnings(): string[];
 }
 
 export interface Session {
@@ -125,6 +139,8 @@ export interface Session {
   hooks: SessionHooks;
   /** M4-WP-05：skills 门面（三源发现+清单增量+allowed-tools 收窄+用户点名豁免）。 */
   skills: SessionSkills;
+  /** M4-WP-09：plugin 门面（四注入面装配聚合+安装记录）。 */
+  plugins: SessionPlugins;
   /** M4-WP-07：i18n 面（lang=会话级快照：env STANDARD_CODE_LANG > settings.language > en；ADR-0042）。 */
   i18n: I18n;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
@@ -199,6 +215,21 @@ const ANTHROPIC_ENTRIES: Record<string, AnthropicModelEntry> = {
   },
 };
 
+/** plugin agents .md 枚举（platform agent-discovery collectMarkdown 同形——harness 解析面在 cli 侧消费，起步注记裁决）。 */
+function collectPluginMarkdown(dir: string, out: string[]): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // 目录不存在=无定义（常态，非错误）
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) collectPluginMarkdown(p, out);
+    else if (e.isFile() && e.name.endsWith(".md")) out.push(p);
+  }
+}
+
 export function createSession(init: SessionInit = {}): Session {
   // env 逃逸舱为独立副本（settings 注入不外泄污染调用方；凭据/override 语义不变）
   const env: Record<string, string | undefined> = { ...(init.env ?? process.env) };
@@ -219,6 +250,38 @@ export function createSession(init: SessionInit = {}): Session {
   const gatedSettings = trust.settings;
   const settingsEnv: SettingsEnvHandle = init.settingsEnv ?? { injected: new Set() };
   applySettingsEnv(gatedSettings, env, settingsEnv);
+
+  // —— M4-WP-09：Plugin 装配（ECO-030~033）——安装留痕 <home>/.standardcode/plugins.json（platform installer 纯 fs 面）。
+  // 四注入面聚合：hooks/MCP=docs 的 plugin 源位（buildPluginDocs）；skills=loadSkillsFromDir(dir,"plugin")；
+  // agents=cli 侧调 harness parseAgentMarkdown（注册表 sources.plugin 消费形制，生产接线=WP-10 义务）。
+  // 生效时点=会话装配（/plugin install 后新会话/reload 设置面可见；与 hooks/skills 既有装配口径一致 [自定]）。
+  // 安装确认≠信任确认（卡边界）：插件 hooks 仍受引擎信任门 :262013；插件 MCP 非 projectShared 不进 S-3 批准门（S-5 安装确认为其门）。
+  const pluginBaseDir = path.join(init.home ?? homedir(), ".standardcode");
+  const pluginViews = loadInstalledPlugins(pluginBaseDir);
+  const pluginDocs = buildPluginDocs(pluginViews);
+  const pluginSkillWarnings: string[] = [];
+  const pluginSkills: LoadedSkill[] = [];
+  const pluginAgentWarnings: string[] = [];
+  const pluginAgentDefs: SubagentDefinition[] = [];
+  for (const v of pluginViews) {
+    if (v.manifest === null) continue; // 装后坏件=不进注入面（告警继续，DoD① 同构）
+    for (const dir of v.manifest.components.skillsDirs) pluginSkills.push(...loadSkillsFromDir(dir, "plugin", pluginSkillWarnings));
+    const agentFiles: string[] = [];
+    for (const dir of v.manifest.components.agentsDirs) collectPluginMarkdown(dir, agentFiles);
+    agentFiles.sort(); // 枚举序稳定（loadProjectAgentDefinitions 同口径）
+    for (const f of agentFiles) {
+      let text: string;
+      try {
+        text = readFileSync(f, "utf8");
+      } catch (err) {
+        pluginAgentWarnings.push(`${f}: unreadable (${err instanceof Error ? err.message : String(err)}) — skipped`);
+        continue;
+      }
+      const p = parseAgentMarkdown(text, f);
+      pluginAgentWarnings.push(...p.warnings);
+      if (p.def) pluginAgentDefs.push(p.def);
+    }
+  }
 
   // 记忆用户轨（WP-02）：precedence/autoRead 自 settings（ADR-0030 memory.* 键）；MEM-043 项目工作区检测
   const memory = loadMemory({
@@ -328,6 +391,12 @@ export function createSession(init: SessionInit = {}): Session {
       toolFace: (base) => base,
       runByName: () => ({ text: "bootstrap", injected: null }),
     },
+    plugins: {
+      baseDir: () => pluginBaseDir,
+      installed: () => loadInstalledPlugins(pluginBaseDir),
+      agents: () => pluginAgentDefs,
+      warnings: () => [...pluginDocs.warnings, ...pluginSkillWarnings, ...pluginAgentWarnings],
+    },
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
@@ -412,9 +481,10 @@ export function createSession(init: SessionInit = {}): Session {
       try {
         const docs = session.trust.settings.docs;
         const mcpDocs: Partial<Record<McpSourceName, Record<string, unknown> | null>> = {};
-        for (const src of ["user", "projectShared", "projectLocal", "flag", "managed"] as McpSourceName[]) {
+        for (const src of ["user", "projectShared", "projectLocal", "flag", "managed"] as const) {
           mcpDocs[src] = (docs[src] as Record<string, unknown> | null) ?? null;
         }
+        if (pluginDocs.mcpDoc !== null) mcpDocs.plugin = pluginDocs.mcpDoc; // M4-WP-09：plugin 合并位（低→高在 projectLocal 之上）
         const gate = gateMcpServerDocs({
           docs: mcpDocs,
           trusted: session.trust.trusted,
@@ -446,7 +516,10 @@ export function createSession(init: SessionInit = {}): Session {
   session.i18n = createI18n(resolveLang(env, settingsValue<string>(session.trust.settings, "language")));
   configureI18n(session.i18n.lang); // 模块级 active 同步（R3：命令面/运行时 t() 与会话同语言）
   // —— M4-WP-04：hooks 引擎（§9.3 附注 13 事件；settings 五来源+disableAllHooks+信任门运行时判定 :262013）——
-  const hookEngine: HookEngine = createHookEngine(loadHookConfigs(session.trust.settings.docs), {
+  // M4-WP-09：plugin hooks 源位（合并序最低=组末执行；仍受引擎信任门约束——两门都要，卡边界）。
+  const hookDocs: Partial<Record<McpSourceName, Record<string, unknown> | null>> = { ...session.trust.settings.docs };
+  if (pluginDocs.hooksDoc !== null) hookDocs.plugin = pluginDocs.hooksDoc;
+  const hookEngine: HookEngine = createHookEngine(loadHookConfigs(hookDocs), {
     trusted: () => session.trust.trusted,
     cwd: sessionCwd,
     ...(session.id ? { sessionId: session.id } : {}),
@@ -495,7 +568,8 @@ export function createSession(init: SessionInit = {}): Session {
   };
 
   // —— M4-WP-05：skills（DoD② 三源发现+SEC-070 信任门前置；Skill 工具注册进工具面；清单增量/激活收窄/usage 半衰期内存态 [自定]）——
-  const loadedSkills = loadSkills({ ...(init.home !== undefined ? { home: init.home } : {}), projectRoot: sessionCwd, trusted: session.trust.trusted });
+  // M4-WP-09：plugin 源注入面（DoD② "plugin 层 WP-09 后生效"兑现；同名去重 rank=可调用版优先+user>project>plugin）。
+  const loadedSkills = loadSkills({ ...(init.home !== undefined ? { home: init.home } : {}), projectRoot: sessionCwd, trusted: session.trust.trusted, pluginSkills });
   const skillUsage: Record<string, SkillUsageRecord> = {};
   const sentSkillNames = new Set<string>();
   const sentSkillHashes = new Set<string>();
@@ -586,7 +660,8 @@ export function createSession(init: SessionInit = {}): Session {
     if (action === "approve" || action === "reject") {
       // S-3"来源持久记录"：从 raw 定义快照传输+命令或 URL（插值前——${VAR} 字面留痕，不落解析值）。
       const rec: McpTrustRecord = { ...base, decision: action === "approve" ? "approved" : "rejected", confirmedAt: new Date().toISOString() };
-      const doc = session.trust.settings.docs[known.origin] as Record<string, unknown> | null | undefined;
+      // M4-WP-09：plugin 源 server 的 raw=manifest mcpServers 声明聚合件（同样插值前留痕口径）。
+      const doc = known.origin === "plugin" ? pluginDocs.mcpDoc : (session.trust.settings.docs[known.origin] as Record<string, unknown> | null | undefined);
       const servers = doc?.mcpServers;
       const raw = (servers !== null && typeof servers === "object" && !Array.isArray(servers) ? (servers as Record<string, unknown>)[known.name] : undefined) as Record<string, unknown> | undefined;
       const t = parseTransportType(raw?.type);

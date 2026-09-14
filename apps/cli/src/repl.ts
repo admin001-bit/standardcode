@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
-import { checkToolInput as guardCheck } from "@standardcode/platform";
+import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue } from "@standardcode/platform";
 import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
@@ -509,6 +509,68 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         deps.session.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${r.injected}</system-reminder>` }] });
       }
       return { text: r.text };
+    },
+    // —— M4-WP-09：/plugin（ECO-030~033；DoD③ 安装确认=组件清单展示且非 once 零落地 fail-closed；DoD⑤ list/remove 留痕即时）——
+    pluginList: () => {
+      const s = deps.session;
+      const views = s.plugins.installed();
+      const doc = loadPluginsDoc(s.plugins.baseDir());
+      const lines = [s.i18n.t("repl.plugin.header", { value: views.length })];
+      if (views.length === 0) lines.push(s.i18n.t("repl.plugin.empty"));
+      for (const v of views) lines.push(`  ${v.record.name}  ${v.record.version}  ${v.record.source}${v.manifest === null ? `  ${s.i18n.t("repl.plugin.broken")}` : ""}`);
+      if (doc.marketplaces.length > 0) {
+        lines.push(s.i18n.t("repl.plugin.mktHeader", { value: doc.marketplaces.length }));
+        for (const m of doc.marketplaces) lines.push(`  ${m.name}  ${m.source}`);
+      }
+      for (const w of s.plugins.warnings()) lines.push(s.i18n.t("repl.plugin.warn", { value: w }));
+      return { text: lines.join("\n") };
+    },
+    pluginInstall: async (target) => {
+      const s = deps.session;
+      const confirm = deps.confirm;
+      if (!confirm) throw new Error(s.i18n.t("cmd.plugin.err.noConfirm")); // 无确认 UI=拒绝安装方向（S-5/SEC-020 fail-closed）
+      const out = await installPlugin(target, {
+        baseDir: s.plugins.baseDir(),
+        defaultMarketplace: settingsValue<string>(s.trust.settings, "plugins.defaultMarketplace"),
+        opts: {
+          onConfirm: async (manifest) => {
+            // DoD③：对话框展示将注入组件清单（N commands/N agents/N skills/hooks/MCP 逐名）
+            const c = componentCounts(manifest);
+            const detail = s.i18n.t("repl.plugin.confirmDetail", {
+              name: manifest.name,
+              version: manifest.version,
+              commands: c.commands.length,
+              agents: c.agents,
+              skills: c.skills.length,
+              hooks: c.hookEvents.length > 0 ? s.i18n.t("repl.plugin.hookCol", { value: c.hookEvents.join(", ") }) : "",
+              mcp: c.mcpServers.length > 0 ? s.i18n.t("repl.plugin.mcpCol", { value: c.mcpServers.join(", ") }) : "",
+            });
+            const choice = await confirm.confirm(`plugin:${manifest.name}`, detail);
+            return choice === "once"; // 非 once（always/deny）=零落地 [自定 起步注记裁决：once=安装批准]
+          },
+        },
+      });
+      const warnLines = out.warnings.map((w) => s.i18n.t("repl.plugin.warn", { value: w }));
+      switch (out.error) {
+        case "declined":
+          return { text: [s.i18n.t("repl.plugin.denied"), ...warnLines].join("\n") };
+        case "exists":
+          throw new Error(s.i18n.t("repl.plugin.exists", { value: out.manifest?.name ?? target }));
+        case "no-manifest":
+          throw new Error(s.i18n.t("repl.plugin.noManifest", { value: target }));
+        case "clone-failed":
+          throw new Error(s.i18n.t("repl.plugin.cloneFailed", { value: target }));
+        case "marketplace-entry-not-found":
+          throw new Error(s.i18n.t("repl.plugin.notFound", { value: target }));
+      }
+      if (out.marketplace) return { text: [s.i18n.t("repl.plugin.marketAdded", { name: out.marketplace.name, source: out.marketplace.source, value: out.marketplace.entries }), ...warnLines].join("\n") };
+      return { text: [s.i18n.t("repl.plugin.installed", { name: out.manifest!.name, version: out.manifest!.version, source: target }), s.i18n.t("repl.plugin.effectNote"), ...warnLines].join("\n") };
+    },
+    pluginRemove: (name) => {
+      const s = deps.session;
+      const r = removePlugin(name, s.plugins.baseDir());
+      if (!r.removed) throw new Error(s.i18n.t("repl.plugin.notFound", { value: name }));
+      return { text: [s.i18n.t("repl.plugin.removed", { value: name }), ...r.warnings.map((w) => s.i18n.t("repl.plugin.warn", { value: w }))].join("\n") };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

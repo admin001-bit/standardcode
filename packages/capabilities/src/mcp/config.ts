@@ -6,9 +6,12 @@
 // 同名冲突=抑制+告警不改名（dig-05 §2.1 tQo :153938-153960 / 同名同配置仅 warning x0l :154004-154018 形状）。
 import { interpolateEnv } from "./interp.ts";
 
-export type McpSourceName = "user" | "projectShared" | "projectLocal" | "flag" | "managed";
-/** 低→高序（与 SETTINGS_SOURCE_ORDER 同构，platform/settings.ts:18 镜像——此处自持避免 L3→L6 反向依赖 ARCH-001）。 */
-export const MCP_SOURCE_ORDER: readonly McpSourceName[] = ["user", "projectShared", "projectLocal", "flag", "managed"];
+export type McpSourceName = "user" | "projectShared" | "projectLocal" | "plugin" | "flag" | "managed";
+/** 低→高序（与 SETTINGS_SOURCE_ORDER 同构，platform/settings.ts:18 镜像——此处自持避免 L3→L6 反向依赖 ARCH-001）。
+ * plugin 位 [自定 2026-09-14 WP-09]：projectLocal 之上、flag 之下——对位 dig-05 :154586-154588 plugins 展开在
+ * user→project→local 之后的末位高优；本仓 flag/managed 为策略面保持更高。plugin doc 非 settings 文件源，
+ * 由 cli 装配层经 platform/plugin/installer.ts buildPluginDocs 聚合注入。 */
+export const MCP_SOURCE_ORDER: readonly McpSourceName[] = ["user", "projectShared", "projectLocal", "plugin", "flag", "managed"];
 
 export type McpTransportKind = "stdio" | "sse" | "http";
 

@@ -13,8 +13,8 @@ describe("ADR-0040 在位（DoD①）", () => {
     const p = `${repoRoot}docs/adr/0040-mcp-config-carrier-and-client.md`;
     expect(existsSync(p)).toBe(true);
   });
-  it("MCP_SOURCE_ORDER 与 settings 五来源低→高同构（ADR-0030 镜像）", () => {
-    expect(MCP_SOURCE_ORDER).toEqual(["user", "projectShared", "projectLocal", "flag", "managed"]);
+  it("MCP_SOURCE_ORDER 低→高【勘误 2026-09-14：WP-09 plugin 源位插入 projectLocal 之上、flag 之下——settings 五源镜像+plugin 非 settings 源】", () => {
+    expect(MCP_SOURCE_ORDER).toEqual(["user", "projectShared", "projectLocal", "plugin", "flag", "managed"]);
   });
 });
 

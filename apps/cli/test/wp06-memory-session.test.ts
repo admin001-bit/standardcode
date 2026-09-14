@@ -120,8 +120,8 @@ describe("DoD⑥ /memory 双轨可视化", () => {
     expect(out).toContain("记忆文件: 1 个");
   });
 
-  it("命令清单恰 28（DoD⑥ 命令清单 28 适配）", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(28);
+  it("命令清单恰 29（DoD⑥ 命令清单 28 适配+WP-09 /plugin【勘误 2026-09-14：28→29】）", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(29);
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("memory");
   });
 });

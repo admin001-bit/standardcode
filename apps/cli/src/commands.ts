@@ -165,6 +165,12 @@ export interface CommandContext {
   skillsList(): { text: string };
   /** WP-05 /skills run：用户点名豁免（disable-model-invocation 双轨的豁免面，DoD④）。 */
   skillsRun(name: string, args?: string): { text: string };
+  /** M4-WP-09 /plugin list：安装记录（含坏件标注）+聚合告警（读盘即时）。 */
+  pluginList(): { text: string };
+  /** M4-WP-09 /plugin install：S-5 显式确认（组件清单展示）→ 复制+留痕；未确认=零落地。 */
+  pluginInstall(target: string): Promise<{ text: string }>;
+  /** M4-WP-09 /plugin remove：目录级清理+留痕删。 */
+  pluginRemove(name: string): { text: string };
   currentModel(): string;
   /** 未知模型抛错（由 repl 统一转 error 行）。 */
   switchModel(name: string): void;
@@ -589,6 +595,41 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     execute(_args, ctx) {
       if (_args.trim() !== "") throw new Error(ctx.t("cmd.memory.err.args"));
       ctx.write(ctx.memoryView().text);
+    },
+  },
+  // —— WP-09：M4 分期末件（§8.2 M4 增 /plugin；ECO-032 install|list|remove；S-5 安装确认=组件清单展示）——
+  {
+    name: "plugin",
+    get usage() {
+      return t("cmd.plugin.usage");
+    },
+    get description() {
+      return t("cmd.plugin.desc");
+    },
+    async execute(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "list").toLowerCase();
+      if (sub === "list") {
+        if (parts.length > 1) throw new Error(ctx.t("cmd.plugin.err.listExtra", { value: parts.slice(1).join(" ") }));
+        ctx.write(ctx.pluginList().text);
+        return;
+      }
+      if (sub === "install") {
+        const target = parts[1];
+        if (!target) throw new Error(ctx.t("cmd.plugin.err.targetRequired"));
+        if (parts.length > 2) throw new Error(ctx.t("cmd.plugin.err.oneTarget", { value: parts.slice(1).join(" ") }));
+        const r = await ctx.pluginInstall(target);
+        ctx.write(r.text);
+        return;
+      }
+      if (sub === "remove") {
+        const name = parts[1];
+        if (!name) throw new Error(ctx.t("cmd.plugin.err.nameRequired"));
+        if (parts.length > 2) throw new Error(ctx.t("cmd.plugin.err.oneTarget", { value: parts.slice(1).join(" ") }));
+        ctx.write(ctx.pluginRemove(name).text);
+        return;
+      }
+      throw new Error(ctx.t("cmd.plugin.err.unknownSub", { value: sub }));
     },
   },
 ];

@@ -29,6 +29,11 @@ export interface LoadSkillsResult {
   warnings: string[];
 }
 
+/** 单目录枚举装载（WP-09 起对外导出：plugin 技能目录注入面消费——dir=技能父目录，各子目录含 SKILL.md）。 */
+export function loadSkillsFromDir(dir: string, source: SkillSource, warnings: string[]): LoadedSkill[] {
+  return discoverDir(dir, source, warnings);
+}
+
 function discoverDir(dir: string, source: SkillSource, warnings: string[]): LoadedSkill[] {
   let entries: string[];
   try {

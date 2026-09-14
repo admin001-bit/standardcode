@@ -62,8 +62,10 @@ export interface LoadedHooksConfig {
   warnings: string[];
 }
 
-/** settings 来源高→低序（managed 最高优先；与 SETTINGS_SOURCE_ORDER 反序，此处自持避免反向依赖）。 */
-const SOURCE_HIGH_TO_LOW: readonly McpSourceName[] = ["managed", "flag", "projectLocal", "projectShared", "user"];
+/** settings 来源高→低序（managed 最高优先；与 SETTINGS_SOURCE_ORDER 反序，此处自持避免反向依赖）。
+ * plugin 位 [自定 2026-09-14 WP-09]：五 settings 源之下最低（组先执行序=最后）——插件 hooks 是安装确认过的
+ * 第三方配置，不得压过用户本机设置；doc 由 cli 装配层聚合注入（platform/plugin/installer.ts buildPluginDocs）。 */
+const SOURCE_HIGH_TO_LOW: readonly McpSourceName[] = ["managed", "flag", "projectLocal", "projectShared", "user", "plugin"];
 
 function parseHookConfig(raw: unknown, source: string, warnings: string[]): HookConfig | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
