@@ -457,7 +457,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const lines = [s.i18n.t("repl.mcp.header", { value: views.length })];
       for (const v of views) {
         const status = v.status ?? "-";
-        lines.push(`  ${v.name}  ${v.transport}  ${v.origin}  ${v.state}  ${status}${v.error ? ` ${s.i18n.t("repl.mcp.errorCol", { value: v.error })}` : ""}`);
+        lines.push(`  ${v.name}  ${v.transport}  ${v.origin}  ${v.state}  ${status}${v.error ? `  ${s.i18n.t("repl.mcp.errorCol", { value: v.error })}` : ""}`);
       }
       if (views.some((v) => v.state === "pending")) {
         lines.push(s.i18n.t("repl.mcp.pendingHint"));

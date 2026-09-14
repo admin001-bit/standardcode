@@ -78,12 +78,16 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
   it("repl.ts 渲染写点零固定字面（双引号+反引号模板头+throw 三路扫描）", () => {
     const lits = [...replSrc.matchAll(/io\.write\("([^"]*)"/g)].map((m) => m[1]!).filter((v) => v !== "\n" && v.trim() !== "");
     expect(lits).toEqual([]);
-    const bt = [...replSrc.matchAll(/io\.write\(`([^`$]*)$/g)].map((m) => m[1]!).filter((v) => v.trim() !== "" && v !== "\n");
+    const bt = [...replSrc.matchAll(/io\.write\(`([^`$]*)/g)].map((m) => m[1]!).filter((v) => v.trim() !== "" && v !== "\n" && v !== "\\n");
     expect(bt).toEqual([]);
-    const th = [...replSrc.matchAll(/throw new Error\(`([^`$]*)$/g)].map((m) => m[1]!).filter((v) => v.trim() !== "");
+    const th = [...replSrc.matchAll(/throw new Error\(`([^`$]*)/g)].map((m) => m[1]!).filter((v) => v.trim() !== "");
     expect(th).toEqual([]);
     const thLit = [...replSrc.matchAll(/throw new Error\("([^"]*)"\)/g)].map((m) => m[1]!).filter((v) => v.trim() !== "");
     expect(thLit).toEqual([]);
+  });
+  it("mcp errorCol 空格形钉（基线 status 后 2 空格；防换位静默回归）", () => {
+    expect(EN["repl.mcp.errorCol"]).toBe("error: {value}");
+    expect(replSrc).toContain("${v.error ? `  ${s.i18n.t(\"repl.mcp.errorCol\"");
   });
   it("session 装配点钉（R3：configureI18n 接线不得静默脱落）", () => {
     expect(sessSrc).toContain("configureI18n(session.i18n.lang)");

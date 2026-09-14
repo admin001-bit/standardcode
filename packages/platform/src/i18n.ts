@@ -1,6 +1,6 @@
 // WP-07（M4）：i18n 双包（ECO-010~012；ADR-0042）。
-// catalog 形状/选择链/缺失策略/收敛范围=ADR-0042 四要素 [自定]（本地无 [CC] i18n 一手）。
-// EN=单一事实源（commands.ts 经 tEn 模块级直读——en 与运行环境无关）；ZH_CN 键集合 MUST 与 EN 全等（测试钉）。
+// catalog 形状/选择链/缺失策略/收敛范围=ADR-0042 四要素 [自定]（本地无 [CC] i18n 一手）。渲染面命令面经运行时 getter t()+active 单例（configureI18n；复验 R3 取代早期 tEn 模块级形制）。
+// EN=单一事实源（渲染文案唯一定义处；commands.ts description/usage 为运行时 getter t()，active 由 configureI18n 同步——R3 复验取代早期 tEn 模块级直读形制）；ZH_CN 键集合 MUST 与 EN 全等（测试钉）。
 // 选择链：env STANDARD_CODE_LANG（en|zh-CN；非法=告警回退 en）> settings.language > en（resolveLang）。
 // 缺失：t(key) 当前包无键→回退 EN；EN 亦无→返回 key+一次性告警（进程内去重）。
 // 技术术语保留（DoD⑥）：ZH_CN 内 model/tool/provider/MCP/skill/hook/plugin 等英文原形（I18N_TERMS_KEEP+测试抽查）。
@@ -441,7 +441,7 @@ function interpolate(text: string, params?: Record<string, string | number>): st
   return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m));
 }
 
-/** EN 直读（模块级求值面——commands.ts description/usage 单一事实源；en 与运行环境无关）。 */
+/** EN 直读（缺省工具；命令面运行时求值已改 getter t()+active——本函数保留供 en 基线直读面）。 */
 export function tEn(key: string): string {
   const v = EN[key];
   if (v === undefined) warnOnce(`missing i18n key: ${key}`);
