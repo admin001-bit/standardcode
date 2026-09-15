@@ -755,6 +755,21 @@ mod tests {
     }
 
     #[test]
+    fn windows_wire_net_allowed_serialization() {
+        // DoD① "网络 deny·allow"两形之 windows 半（三平台两形全覆盖收口）
+        let pol = SandboxPolicy::workspace_write(vec![root("C:/w")]).allow_network();
+        let req = ExecRequest {
+            program: PathBuf::from("git"),
+            args: vec!["push".to_string()],
+            cwd: PathBuf::from("C:/w"),
+        };
+        let out = compile(&req, &pol, &PolicyFacts::default(), Platform::Windows).unwrap();
+        let wire: serde_json::Value = serde_json::from_str(&out.policy_json.unwrap()).unwrap();
+        assert_eq!(wire["net"], json!("allowed"));
+        assert_eq!(wire["schemaVersion"], json!(1));
+    }
+
+    #[test]
     fn linux_carveout_masks() {
         let mut pol = SandboxPolicy::workspace_write(vec![root("/w")]);
         pol.fs.carveouts = vec![
