@@ -498,6 +498,8 @@ struct ProtectedExpanded {
 
 #[derive(Serialize)]
 struct WirePolicy {
+    // ENG-080 行 504 落盘契约键名逐字 camel（O4 清偿：跨进程 payload 亦按落盘纪律）
+    #[serde(rename = "schemaVersion")]
     schema_version: u32,
     kind: FsKind,
     net: NetPolicy,
@@ -687,6 +689,72 @@ mod tests {
     }
 
     #[test]
+    fn linux_net_allow_form_omits_unshare_net() {
+        // R1 清偿（DoD①"网络 deny·allow"两形之 allow 形判别力）：V4 针（无条件注入）必红于此
+        let pol = SandboxPolicy::workspace_write(vec![root("/w")]).allow_network();
+        let out = compile(&req(), &pol, &ww_facts(), Platform::Linux).unwrap();
+        assert_eq!(out.sandbox, SandboxType::LinuxBubblewrap);
+        assert!(
+            !out.argv.iter().any(|a| a == "--unshare-net"),
+            "net allow 形不得注入 --unshare-net: {:?}",
+            out.argv
+        );
+        // 其余挂载/隔离形不变（allow-network 不放松 fs 面）
+        assert!(out.argv.contains(&"--unshare-user".to_string()));
+        assert!(out.argv.windows(3).any(|w| w == ["--bind", "/w", "/w"]));
+        assert!(out
+            .argv
+            .ends_with(&["--".to_string(), "git".to_string(), "push".to_string()]));
+    }
+
+    #[test]
+    fn mac_net_allow_emits_network_rule_before_denies() {
+        let pol = SandboxPolicy::workspace_write(vec![root("/w")]).allow_network();
+        let out = compile(&req(), &pol, &PolicyFacts::default(), Platform::MacOS).unwrap();
+        let text = out.profile_text.unwrap();
+        let net = text
+            .find("(allow network*)")
+            .expect("allow 形必须发出 (allow network*)");
+        assert!(net < text.find("(deny file-write*").unwrap());
+    }
+
+    #[test]
+    fn mac_read_only_snapshot_no_write_allow() {
+        // "三档×三平台"完整集之 mac read-only 半（V 随卡建议）
+        let out = compile(
+            &req(),
+            &SandboxPolicy::read_only(),
+            &PolicyFacts::default(),
+            Platform::MacOS,
+        )
+        .unwrap();
+        let text = out.profile_text.clone().unwrap();
+        assert!(text.contains("(allow file-read*)"));
+        assert!(!text.contains("(allow file-write*"));
+        assert!(!text.contains("(allow network*"));
+        assert!(!text.contains("file-write-unlink")); // 无根=无 PD/RO/锚节
+        assert!(out.params.is_empty());
+        assert_eq!(out.argv[0], "/usr/bin/sandbox-exec");
+    }
+
+    #[test]
+    fn windows_read_only_wire_empty_roots() {
+        // "三档×三平台"完整集之 windows read-only 半
+        let out = compile(
+            &req(),
+            &SandboxPolicy::read_only(),
+            &PolicyFacts::default(),
+            Platform::Windows,
+        )
+        .unwrap();
+        let wire: serde_json::Value = serde_json::from_str(&out.policy_json.unwrap()).unwrap();
+        assert_eq!(wire["kind"], json!("restricted"));
+        assert_eq!(wire["net"], json!("denied"));
+        assert_eq!(wire["writable_roots"], json!([]));
+        assert_eq!(wire["protected_expanded"]["create_deny"], json!([]));
+    }
+
+    #[test]
     fn linux_carveout_masks() {
         let mut pol = SandboxPolicy::workspace_write(vec![root("/w")]);
         pol.fs.carveouts = vec![
@@ -785,7 +853,7 @@ mod tests {
         assert_eq!(
             wire,
             json!({
-                "schema_version": 1u64,
+                "schemaVersion": 1u64,
                 "kind": "restricted",
                 "net": "denied",
                 "writable_roots": [{"path": "C:\\w", "shape": "real"}],
