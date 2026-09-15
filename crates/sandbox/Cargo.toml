@@ -2,5 +2,10 @@
 name = "standardcode-sandbox"
 version = "0.0.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "StandardCode 沙箱执行后端：策略编译器（命令+策略→argv 纯函数）+ stdio JSON IPC 帧层 + SandboxBackend trait（v2.8 §5.3(3) / ARCH-008；M5-WP-01 骨架）"
 
-# M0 占位：Rust workspace（M5 交付，v2.8 §12.3）。本包当前无任何实现。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

@@ -12,7 +12,10 @@
     "golden:compare": "node evals/golden/compare.mjs",
     "evals:run": "vitest run evals/benchmark/benchmark.test.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities && tsc -p apps/cli && tsc -p evals"
+    "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities && tsc -p apps/cli && tsc -p evals",
+    "rust:fmt": "cargo fmt --all --check",
+    "rust:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
+    "rust:test": "cargo test --workspace"
   },
   "devDependencies": {
     "@standardcode/cli": "workspace:*",

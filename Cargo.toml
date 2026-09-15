@@ -1,0 +1,5 @@
+# Rust workspace（v2.8 §12.3 行 497：crates/sandbox = M5 交付、沙箱后端单点）。
+# TS 侧工程权威 = pnpm-workspace.yaml，二者互不隶属；构建/测试命令登记于根 package.json scripts 与 ci.yml（仓库 AGENTS 规则 1）。
+[workspace]
+resolver = "2"
+members = ["crates/sandbox"]
