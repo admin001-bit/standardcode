@@ -11,6 +11,24 @@ use crate::exec::{ExecOutput, ExecRequest, PolicyFacts};
 use crate::policy::SandboxPolicy;
 use crate::run::plain_exec;
 
+/// 顶层别名前缀重写（仅 /tmp /var /etc 三形，含带尾斜杠子路径；纯词法，不触盘）。
+fn dealias(s: &str) -> String {
+    for (from, to) in [
+        ("/tmp", "/private/tmp"),
+        ("/var", "/private/var"),
+        ("/etc", "/private/etc"),
+    ] {
+        if s == from {
+            return to.to_string();
+        }
+        let pre = format!("{from}/");
+        if let Some(rest) = s.strip_prefix(&pre) {
+            return format!("{to}/{rest}");
+        }
+    }
+    s.to_string()
+}
+
 pub fn run(
     req: &ExecRequest,
     policy: &SandboxPolicy,
@@ -23,8 +41,12 @@ pub fn run(
     if compiled.sandbox == SandboxType::None {
         return plain_exec(&req);
     }
-    let out = std::process::Command::new(&compiled.argv[0])
-        .args(&compiled.argv[1..])
+    // 顶层系统别名解析（§5.3(3) 教训清单同族：mac /tmp /var /etc 为 /private 之符号链接，
+    // CI temp_dir=/var/folders/…；SBPL subpath 比对发生在内核解析后=实路径，参数须同形——
+    // 仅重写顶层别名前缀，深链接不解析不跟从〔codex normalize_writable_root 同向，报告 §1.4〕）。
+    let argv: Vec<String> = compiled.argv.iter().map(|a| dealias(a.as_str())).collect();
+    let out = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
         .current_dir(&req.cwd)
         .env_clear()
         .envs(&req.env)
@@ -42,6 +64,17 @@ pub fn run(
 mod integration {
     use super::*;
     use crate::policy::{RootPath, SandboxPolicy};
+
+    #[test]
+    fn dealias_top_level_aliases_only() {
+        assert_eq!(dealias("/var/folders/x/ws"), "/private/var/folders/x/ws");
+        assert_eq!(dealias("/tmp"), "/private/tmp");
+        assert_eq!(dealias("/etc/hosts"), "/private/etc/hosts");
+        // 深链接位与已实路径不动
+        assert_eq!(dealias("/private/var/x"), "/private/var/x");
+        assert_eq!(dealias("/usr/bin/sandbox-exec"), "/usr/bin/sandbox-exec");
+        assert_eq!(dealias("/varfoo/x"), "/varfoo/x");
+    }
 
     #[test]
     fn mac_real_isolation() {
