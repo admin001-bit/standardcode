@@ -3,11 +3,12 @@
 //! **受限令牌（CreateRestrictedToken：DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED）
 //! + ACL（capability SID 每 run 临时随机；可写根授可继承 allow、元数据路径设对象级 deny）**。
 //!
-//! 形制对位参考报告 §1.6：MSDN 语义——WRITE_RESTRICTED 令**写**访问检查只对照 restricting
-//! SIDs ⇒ 无 capability-allow 的对象一律拒写；读不经该闸（全盘可读档保持）。deny ACE 压过
-//! 继承 allow（元数据保护形）。restricting 名单=capability 单员（Codex 顺序硬约定
-//! Capabilities→Extra→Logon→Everyone 之 Logon/Everyone 员经线程探针判定不需要——
-//! 写闸只认对象 ACL 对 cap 的 allow/deny，探针 w_new/w_exist 全过即证 [自定] 登记）。
+//! 形制对位参考报告 §1.6：restricting 名单访问检查=交集形——本机线程模拟档实证
+//! **读亦对照名单**（win.ini 仅 Users 授权对象读拒/everyone-R 对象读通），与报告行 444-448
+//! "consults only for writes"字面存在未对质分歧且线程档混入模拟级别效应 [自定观察登记]——
+//! 读档终判=子进程面 CI 证据（R1 门）。写闸：capability-allow 对象可写/其余拒（探针实证）；
+//! deny ACE 压过继承 allow（元数据保护形）。restricting=[cap,logon,everyone]（Codex 行 461
+//! 序硬约定；三员为 everyone/logon 授权对象读权限恢复之必要形）。
 //! 子进程 CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota：CI runner=admin 在位；
 //! 本地非提权返回 RunError::Privilege——同模块**线程探针**（SetThreadToken）本地覆盖
 //! 令牌+ACL 语义全判据，CI 补子进程全链。
@@ -68,7 +69,7 @@ fn wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
-/// 临时 capability SID：S-1-15-3-<rand32>（SECURITY_CAPABILITIES_AUTHORITY；随机源
+/// 临时 capability SID：S-1-15-<rand32>（SECURITY_CAPABILITIES_AUTHORITY=15 单子授权；随机源
 /// BCryptGenRandom——对位 Codex make_random_cap_sid_string 的随机性要求，参考报告 §1.6）。
 struct CapSid {
     psid: *mut c_void,
@@ -363,22 +364,40 @@ fn grant_allow(root: &Path, cap: &CapSid) -> Result<AclGuard, RunError> {
 }
 
 /// 保护路径对象级 deny（既有对象显式 deny；子对象经 (OI|CI) 传播——deny 位压过继承 allow）。
-fn set_deny(path: &Path, cap: &CapSid) -> Result<(), RunError> {
-    let wp = wide(&path.to_string_lossy());
+/// 返回还原 guard（R5 清偿：与根 grant_allow 对称，drop 即还原原显式 DACL）。
+fn set_deny(path: &Path, cap: &CapSid) -> Result<AclGuard, RunError> {
+    let pstr = path.to_string_lossy().into_owned();
+    let wp = wide(&pstr);
     unsafe {
+        let mut owner: *mut c_void = std::ptr::null_mut();
+        let mut group: *mut c_void = std::ptr::null_mut();
+        let mut orig_dacl: *mut ACL = std::ptr::null_mut();
+        let mut orig_sacl: *mut ACL = std::ptr::null_mut();
+        let mut sd: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        let rc = GetNamedSecurityInfoW(
+            wp.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            &mut owner,
+            &mut group,
+            &mut orig_dacl,
+            &mut orig_sacl,
+            &mut sd,
+        );
+        if rc != 0 {
+            return Err(RunError::Spawn(format!(
+                "GetNamedSecurityInfoW({pstr}) rc={rc}"
+            )));
+        }
         let entries = [access_entry(
             cap.psid,
             true,
             OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
         )];
         let mut dacl: *mut ACL = std::ptr::null_mut();
-        let rc = SetEntriesInAclW(
-            entries.len() as u32,
-            entries.as_ptr(),
-            std::ptr::null(),
-            &mut dacl,
-        );
+        let rc = SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), orig_dacl, &mut dacl);
         if rc != 0 {
+            LocalFree(sd as _);
             return Err(RunError::Spawn(format!("SetEntriesInAclW(deny) rc={rc}")));
         }
         let rc = SetNamedSecurityInfoW(
@@ -392,12 +411,17 @@ fn set_deny(path: &Path, cap: &CapSid) -> Result<(), RunError> {
         );
         LocalFree(dacl as _);
         if rc != 0 {
+            LocalFree(sd as _);
             return Err(RunError::Spawn(format!(
                 "SetNamedSecurityInfoW(deny {}) rc={rc}",
                 path.display()
             )));
         }
-        Ok(())
+        Ok(AclGuard {
+            path: pstr,
+            original_dacl: orig_dacl,
+            sd,
+        })
     }
 }
 
@@ -441,13 +465,13 @@ pub fn run(
     let ids = collect_sids()?;
     let token = build_restricted_token(&ids)?;
     let protected = protected_paths(policy);
+    let mut guards = Vec::new();
     for p in &protected {
         if !p.exists() {
             std::fs::create_dir_all(p).ok();
         }
-        set_deny(p, &ids.cap)?;
+        guards.push(set_deny(p, &ids.cap)?);
     }
-    let mut guards = Vec::new();
     for r in &policy.fs.writable_roots {
         guards.push(grant_allow(&r.path, &ids.cap)?);
     }
@@ -468,10 +492,20 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<ExecOutput, RunE
         let mut out_w: HANDLE = std::ptr::null_mut();
         let mut err_r: HANDLE = std::ptr::null_mut();
         let mut err_w: HANDLE = std::ptr::null_mut();
-        if CreatePipe(&mut out_r, &mut out_w, &sa, 0) == 0
-            || CreatePipe(&mut err_r, &mut err_w, &sa, 0) == 0
-        {
-            return Err(RunError::Spawn("CreatePipe 失败".into()));
+        let close_all = |v: &[HANDLE]| {
+            for h in v {
+                if !h.is_null() {
+                    CloseHandle(*h);
+                }
+            }
+        };
+        if CreatePipe(&mut out_r, &mut out_w, &sa, 0) == 0 {
+            close_all(&[out_r, out_w]);
+            return Err(RunError::Spawn("CreatePipe(stdout) 失败".into()));
+        }
+        if CreatePipe(&mut err_r, &mut err_w, &sa, 0) == 0 {
+            close_all(&[out_r, out_w, err_r, err_w]);
+            return Err(RunError::Spawn("CreatePipe(stderr) 失败".into()));
         }
         let cmdline = {
             let mut s = quote_cmdline(req);
@@ -519,10 +553,12 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<ExecOutput, RunE
             // 1312=特权缺失原文码；5=ACCESS_DENIED（本地非提权 shell 的 CPAU 实际表现——
             // 两者同归"提权 shell/CI admin"环境依赖，登记偏差）
             if code == ERROR_PRIVILEGE_NOT_HELD || code == 5 {
+                close_all(&[out_r, out_w, err_r, err_w]);
                 return Err(RunError::Privilege(
-                    "CreateProcessAsUserW 特权不足（SeAssignPrimaryToken/SeIncreaseQuota）；CI=admin 在位，本地非提权 shell 会拒".into(),
+                    "CreateProcessAsUserW 特权不足（SeAssignPrimaryToken/SeIncreaseQuota）；本地非提权会拒——CI 门禁见测面".into(),
                 ));
             }
+            close_all(&[out_r, out_w, err_r, err_w]);
             return Err(RunError::Spawn(format!(
                 "CreateProcessAsUserW 失败 gle={code}"
             )));
@@ -643,8 +679,9 @@ mod tests {
         let ids = collect_sids().unwrap();
         let token = build_restricted_token(&ids).unwrap();
         std::fs::create_dir_all(t.join("ws/.standardcode")).unwrap();
+        let mut deny_guards = Vec::new();
         for p in [t.join("ws/.git"), t.join("ws/.standardcode")] {
-            set_deny(&p, &ids.cap).unwrap();
+            deny_guards.push(set_deny(&p, &ids.cap).unwrap());
         }
         let guard = grant_allow(&t.join("ws"), &ids.cap).unwrap();
         let ws = t.join("ws");
@@ -660,6 +697,7 @@ mod tests {
             )
         });
         drop(guard);
+        drop(deny_guards);
         unsafe { CloseHandle(imp) };
         unsafe { CloseHandle(token) };
         assert!(w_new, "ws 内新建必须可写（capability allow）");
@@ -676,9 +714,16 @@ mod tests {
         let pol = SandboxPolicy::workspace_write(vec![RootPath::real(t.join("ws"))]);
         let req = ExecRequest::new("cmd.exe", vec!["/C".into(), cmd.to_string()], t.join("ws"));
         match run(&req, &pol, &PolicyFacts::default()) {
-            Ok(o) => Some((o.exit_code == Some(0), format!("{}{}", o.stdout, o.stderr))),
+            Ok(o) => {
+                eprintln!("CHILD-RAN[{name}] exit={:?}", o.exit_code);
+                Some((o.exit_code == Some(0), format!("{}{}", o.stdout, o.stderr)))
+            }
             Err(RunError::Privilege(_)) => {
-                eprintln!("NOTE[{name}] 本地无 CPAU 特权，子进程面跳过（CI=admin 实判）");
+                assert!(
+                    std::env::var("GITHUB_ACTIONS").is_err(),
+                    "R1 门禁：windows job 内子进程 suite 不得走 Privilege-skip（零判别静默绿不成立）"
+                );
+                eprintln!("NOTE[{name}] 本地无 CPAU 特权，子进程面跳过（终判=CI CHILD-RAN 证据）");
                 None
             }
             Err(e) => panic!("child run fail: {e}"),
@@ -751,6 +796,48 @@ mod tests {
         .unwrap();
         assert!(!ok, ".standardcode/sub mkdir must be denied");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// 受限令牌结构断言（R1b：不依赖 CPAU 的本地直接证据）：restricting 名单恰三员
+    /// 且序=[cap, logon, everyone]（Codex §1.6 行 461 序硬约定的可验形）。
+    #[test]
+    fn restricted_token_structure_three_members() {
+        use windows_sys::Win32::Security::{EqualSid, TokenRestrictedSids};
+        let ids = collect_sids().unwrap();
+        let token = build_restricted_token(&ids).unwrap();
+        unsafe {
+            let mut need: u32 = 0;
+            GetTokenInformation(
+                token,
+                TokenRestrictedSids,
+                std::ptr::null_mut(),
+                0,
+                &mut need,
+            );
+            assert!(need > 0, "TokenRestrictedSids 长度查询失败");
+            let mut buf = vec![0u8; need as usize];
+            assert_ne!(
+                GetTokenInformation(
+                    token,
+                    TokenRestrictedSids,
+                    buf.as_mut_ptr() as *mut c_void,
+                    need,
+                    &mut need,
+                ),
+                0
+            );
+            let tg = &*(buf.as_ptr() as *const TOKEN_GROUPS);
+            assert_eq!(tg.GroupCount, 3, "restricting 名单三员");
+            let g = std::slice::from_raw_parts(tg.Groups.as_ptr(), 3);
+            assert_ne!(EqualSid(g[0].Sid, ids.cap.psid), 0, "员0=capability");
+            assert_ne!(EqualSid(g[1].Sid, ids.logon as *mut _), 0, "员1=logon");
+            assert_ne!(
+                EqualSid(g[2].Sid, ids.everyone as *mut _),
+                0,
+                "员2=everyone"
+            );
+            CloseHandle(token);
+        }
     }
 
     #[test]

@@ -108,6 +108,7 @@ fn linux_real_isolation_suite() {
             "--unshare-user",
             "--unshare-pid",
             "--unshare-ipc",
+            "--as-pid-1",
             "--unshare-net",
             "--ro-bind",
             "/",

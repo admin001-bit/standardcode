@@ -307,6 +307,7 @@ fn compile_linux(req: &ExecRequest, plan: &MaskPlan<'_>, facts: &PolicyFacts) ->
         "--unshare-user",
         "--unshare-pid",
         "--unshare-ipc",
+        "--as-pid-1", // codex 强制形（参考报告 §1.5 行 380"所有情况下都会强制插入 :39"）
     ] {
         argv.push(f.to_string());
     }
@@ -615,6 +616,7 @@ mod tests {
                 "--unshare-user",
                 "--unshare-pid",
                 "--unshare-ipc",
+                "--as-pid-1",
                 "--unshare-net",
                 "--ro-bind",
                 "/",
