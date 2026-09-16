@@ -366,13 +366,22 @@ fn compile_linux(req: &ExecRequest, plan: &MaskPlan<'_>, facts: &PolicyFacts) ->
 /// deny default 之下由后续节精确放行——粗粒度 allow 的必要性由 WP-02 以真命令 +
 /// `seatbelt_tests.rs` 范本形制（§5.3(3) 行 266）实测校准）。
 fn mac_base() -> Vec<String> {
+    // 合法 seatbelt 动词组（macos CI 真跑实证原通配伪动词被 sandbox-exec 拒：
+    // `unbound variable: signal*`——修正锚：codex
+    // `evidence\harness参考项目\codex\codex-rs\sandboxing\src\seatbelt_base_policy.sbpl`
+    // 行 8-21/24/95-95 同族动词，[自定] 取最小集：sysctl-read 放宽全读（信息面非写闸）、
+    // mach-lookup/iokit/pty 白名单留 WP-03 真工具校准时加——登记偏差③）
     vec![
         "(version 1)".to_string(),
         "(deny default)".to_string(),
-        "(allow process*)".to_string(),
-        "(allow signal*)".to_string(),
+        "(allow process-exec)".to_string(),
+        "(allow process-fork)".to_string(),
+        "(allow signal (target same-sandbox))".to_string(),
+        "(allow process-info* (target same-sandbox))".to_string(),
+        "(allow file-write-data (require-all (path \"/dev/null\") (vnode-type CHARACTER-DEVICE)))"
+            .to_string(),
         "(allow sysctl-read)".to_string(),
-        "(allow mach*)".to_string(),
+        "(allow ipc-posix-sem)".to_string(),
         "(allow ipc-posix-shm)".to_string(),
     ]
 }
@@ -801,10 +810,13 @@ mod tests {
                 [
                     "(version 1)",
                     "(deny default)",
-                    "(allow process*)",
-                    "(allow signal*)",
+                    "(allow process-exec)",
+                    "(allow process-fork)",
+                    "(allow signal (target same-sandbox))",
+                    "(allow process-info* (target same-sandbox))",
+                    "(allow file-write-data (require-all (path \"/dev/null\") (vnode-type CHARACTER-DEVICE)))",
                     "(allow sysctl-read)",
-                    "(allow mach*)",
+                    "(allow ipc-posix-sem)",
                     "(allow ipc-posix-shm)",
                     "(allow file-read*)",
                     "(allow file-write* (subpath (param \"WR0\")))",
