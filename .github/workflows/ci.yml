@@ -34,12 +34,15 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep bubblewrap
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install ripgrep
           else
             choco install ripgrep -y --no-progress
           fi
+      - name: verify bwrap usable (WP-03/§3 行131 linux 真隔离环境前置=显式非静默)
+        if: runner.os == 'Linux'
+        run: bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --unshare-pid -- /bin/true && echo BWRAP-OK
       - name: version gate
         run: pnpm exec standardcode --version
       - name: cold-start gate
