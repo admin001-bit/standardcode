@@ -25,7 +25,7 @@ pub fn run(
     policy: &SandboxPolicy,
     facts: &PolicyFacts,
     self_exe: &Path,
-) -> Result<ExecOutput, RunError> {
+) -> Result<(u32, ExecOutput), RunError> {
     // 策略闸下沉至平台入口（直调本函数亦剥键——防分发层旁路，DoD⑤ 双闸）
     let mut req = req.clone();
     crate::run::apply_proxy_policy(&mut req.env, policy);
@@ -48,23 +48,30 @@ pub fn run(
     argv.push("--".to_string());
     argv.extend_from_slice(&compiled.argv[sep + 1..]);
 
-    let out = std::process::Command::new(&argv[0])
+    let child = std::process::Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(&req.cwd)
         .env_clear()
         .envs(&req.env)
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| {
             RunError::Spawn(format!(
                 "bwrap 拉起失败（fail-closed，非绕过沙箱；bwrap 是否在位？）: {e}"
             ))
         })?;
-    Ok(ExecOutput {
-        exit_code: out.status.code(),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+    let pid = child.id();
+    let out = child.wait_with_output().map_err(RunError::Io)?;
+    Ok((
+        pid,
+        ExecOutput {
+            exit_code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+    ))
 }
 
 /// 阶段 2（沙箱命名空间内）：capget 清零断言 fail-hard → seccomp 装载 → execvp。

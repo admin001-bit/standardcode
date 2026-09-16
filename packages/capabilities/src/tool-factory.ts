@@ -16,6 +16,7 @@ import {
   type GlobInput,
   type GrepInput,
   type ReadInput,
+  type SandboxHandle,
   type WriteInput,
 } from "@standardcode/executor";
 import type { ToolContext } from "@standardcode/harness";
@@ -30,6 +31,8 @@ export interface StandardToolsOptions {
   debugStream?: { write(s: string): void };
   /** 超限输出落盘目录（E2E②；透传 ExecEnv.spillDir——缺省 runProcess 内 tmpdir）。 */
   spillDir?: string;
+  /** WP-03 沙箱句柄（-sdb/settings 开启时由装配层注入；透传 ExecEnv.sandbox，缺省=直通）。 */
+  sandbox?: SandboxHandle;
 }
 
 function truthyEnv(raw: string | undefined): boolean {
@@ -44,7 +47,7 @@ export function createStandardTools(opts: StandardToolsOptions = {}): StandardTo
       `[tool-env] kept=${Object.keys(toolEnv.env).length} removed=${toolEnv.removed.length > 0 ? toolEnv.removed.join(",") : "(none)"} rules=${[...new Set(toolEnv.strippedBy)].join(",")}\n`,
     );
   }
-  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env, ...(opts.spillDir ? { spillDir: opts.spillDir } : {}) };
+  const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env, ...(opts.spillDir ? { spillDir: opts.spillDir } : {}), ...(opts.sandbox ? { sandbox: opts.sandbox } : {}) };
   const bind = (def: ToolMetadata & { run(input: unknown, env: ExecEnv): Promise<string> }): StandardTool => ({
     ...def,
     // 中断信号与子进程注册逐调用并入 env（§8.4：工具 MUST 观察中断；harness 负责注册进程的树终止）

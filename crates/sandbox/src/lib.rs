@@ -3,7 +3,9 @@
 //! - WP-01：策略编译器（纯函数）+ IPC 帧层 + `SandboxBackend` trait 签名。
 //! - WP-02：三平台真隔离原语——macOS Seatbelt（sandbox-exec 真跑）/ Linux bwrap+seccomp
 //!   两阶段（capabilities 清零 fail-hard + cBPF socket 过滤）/ Windows 受限令牌
-//!   （WRITE_RESTRICTED）+ ACL capability-ACE。TS 宿主接线 = WP-03。
+//!   （WRITE_RESTRICTED）+ ACL capability-ACE。
+//! - WP-03：宿主接线——`serve`（ARCH-008 stdio 帧协议服务器端：run/fsWrite 方法面）+
+//!   `NativeBackend`（SandboxBackend trait 真实装，未解决②清偿）。
 //!
 //! 机制级参考（v2.8 §4.2 L4=Codex 独占；Apache-2.0，NOTICE 义务随 Q-9 处理）：`codex-rs/sandboxing`
 //! 三层分离架构与平台形状——仅借架构与教训清单（§5.3(3) 行 266），命名与实现自研。引用：
@@ -18,6 +20,7 @@ pub mod exec;
 pub mod ipc;
 pub mod policy;
 pub mod run;
+pub mod serve;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -37,3 +40,4 @@ pub use policy::{
     RootPath, SandboxBackend, SandboxPolicy, SandboxedChild,
 };
 pub use run::{run, run_with_self_exe, PROXY_ENV_KEYS};
+pub use serve::{fs_write_main, probe_facts, serve, serve_with, NativeBackend};

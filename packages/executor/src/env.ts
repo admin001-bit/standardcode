@@ -2,6 +2,7 @@
 // signal/registerProcess 与 harness ToolContext 形状同构（工具 MUST 观察中断并及时退出，§8.4）。
 // SEC-080（§11）：工具子进程 env 白名单清洗——密钥通道与 Bash 注入键不得进入子进程（M3 WP-08）。
 import type { ChildProcess } from "node:child_process";
+import type { SandboxHandle } from "./sandbox/client.ts";
 
 export interface ExecEnv {
   /** 会话工作目录：相对路径以此为基解析。 */
@@ -10,6 +11,11 @@ export interface ExecEnv {
   env?: NodeJS.ProcessEnv;
   /** 超限输出落盘目录（E2E②；缺席=tmpdir——测试注入以断言落盘内容）。 */
   spillDir?: string;
+  /**
+   * 沙箱句柄（WP-03/EXE-011：-sdb 开启时由装配层注入）。在位=Bash 与文件写经
+   * `standardcode-sandbox --serve`（ARCH-008 帧通道）执行；缺席=现状直通（默认关，ADR-002）。
+   */
+  sandbox?: SandboxHandle;
   signal?: AbortSignal;
   /** 工具派生的子进程注册到此处——中断时由 harness 负责进程树终止（§8.4）。 */
   registerProcess?(child: ChildProcess): void;

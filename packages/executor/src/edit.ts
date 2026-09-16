@@ -23,9 +23,16 @@ export async function execEdit(input: EditInput, env: ExecEnv): Promise<string> 
   if (occurrences > 1 && !input.replace_all) throw new ExecError(`old_string is not unique in ${path} (${occurrences} occurrences) — provide more surrounding context or set replace_all`);
   const next = input.replace_all ? current.split(input.old_string).join(input.new_string) : current.replace(input.old_string, () => input.new_string);
   if (next === current) throw new ExecError("new_string is identical to old_string — nothing to change");
+  const note = `edited ${path} (${input.replace_all && occurrences > 1 ? `${occurrences} replacements` : "1 replacement"})`;
+  // 沙箱臂（WP-03 DoD②）：替换后的全文经 fsWrite 帧落盘（读侧 readRawFile=宿主读，
+  // 读不受写策略限制——档差异在网络/写轴；越界/元数据写拒=沙箱层同 write.ts 形）。
+  if (env.sandbox) {
+    await env.sandbox.writeViaSandbox(path, next);
+    return note;
+  }
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, next, "utf8");
-  return `edited ${path} (${input.replace_all && occurrences > 1 ? `${occurrences} replacements` : "1 replacement"})`;
+  return note;
 }
 
 function countOccurrences(haystack: string, needle: string): number {

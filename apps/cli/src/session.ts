@@ -6,7 +6,7 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
 import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
@@ -170,6 +170,8 @@ export interface Session {
   agents: SessionAgents;
   /** M4-WP-07：i18n 面（lang=会话级快照：env STANDARD_CODE_LANG > settings.language > en；ADR-0042）。 */
   i18n: I18n;
+  /** M5-WP-03：沙箱句柄（-sdb/settings/env 开启时装配；lazy 拉起=构造零进程，DoD①②）。 */
+  sandbox?: SandboxHandle;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -211,6 +213,8 @@ export interface SessionInit {
   thinking?: ThinkingSetting;
   /** 信任覆写（测试/装配）：缺省按 trust store 判定（WP-07）。 */
   trusted?: boolean;
+  /** M5-WP-03 沙箱开启（装配层已解析确认，缺席=默认关 DoD①）：档+二进制覆写。 */
+  sandbox?: { tier: SandboxTier; binaryPath?: string };
 }
 
 /**
@@ -427,6 +431,11 @@ export function createSession(init: SessionInit = {}): Session {
   const modelDefault = settingsValue<string>(settings, "model.default");
   const model = init.model ?? env.STANDARD_CODE_MODEL ?? modelDefault ?? catalog[0];
   if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL or settings model.default");
+  // M5-WP-03：沙箱句柄装配（-sdb/settings/env 开启位已由装配层解析确认；构造 lazy=零进程，
+  // 首次 Bash/写盘才拉起 server——DoD① 缺省态与本分支整体缺席同物）。
+  const sandboxHandle = init.sandbox
+    ? createSandboxHandle({ tier: init.sandbox.tier, workspaceRoot: sessionCwd, ...(init.sandbox.binaryPath ? { binaryPath: init.sandbox.binaryPath } : {}) })
+    : undefined;
   const session: Session = {
     id: "",
     provider,
@@ -434,7 +443,7 @@ export function createSession(init: SessionInit = {}): Session {
     catalog,
     model,
     messages: [],
-    tools: createStandardTools({ cwd: init.cwd ?? process.cwd() }),
+    tools: createStandardTools({ cwd: init.cwd ?? process.cwd(), ...(sandboxHandle ? { sandbox: sandboxHandle } : {}) }),
     cwd: init.cwd ?? process.cwd(),
     meter: new UsageMeter(),
     broker: createPermissionBroker({ ...(mergedRules ? { rules: mergedRules } : {}) }),
@@ -445,6 +454,7 @@ export function createSession(init: SessionInit = {}): Session {
     thinking,
     autocompact,
     trust,
+    ...(sandboxHandle ? { sandbox: sandboxHandle } : {}),
     i18n: createI18n("en"),
     env,
     additionalDirectories: [...(settingsValue<string[]>(gatedSettings, "additionalDirectories") ?? [])],

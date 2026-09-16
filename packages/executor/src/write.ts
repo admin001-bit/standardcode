@@ -20,6 +20,12 @@ export async function execWrite(input: WriteInput, env: ExecEnv): Promise<string
     if (err instanceof ExecError) throw err;
     // ENOENT：目标不存在，继续
   }
+  // 沙箱臂（WP-03 DoD②"文件写经沙箱"）：内容经 fsWrite 帧→沙箱内 --fs-write 子进程落盘
+  // （越界写/元数据路径=策略层拒，错误可诊断上抛；目录预建在沙箱内完成）。
+  if (env.sandbox) {
+    await env.sandbox.writeViaSandbox(path, input.content);
+    return `wrote ${Buffer.byteLength(input.content, "utf8")} bytes to ${path}`;
+  }
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, input.content, "utf8");
   return `wrote ${Buffer.byteLength(input.content, "utf8")} bytes to ${path}`;

@@ -39,7 +39,7 @@ pub fn run(
     req: &ExecRequest,
     policy: &SandboxPolicy,
     facts: &PolicyFacts,
-) -> Result<ExecOutput, RunError> {
+) -> Result<(u32, ExecOutput), RunError> {
     // 策略闸下沉至平台入口（同 linux.rs 注）
     let mut req = req.clone();
     crate::run::apply_proxy_policy(&mut req.env, policy);
@@ -51,19 +51,26 @@ pub fn run(
     // CI temp_dir=/var/folders/…；SBPL subpath 比对发生在内核解析后=实路径，参数须同形——
     // 仅重写顶层别名前缀，深链接不解析不跟从〔codex normalize_writable_root 同向，报告 §1.4〕）。
     let argv: Vec<String> = compiled.argv.iter().map(|a| dealias(a.as_str())).collect();
-    let out = std::process::Command::new(&argv[0])
+    let child = std::process::Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(&req.cwd)
         .env_clear()
         .envs(&req.env)
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| RunError::Spawn(format!("sandbox-exec 拉起失败（fail-closed）: {e}")))?;
-    Ok(ExecOutput {
-        exit_code: out.status.code(),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+    let pid = child.id();
+    let out = child.wait_with_output().map_err(RunError::Io)?;
+    Ok((
+        pid,
+        ExecOutput {
+            exit_code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+    ))
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -107,6 +114,7 @@ mod integration {
                 &facts,
             )
             .expect("sandbox-exec run")
+            .1
         };
         // 工作区内写 OK
         let o = run_sh(&format!("touch {}/ws/ok", t.display()));
@@ -165,7 +173,8 @@ mod integration {
             &pol,
             &PolicyFacts::default(),
         )
-        .expect("run");
+        .expect("run")
+        .1;
         assert_ne!(o.exit_code, Some(0), "net must be cut");
         let _ = std::fs::remove_dir_all(&t);
     }

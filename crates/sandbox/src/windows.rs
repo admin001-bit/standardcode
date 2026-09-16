@@ -450,12 +450,12 @@ fn env_block(env: &BTreeMap<String, String>) -> Vec<u16> {
     v
 }
 
-/// 真执行：令牌+ACL+CreateProcessAsUserW（同步等待，捕获双管道）。
+/// 真执行：令牌+ACL+CreateProcessAsUserW（同步等待，捕获双管道）。返回 (子进程 pid, 产物)。
 pub fn run(
     req: &ExecRequest,
     policy: &SandboxPolicy,
     facts: &PolicyFacts,
-) -> Result<ExecOutput, RunError> {
+) -> Result<(u32, ExecOutput), RunError> {
     // 策略闸下沉至平台入口（同 linux.rs 注；WFP 面=elevated 后端不做，登记偏差）
     let mut req = req.clone();
     crate::run::apply_proxy_policy(&mut req.env, policy);
@@ -482,7 +482,7 @@ pub fn run(
     result
 }
 
-fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<ExecOutput, RunError> {
+fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput), RunError> {
     unsafe {
         let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -584,11 +584,14 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<ExecOutput, RunE
         };
         let stdout = read_all(out_r);
         let stderr = read_all(err_r);
-        Ok(ExecOutput {
-            exit_code: Some(exit_code as i32),
-            stdout,
-            stderr,
-        })
+        Ok((
+            pi.dwProcessId,
+            ExecOutput {
+                exit_code: Some(exit_code as i32),
+                stdout,
+                stderr,
+            },
+        ))
     }
 }
 
@@ -734,7 +737,7 @@ mod tests {
         let pol = SandboxPolicy::workspace_write(vec![RootPath::real(t.join("ws"))]);
         let req = ExecRequest::new("cmd.exe", vec!["/C".into(), cmd.to_string()], t.join("ws"));
         match run(&req, &pol, &PolicyFacts::default()) {
-            Ok(o) => {
+            Ok((_pid, o)) => {
                 eprintln!("CHILD-RAN[{name}] exit={:?}", o.exit_code);
                 Some((o.exit_code == Some(0), format!("{}{}", o.stdout, o.stderr)))
             }

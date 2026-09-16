@@ -330,7 +330,14 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const d = resolve(s.cwd, path);
       if (!statSync(d).isDirectory()) throw new Error(s.i18n.t("repl.cd.notDir", { value: d }));
       s.cwd = d;
-      s.tools = createStandardTools({ cwd: d }); // 工具面随目录重建（transcript 项目归属不迁移=偏差登记）
+      // 工具面随目录重建（transcript 项目归属不迁移=偏差登记）；M5-WP-03：沙箱在位时同步换
+      // 可写根（workspace-write 根=会话 cwd），保 -sdb 会话 /cd 后仍经沙箱。
+      if (s.sandbox) {
+        s.sandbox.setRoot(d);
+        s.tools = createStandardTools({ cwd: d, sandbox: s.sandbox });
+      } else {
+        s.tools = createStandardTools({ cwd: d });
+      }
       return { text: s.i18n.t("repl.cd.working", { value: d }) };
     },
     addDir: async (path) => {

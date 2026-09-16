@@ -267,22 +267,25 @@ fn merge_names(a: &[String], b: &[String]) -> Vec<String> {
     all
 }
 
-/// 执行层子进程句柄（真实载体 = WP-02；本层仅需类型存在以固定 trait 签名）。
+/// 执行层子进程句柄。WP-01 占位（仅类型存在固定签名）→ WP-03 落地：真执行器（serve.rs
+/// NativeBackend）走同步 one-shot 形（spawn 内完成 wait），产物挂 `output`；pid 供登记/
+/// teardown 清理面（[自定] 形制扩展：方法签名保持行 258-264 A 稿不动，登记供 V 判）。
 #[derive(Debug)]
 pub struct SandboxedChild {
     pub pid: u32,
+    pub output: Option<crate::exec::ExecOutput>,
 }
 
-/// v2.8 §5.3(3) 行 258-264 A 稿恢复接口（三方法签名逐一对位；错误类型本卡以
-/// `CompileError` 占位，WP-02 扩运行时执行错误——[自定] 登记）。
+/// v2.8 §5.3(3) 行 258-264 A 稿恢复接口（三方法签名逐一对位；错误类型按 WP-01 偏差⑦预登记
+/// 在 WP-03 扩为运行时执行错误 RunError——Compile 变体即编译层拒绝的 fail-closed 面）。
 pub trait SandboxBackend {
     fn spawn(
         &self,
         req: &crate::exec::ExecRequest,
         policy: &SandboxPolicy,
-    ) -> Result<SandboxedChild, CompileError>;
-    fn apply_policy(&self, policy: &SandboxPolicy) -> Result<(), CompileError>;
-    fn teardown(&self, child: SandboxedChild) -> Result<(), CompileError>;
+    ) -> Result<SandboxedChild, crate::error::RunError>;
+    fn apply_policy(&self, policy: &SandboxPolicy) -> Result<(), crate::error::RunError>;
+    fn teardown(&self, child: SandboxedChild) -> Result<(), crate::error::RunError>;
 }
 
 #[cfg(test)]

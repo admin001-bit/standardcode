@@ -52,7 +52,9 @@ impl Tree {
     }
     fn sh(&self, cmd: &str) -> standardcode_sandbox::exec::ExecOutput {
         let req = ExecRequest::new("/bin/sh", vec!["-c".into(), cmd.to_string()], self.ws());
-        linux::run(&req, &self.pol(), &self.facts(), Path::new(SANDBOX_BIN)).expect("bwrap run")
+        linux::run(&req, &self.pol(), &self.facts(), Path::new(SANDBOX_BIN))
+            .expect("bwrap run")
+            .1
     }
 }
 
@@ -140,7 +142,9 @@ fn linux_real_isolation_suite() {
     assert!(stdout.contains("AF_INET fd=-1"), "{stdout}");
     // 两阶段经 run() 生产形（探针作为被沙箱命令，run() 自动装内层）
     let req = ExecRequest::new(SANDBOX_BIN, vec!["--probe-socket".into()], tr.ws());
-    let o = linux::run(&req, &tr.pol(), &tr.facts(), Path::new(SANDBOX_BIN)).unwrap();
+    let o = linux::run(&req, &tr.pol(), &tr.facts(), Path::new(SANDBOX_BIN))
+        .unwrap()
+        .1;
     assert_eq!(
         o.exit_code,
         Some(0),
@@ -166,11 +170,15 @@ fn linux_real_isolation_suite() {
     ]
     .into_iter()
     .collect();
-    let o = linux::run(&req, &tr.pol(), &tr.facts(), Path::new(SANDBOX_BIN)).unwrap();
+    let o = linux::run(&req, &tr.pol(), &tr.facts(), Path::new(SANDBOX_BIN))
+        .unwrap()
+        .1;
     assert_eq!(o.stdout.trim(), "0", "proxy keys must vanish: {}", o.stdout);
     // 对照：网络开=允许档代理键保留（剥键仅随 deny 策略，非无条件）
     let pol = tr.pol().allow_network();
-    let o = linux::run(&req, &pol, &tr.facts(), Path::new(SANDBOX_BIN)).unwrap();
+    let o = linux::run(&req, &pol, &tr.facts(), Path::new(SANDBOX_BIN))
+        .unwrap()
+        .1;
     assert_eq!(
         o.stdout.trim(),
         "4",
@@ -208,7 +216,8 @@ fn danger_passthrough_via_run() {
         &PolicyFacts::default(),
         Path::new(SANDBOX_BIN),
     )
-    .unwrap();
+    .unwrap()
+    .1;
     assert_eq!(o.exit_code, Some(0));
 }
 

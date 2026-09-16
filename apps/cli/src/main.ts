@@ -3,8 +3,11 @@ import { createInterface } from "node:readline";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
 import { CLI_COMMANDS } from "./commands.ts";
-import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink, type SessionIndexEntry } from "@standardcode/platform";
+import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink, loadSettings, settingsValue, type SessionIndexEntry } from "@standardcode/platform";
 import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
+// M5-WP-03：沙箱开关解析（-sdb 旗标/env 逃逸舱/settings sandbox.*；纯函数面可单测）。
+import { gateDangerTier, resolveSandboxSettings } from "./sandbox-config.ts";
+import type { SandboxTier } from "@standardcode/capabilities";
 // WP-08：版本号单一来源收敛入 version.ts（横幅与 /update/auto-check 的 registry 比对基准同源）。
 import { CLI_VERSION } from "./version.ts";
 
@@ -35,8 +38,11 @@ function createLineRouter(rl: import("node:readline").Interface) {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  if (argv.length > 0) {
-    process.stdout.write(`usage: standardcode\n   (interactive REPL; --version for version)\n`);
+  // M5-WP-03：唯一旗标 -sdb（显式开启沙箱，EXE-011 行 427；/sandbox 命令=M7 不注册）。
+  // 命令全集 30 断言=斜杠命令面，旗标不触（WP-10 DoD⑤ 同形）。
+  const sandboxCliFlag = argv.length === 1 && argv[0] === "-sdb";
+  if (argv.length > 0 && !sandboxCliFlag) {
+    process.stdout.write(`usage: standardcode [-sdb]\n   (interactive REPL; --version for version)\n`);
     process.exitCode = 1;
     return;
   }
@@ -56,9 +62,34 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       else process.stdout.write("[trust] proceeding without trust — shared settings stay gated (deny/ask still apply)\n");
     }
   }
+  // M5-WP-03 沙箱装配（解析序/键位见 sandbox-config.ts 头注）：settings 用 loadSettings 同路
+  // 读取——sandbox.* 非 env 注入非 allow 规则，未信任共享层置 enabled=收紧执行非攻击面；
+  // danger 档另有逐会话显式确认闸（DoD③）兜住放宽方向（[自定] 登记供 V 判）。
+  let sandboxInit: { tier: SandboxTier } | undefined;
+  {
+    const sbxSettings = loadSettings({ projectRoot: process.cwd() });
+    const assembly = await gateDangerTier(
+      resolveSandboxSettings({
+        cliFlag: sandboxCliFlag,
+        env: process.env,
+        settings: {
+          enabled: settingsValue<boolean>(sbxSettings, "sandbox.enabled"),
+          tier: settingsValue<string>(sbxSettings, "sandbox.tier"),
+        },
+      }),
+      async () => {
+        if (!process.stdin.isTTY) return false; // 非 TTY=无法显式确认→不启用（fail-closed，非降档）
+        const choice = parseConfirmAnswer(await router.askLine(confirmQuestion("sandbox", "danger-full-access：全盘可写+网络全开，沙箱不施加固有限制")));
+        return choice === "once" || choice === "always";
+      },
+    );
+    if (assembly.notice) process.stdout.write(`${assembly.notice}\n`);
+    if (assembly.enabled) sandboxInit = { tier: assembly.tier };
+  }
   let session;
   try {
-    session = createSession();
+    session = createSession({ ...(sandboxInit ? { sandbox: sandboxInit } : {}) });
+    if (sandboxInit) process.stdout.write(`[sandbox] 已启用（档=${sandboxInit.tier}，执行面=Bash/写盘经 standardcode-sandbox；关=现状直通）\n`);
   } catch (err) {
     process.stderr.write(
       `[standardcode] 启动失败：${err instanceof Error ? err.message : String(err)}\n发生了什么：会话装配失败；为什么：M1 需要 provider 凭据或注入；建议动作：设置对应 API key 环境变量后重试。\n`,

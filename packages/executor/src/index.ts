@@ -25,3 +25,26 @@ export {
   GREP_MAX_RESULTS,
   type GrepInput,
 } from "./grep.ts";
+// WP-03 沙箱宿主接线（ARCH-008 帧通道客户端+策略 wire+编解码；装配层注入 ExecEnv.sandbox）。
+export {
+  createSandboxHandle,
+  resolveSandboxBinary,
+  SandboxExecError,
+  SandboxUnavailableError,
+  type SandboxExecRequest,
+  type SandboxHandle,
+  type SandboxHandleInit,
+  type SandboxRunResult,
+} from "./sandbox/client.ts";
+export {
+  policyFor,
+  SANDBOX_TIERS,
+  DEFAULT_METADATA_PROTECTION,
+  type SandboxTier,
+  type WireSandboxPolicy,
+  type WireRootPath,
+  type Access,
+  type FsKind,
+  type NetPolicy,
+} from "./sandbox/policy.ts";
+export { encodeFrame, decodeFrame, IPC_PROTOCOL_VERSION, MAX_FRAME_BYTES, type Frame, type FrameKind } from "./sandbox/codec.ts";

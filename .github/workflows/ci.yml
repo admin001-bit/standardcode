@@ -48,8 +48,12 @@ jobs:
           COLD_START_MAX_MS: 400
       - name: typecheck gate
         run: pnpm run typecheck
+      - name: rust build (WP-03 sandbox bin for vitest integration)
+        run: cargo build -p standardcode-sandbox
       - name: test gate
         run: pnpm run test
+        env:
+          STANDARD_CODE_SANDBOX_BIN: ${{ runner.os == 'Windows' && 'target/debug/standardcode-sandbox.exe' || 'target/debug/standardcode-sandbox' }}
       - name: rust fmt gate
         run: pnpm run rust:fmt
       - name: rust clippy gate

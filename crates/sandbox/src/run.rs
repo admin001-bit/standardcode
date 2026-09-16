@@ -41,27 +41,38 @@ pub fn apply_proxy_policy(env: &mut BTreeMap<String, String>, policy: &SandboxPo
 
 /// danger-full-access 双轴全开=直通形（compile 返回 SandboxType::None）：不经任何沙箱
 /// 原语直接执行——该形态的存在前提是宿主层已获显式确认（WP-03 DoD③），执行层不复核确认来源。
-pub(crate) fn plain_exec(req: &ExecRequest) -> Result<ExecOutput, RunError> {
-    let out = std::process::Command::new(&req.program)
+/// 返回 (pid, 产物)：pid 供 serve 层登记/teardown 清理面。
+pub(crate) fn plain_exec(req: &ExecRequest) -> Result<(u32, ExecOutput), RunError> {
+    let child = std::process::Command::new(&req.program)
         .args(&req.args)
         .current_dir(&req.cwd)
         .env_clear()
         .envs(&req.env)
-        .output()?;
-    Ok(ExecOutput {
-        exit_code: out.status.code(),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| RunError::Spawn(format!("直通臂拉起失败: {e}")))?;
+    let pid = child.id();
+    let out = child.wait_with_output().map_err(RunError::Io)?;
+    Ok((
+        pid,
+        ExecOutput {
+            exit_code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+    ))
 }
 
 /// 真跑（Platform::host 分发）。`self_exe` 默认取 [`std::env::current_exe`]（Linux 两阶段
 /// 内层目标；集成测经 [`run_with_self_exe`] 注入 cargo 提供的 bin 路径——[自定] 测试载体）。
+/// 返回 (沙箱化直接子进程 pid, 产物)——pid=登记/清理面（serve teardown）。
 pub fn run(
     req: &ExecRequest,
     policy: &SandboxPolicy,
     facts: &PolicyFacts,
-) -> Result<ExecOutput, RunError> {
+) -> Result<(u32, ExecOutput), RunError> {
     let exe = std::env::current_exe().map_err(|e| RunError::Spawn(format!("current_exe: {e}")))?;
     run_with_self_exe(req, policy, facts, &exe)
 }
@@ -71,7 +82,7 @@ pub fn run_with_self_exe(
     policy: &SandboxPolicy,
     facts: &PolicyFacts,
     self_exe: &std::path::Path,
-) -> Result<ExecOutput, RunError> {
+) -> Result<(u32, ExecOutput), RunError> {
     let _ = &self_exe; // 仅 Linux 臂消费（其余平台编译期 cfg 掉）
     match Platform::host() {
         #[cfg(target_os = "linux")]

@@ -7,6 +7,9 @@
 //!   装过滤器前先 capabilities 清零断言 fail-hard（§5.3(3) 行 266）。
 //! - `--probe-socket`：测试探针（真跑 socket(AF_INET)/AF_UNIX 并打印结果，退出码=AF_INET 成败），
 //!   供集成测作为沙箱内程序，零外部依赖。
+//! - `--serve`：**WP-03 帧协议服务器端**（stdio JSON v5；run/fsWrite 方法面见 serve.rs——
+//!   ARCH-008：TS 宿主唯一通道，一会话一进程多请求复用）。
+//! - `--fs-write <path> --from <file>`：沙箱内写入原语（fsWrite 方法=策略化的自身调用）。
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,6 +23,8 @@ fn dispatch(args: &[String]) -> i32 {
         Some("--inner-seccomp") => standardcode_sandbox::linux::inner_main(&args[1..]),
         #[cfg(target_os = "linux")]
         Some("--probe-socket") => standardcode_sandbox::linux::probe_socket(),
+        Some("--serve") => standardcode_sandbox::serve::serve(),
+        Some("--fs-write") => standardcode_sandbox::serve::fs_write_main(&args[1..]),
         Some(other) => {
             eprintln!("unknown mode: {other}");
             usage();
@@ -36,6 +41,8 @@ fn usage() {
     eprintln!(
         "usage:\n  \
          standardcode-sandbox --inner-seccomp --filter-b64 <b64> -- <program> [args...]\n  \
-         standardcode-sandbox --probe-socket"
+         standardcode-sandbox --probe-socket\n  \
+         standardcode-sandbox --serve\n  \
+         standardcode-sandbox --fs-write <path> --from <file>"
     );
 }
