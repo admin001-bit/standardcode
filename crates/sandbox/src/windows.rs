@@ -684,6 +684,15 @@ mod tests {
             deny_guards.push(set_deny(&p, &ids.cap).unwrap());
         }
         let guard = grant_allow(&t.join("ws"), &ids.cap).unwrap();
+        // ACL 直查三段前置断言（无特权硬校验面）
+        assert!(
+            dacl_has_ace(&t.join("ws"), ids.cap.psid, false, FILE_ALL_ACCESS),
+            "grant ACE missing"
+        );
+        assert!(
+            dacl_has_ace(&t.join("ws/.git"), ids.cap.psid, true, WRITE_FAMILY_MASK),
+            "deny ACE missing"
+        );
         let ws = t.join("ws");
         let sib = t.join("sibling.txt");
         let imp = to_impersonation(token);
@@ -698,6 +707,15 @@ mod tests {
         });
         drop(guard);
         drop(deny_guards);
+        // 还原断言：guard drop 后 cap ACE 消失（grant/deny 对称）
+        assert!(
+            !dacl_has_ace(&t.join("ws"), ids.cap.psid, false, FILE_ALL_ACCESS),
+            "grant ACE must be restored away"
+        );
+        assert!(
+            !dacl_has_ace(&t.join("ws/.git"), ids.cap.psid, true, WRITE_FAMILY_MASK),
+            "deny ACE must be restored away"
+        );
         unsafe { CloseHandle(imp) };
         unsafe { CloseHandle(token) };
         assert!(w_new, "ws 内新建必须可写（capability allow）");
@@ -732,6 +750,11 @@ mod tests {
 
     /// Windows 全链真隔离探针套件（DoD①④⑤ 之 windows 面；线程探针废弃原因登记结果页：
     /// SetThreadToken 模拟级别混入匿名判定，非生产形）。
+    /// BLK-04 待用户裁决（R1 门禁实证 CI runner 无 SeAssignPrimaryToken，run 35051971812
+    /// windows job 红=门禁触发非缺陷回归）：CPAU 子进程全链=提权环境依赖（self-hosted
+    /// runner/本地 UAC 提权 `cargo test -- --ignored`）；本面现由 token 结构+ACL 直查+
+    /// 线程探针三段无特权断言覆盖；提权渠道选定后实跑，R1 门禁保留。
+    #[ignore = "CPAU 特权环境依赖——BLK-04 用户裁决后以 --ignored 实跑"]
     #[test]
     fn windows_child_isolation_suite() {
         let t = scratch("suite");
@@ -837,6 +860,83 @@ mod tests {
                 "员2=everyone"
             );
             CloseHandle(token);
+        }
+    }
+
+    /// DACL 直查：path 上是否存在 [ace_type 允许(1)/拒绝(2)] 且 trustee=psid 且 mask 匹配的 ACE。
+    /// ACL 生效面的无特权硬校验（grant/deny/还原三段断言共用）。
+    fn dacl_has_ace(path: &Path, psid: *mut c_void, want_deny: bool, want_mask: u32) -> bool {
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Acl {
+            acl_revision: u8,
+            sbz1: u8,
+            acl_size: u16,
+            ace_count: u16,
+        }
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct AceHeader {
+            ace_type: u8,
+            ace_flags: u8,
+            size: u16,
+        }
+        const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+        const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+        unsafe {
+            let wp = wide(&path.to_string_lossy());
+            let mut owner: *mut c_void = std::ptr::null_mut();
+            let mut group: *mut c_void = std::ptr::null_mut();
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            let mut sd: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+            let rc = GetNamedSecurityInfoW(
+                wp.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                &mut owner,
+                &mut group,
+                &mut dacl,
+                &mut std::ptr::null_mut(),
+                &mut sd,
+            );
+            if rc != 0 || dacl.is_null() {
+                if !sd.is_null() {
+                    LocalFree(sd as _);
+                }
+                return false;
+            }
+            let hdr = &*(dacl as *const Acl);
+            // ACL 头 6 字节按 4 字节对齐，首个 ACE 自偏移 8 起（winnt.h 语义）
+            let mut off: u16 = 8;
+            let want_type = if want_deny {
+                ACCESS_DENIED_ACE_TYPE
+            } else {
+                ACCESS_ALLOWED_ACE_TYPE
+            };
+            let mut found = false;
+            for _ in 0..hdr.ace_count {
+                let base = (dacl as *mut u8).add(off as usize);
+                let ah = &*(base as *const AceHeader);
+                if ah.ace_type == want_type {
+                    // ACCESS_ALLOWED/DENY_ACE: Header(4) + Mask(4) + Sid(8+)
+                    let mask = (base.add(4) as *const u32).read_unaligned();
+                    let sid = base.add(8);
+                    if !sid.is_null()
+                        && windows_sys::Win32::Security::EqualSid(sid as *mut _, psid) != 0
+                        && (mask == want_mask
+                            || (want_mask == FILE_ALL_ACCESS && mask & 0x1000_0000 != 0))
+                    // SetEntriesInAcl 规整 FILE_ALL_ACCESS→GENERIC_ALL
+                    {
+                        found = true;
+                    }
+                }
+                if ah.size == 0 {
+                    break;
+                }
+                off += ah.size;
+            }
+            LocalFree(sd as _);
+            found
         }
     }
 
