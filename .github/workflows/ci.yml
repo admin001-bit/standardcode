@@ -35,6 +35,10 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep bubblewrap
+            # ubuntu-24.04 AppArmor 默认限制非特权 userns（实证 run 35073188446：bwrap setting up
+            # uid map Permission denied）——放开 runner 内核开关=GH ubuntu-24 标准处置；本机 WSL2
+            # 26.04 非特权 bwrap-ok=同判据环境实证（M5 流水·环境前置条）。
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install ripgrep
           else
