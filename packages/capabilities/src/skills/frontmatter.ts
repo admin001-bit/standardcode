@@ -39,6 +39,22 @@ function asStringList(v: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** allowed-tools 两形解析（WP-04 M5：[CC] :45402 schema 明文两形——数组形或逗号分隔串形；dig-06 §3 frontmatter 字段集）。
+ * 串形 "a, b" 与数组形等效；非法/未知形（数字/布尔/对象等非两形值）=告警不静默丢弃（M4 WP-05 核验 O1 清偿）。 */
+function toolsListOf(v: unknown, file: string, key: string, warnings: string[]): string[] | undefined {
+  if (Array.isArray(v)) return asStringList(v);
+  if (typeof v === "string") {
+    if (v.trim() === "") return undefined; // 空串=空列表（合法形的退化值，不告警）
+    const out = v
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+    return out.length > 0 ? out : undefined;
+  }
+  if (v !== undefined && v !== null) warnings.push(`${file}: frontmatter "${key}" must be an array of strings or a comma-separated string (got ${typeof v}) — ignored`);
+  return undefined;
+}
+
 /** argument-hint 值形 `[who]`（[CC] 字面方括号形）——splitFrontmatter 会解析成行内数组，此处还原方括号字符串 [自定]。 */
 function argumentHintOf(v: unknown): string | undefined {
   if (typeof v === "string" && v.trim() !== "") return v.trim();
@@ -67,7 +83,7 @@ export function parseSkillMarkdown(text: string, file: string): ParsedSkillMarkd
       name: asString(f.name),
       description: asString(f.description),
       whenToUse: asString(f.when_to_use),
-      allowedTools: asStringList(f["allowed-tools"]),
+      allowedTools: toolsListOf(f["allowed-tools"], file, "allowed-tools", warnings),
       disableModelInvocation: asBool(f["disable-model-invocation"]),
       ...(asBool(f["user-invocable"]) !== undefined ? { userInvocable: asBool(f["user-invocable"]) } : {}),
       argumentHint: argumentHintOf(f["argument-hint"]),

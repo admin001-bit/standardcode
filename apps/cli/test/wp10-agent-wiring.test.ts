@@ -247,8 +247,9 @@ describe("DoD⑤⑥：def.hooks 执行面注入+禁用位", () => {
     const d = await hooks!.preToolUse("Read", { file_path: "x.txt" });
     expect(d).toMatchObject({ decision: "deny" });
     expect((d as { reason: string }).reason).toContain("hookbot-denied");
-    // 无 hooks 定义=不注入（undefined 直通父面）
-    expect(s.agents.prepareSpawn("wp10-bot").hooks).toBeUndefined();
+    // 无 hooks 定义=纯父传播面（WP-04 M5：prepareSpawn 恒返回合并引擎适配器；本会话无 settings hooks=零触发）
+    expect(s.agents.prepareSpawn("wp10-bot").hooks).toBeDefined();
+    expect(await s.agents.prepareSpawn("wp10-bot").hooks.preToolUse("Read", { file_path: "x.txt" })).toBeNull();
   });
   it("未确认路：hooksRequested/hooks 被 gate 剥离=执行面零注入（SEC-070 生产闭环断言）", async () => {
     const s = makeSession({ home: path.join(root, "home-hk2"), projectRoot: path.join(root, "hk2proj"), trusted: true });
@@ -263,7 +264,8 @@ hook body
 `);
     await s.agents.loadProjectAgents({ confirm: async () => false });
     expect(s.agents.registry().get("hookbot")!.hooks).toBeUndefined();
-    expect(s.agents.prepareSpawn("hookbot").hooks).toBeUndefined();
+    // WP-04 M5：适配器恒在（父传播面），但 def.hooks 被剥=deny 脚本零触发（实弹断言强于旧 undefined 形）
+    expect(await s.agents.prepareSpawn("hookbot").hooks.preToolUse("Read", { file_path: "x.txt" })).toBeNull();
   });
   it("禁用位（DoD⑥ [自定] 键位 agents.projectDisabled，ADR-0043 决策 7）：true=整层不加载+confirm 零调用+留痕零写", async () => {
     const proj4 = path.join(root, "disproj");

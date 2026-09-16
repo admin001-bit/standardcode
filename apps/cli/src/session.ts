@@ -6,7 +6,7 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, type HookEngine, type HookEventName, type HookEventOutcome, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
 import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
@@ -101,8 +101,9 @@ export interface SessionAgents {
   /** 首轮异步补装（isTrusted→load→gate(confirm UI)→注入；未信任/禁用/异常=整层不加载降级，不抛）。 */
   loadProjectAgents(deps?: { confirm?: (name: string, fields: string[]) => Promise<boolean> }): Promise<AgentsLoadState>;
   state(): AgentsLoadState;
-  /** spawn 接线统一 ctx（DoD②③：names() 真消费+requiredMCP 连接态投影+Agent(X) deny 提取）+定义级 hooks 执行面（DoD⑤）。 */
-  prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks?: ToolHooks };
+  /** spawn 接线统一 ctx（DoD②③：names() 真消费+requiredMCP 连接态投影+Agent(X) deny 提取）+子代理工具链 hooks
+   * 执行面（WP-10 DoD⑤ 定义级引擎；WP-04 M5 恒返回——合并引擎含父会话源集=传播接通，无 def.hooks 时=纯父传播面）。 */
+  prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks: ToolHooks };
 }
 
 export interface Session {
@@ -362,7 +363,7 @@ export function createSession(init: SessionInit = {}): Session {
     }
     return { ...agentsState, stripped: [...agentsState.stripped], warnings: [...agentsState.warnings] };
   }
-  function prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks?: ToolHooks } {
+  function prepareSpawn(subagentType?: string): { ctx: Omit<SpawnValidationContext, "concurrentSubagents">; definition: SubagentDefinition | undefined; hooks: ToolHooks } {
     const hit = agentsRegistry.get(subagentType ?? "general-purpose");
     const ctx: Omit<SpawnValidationContext, "concurrentSubagents"> = {
       depth: 0,
@@ -372,7 +373,7 @@ export function createSession(init: SessionInit = {}): Session {
       // DoD③ requiredMCP 真接：要求服务器未 connected（含 failed/缺席）=pending→校验面 30s 等待（连接态每次调用实读）
       pendingRequiredMcp: (required) => required.filter((n) => !session.mcpConnections.some((c) => c.name.toLowerCase() === n.toLowerCase() && c.status === "connected")),
     };
-    return { ctx, definition: hit, ...(hit?.hooks !== undefined ? { hooks: agentHooksFor(hit) } : {}) };
+    return { ctx, definition: hit, hooks: agentHooksFor(hit ?? undefined) };
   }
 
   // 记忆用户轨（WP-02）：precedence/autoRead 自 settings（ADR-0030 memory.* 键）；MEM-043 项目工作区检测
@@ -629,8 +630,10 @@ export function createSession(init: SessionInit = {}): Session {
     cwd: sessionCwd,
     ...(session.id ? { sessionId: session.id } : {}),
   });
-  /** ToolHooks 装配（WP-10 提取共用：父会话引擎与 agent 级引擎同形制——原内联闭包零行为变化）。 */
-  function makeToolHooks(engine: HookEngine): ToolHooks {
+  /** ToolHooks 装配（WP-10 提取共用：父会话引擎与 agent 级引擎同形制——原内联闭包零行为变化）。
+   * opts.notification=false=子代理适配器（WP-04 M5）：Notification 不在 tut 传播集（dig-04 §2.2 :62093），
+   * 子代理权限请求不触发 piggyback（超出集不做 [自定]）。 */
+  function makeToolHooks(engine: HookEngine, opts?: { notification?: boolean }): ToolHooks {
     return {
       preToolUse: async (name, input) => {
         const o = await engine.fire("PreToolUse", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
@@ -647,20 +650,23 @@ export function createSession(init: SessionInit = {}): Session {
       permissionRequest: async (name, input) => {
         await engine.fire("PermissionRequest", { query: { toolName: name }, payload: { tool_name: name, tool_input: input } });
         // Notification 触发面：权限确认请求（[CC] Notification 语义对位；MCP 后台通知 drain 循环另有触发位）
-        await engine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
+        if (opts?.notification !== false) await engine.fire("Notification", { payload: { message: `StandardCode needs your permission to use ${name}` } });
       },
     };
   }
-  /** WP-10 DoD⑤（ADR-0043 决策 6）：定义级 hooks 执行面——SEC-070 确认/留痕保留的 def.hooks 实体
-   * 经 agent 源位引擎（loadHookConfigs "agent" 最低位+引擎信任门运行时判定）注入子代理工具链。 */
-  function agentHooksFor(def: SubagentDefinition): ToolHooks | undefined {
-    if (def.hooks === undefined) return undefined;
-    const engine = createHookEngine(loadHookConfigs({ agent: { hooks: def.hooks } }), {
+  /** WP-10 DoD⑤（ADR-0043 决策 6）+ WP-04（M5）传播接通：子代理工具链 hooks 执行面——
+   * 合并引擎=全会话源集（settings 五来源+plugin，hookDocs 同一合并面）+确认后 def.hooks 经 agent 源位追加（最低位，
+   * "agent 声明只追加于全会话源之后"）。disableAllHooks 总闸随源集 OR 形自动延伸（任一来源 true 即子代理引擎
+   * 同轮全关——M4 WP-10 核验 O1 清偿：旁路面 fail-open→fail-closed）；信任门共用会话运行时判定。 */
+  function agentHooksFor(def?: SubagentDefinition): ToolHooks {
+    const docs: Partial<Record<HookSourceName, Record<string, unknown> | null>> = { ...hookDocs };
+    if (def?.hooks !== undefined) docs.agent = { hooks: def.hooks };
+    const engine = createHookEngine(loadHookConfigs(docs), {
       trusted: () => session.trust.trusted,
       cwd: sessionCwd,
       ...(session.id ? { sessionId: session.id } : {}),
     });
-    return makeToolHooks(engine);
+    return makeToolHooks(engine, { notification: false });
   }
   session.hooks = {
     gate: async (event, query, payload, stopHookActive) =>

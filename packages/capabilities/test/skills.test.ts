@@ -58,6 +58,20 @@ Body here.`,
     expect(p.warnings).toHaveLength(0);
   });
 
+  it("allowed-tools 两形等效（WP-04 M5：串形=逗号分隔 [CC] :45402；M4 WP-05 核验 O1 静默丢弃清偿）", () => {
+    const arr = parseSkillMarkdown("---\nname: a\nallowed-tools:\n  - Bash\n  - Read\n---\nb", "a/SKILL.md");
+    const str = parseSkillMarkdown('---\nname: a\nallowed-tools: "Bash, Read"\n---\nb', "a/SKILL.md");
+    expect(str.frontmatter.allowedTools).toEqual(arr.frontmatter.allowedTools);
+    expect(str.frontmatter.allowedTools).toEqual(["Bash", "Read"]);
+    const tight = parseSkillMarkdown("---\nname: a\nallowed-tools: Bash,Read,\n---\nb", "a/SKILL.md"); // 无空格+尾逗号
+    expect(tight.frontmatter.allowedTools).toEqual(["Bash", "Read"]);
+    const single = parseSkillMarkdown("---\nname: a\nallowed-tools: Bash\n---\nb", "a/SKILL.md"); // 单名串形
+    expect(single.frontmatter.allowedTools).toEqual(["Bash"]);
+    const empty = parseSkillMarkdown("---\nname: a\nallowed-tools:\n---\nb", "a/SKILL.md"); // 空值=空列表（不告警）
+    expect(empty.frontmatter.allowedTools).toBeUndefined();
+    expect(empty.warnings).toHaveLength(0);
+  });
+
   it("解析失败告警继续（无 frontmatter=全文本当正文）；未知键/paths/hooks/context 告警", () => {
     const p1 = parseSkillMarkdown("no frontmatter at all", "x/SKILL.md");
     expect(p1.warnings.some((w) => w.includes("missing or unterminated frontmatter"))).toBe(true);
