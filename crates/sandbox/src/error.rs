@@ -58,6 +58,6 @@ pub enum RunError {
     Inner(String),
     #[error("IO：{0}")]
     Io(#[from] std::io::Error),
-    #[error("Windows 特权不足（CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota；CI=admin 在位，本地非提权 shell 会拒）：{0}")]
+    #[error("Windows 特权不足（CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota；实证 GH runner 与本地非提权 shell 皆无——BLK-04=①）：{0}")]
     Privilege(String),
 }

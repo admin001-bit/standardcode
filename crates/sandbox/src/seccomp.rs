@@ -1,7 +1,7 @@
 //! cBPF seccomp 过滤器（Linux 阶段 2 装载；形制对位参考报告 §1.5 两模式之 Restricted：
 //! 默认 ALLOW + 命中 RET_ERRNO(EPERM)，socket/socketpair 仅 AF_UNIX 放行，ptrace/process_vm/
 //! io_uring 无条件拒——`recvfrom` 刻意放行对位 codex"cargo clippy socketpair 子进程管理"注
-//! （参考报告 §1.5 行 198-201）。Landlock 不用（教训清单"命名错位"）。
+//! （报告 §1.5 行 329-331 原文引用处）。Landlock 不用（教训清单"命名错位"）。
 //!
 //! [自定] 手拼指令（libc 不导出 BPF_* 宏组）：内核 classic-BPF ABI 常量稳定，逐一定义+单元自证
 //! （程序结构断言：首条 arch 校验/末条 RET ALLOW/黑名单 nr 全在 k 集中）。
@@ -264,7 +264,7 @@ mod tests {
         ] {
             assert!(ks.contains(&k) && ka.contains(&k), "missing {k}");
         }
-        // recvfrom 刻意放行（codex socketpair/clippy 例外，参考报告 §1.5）
+        // recvfrom 刻意放行（codex socketpair/clippy 例外，报告 §1.5 行 329-331）
         assert!(!ks.contains(&(libc::SYS_recvfrom as u32)));
         assert!(!ka.contains(&(libc::SYS_recvfrom as u32)));
     }

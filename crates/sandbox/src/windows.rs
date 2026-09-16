@@ -9,9 +9,10 @@
 //! 读档终判=子进程面 CI 证据（R1 门）。写闸：capability-allow 对象可写/其余拒（探针实证）；
 //! deny ACE 压过继承 allow（元数据保护形）。restricting=[cap,logon,everyone]（Codex 行 461
 //! 序硬约定；三员为 everyone/logon 授权对象读权限恢复之必要形）。
-//! 子进程 CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota：CI runner=admin 在位；
-//! 本地非提权返回 RunError::Privilege——同模块**线程探针**（SetThreadToken）本地覆盖
-//! 令牌+ACL 语义全判据，CI 补子进程全链。
+//! 子进程 CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota：实证 GH runner 与本地
+//! Medium IL 皆无此特权（run 35051971812 R1 门禁 panic）——子进程 suite #[ignore]（BLK-04=①）；
+//! 同模块**线程探针**（SetThreadToken）本地覆盖写闸双向与 ACL 语义判据，子进程全链交
+//! 提权环境 `--ignored` 补跑（CHILD-RAN 后补形制）/WP-03 宿主接线首触实机。
 //! capability SID 不落盘持久（Codex cap_sid 持久化=多会话复用面；本卡每 run 临时、
 //! AclGuard drop 还原原显式 DACL 即无痕——[自定] 登记）。
 
@@ -551,7 +552,8 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<ExecOutput, RunE
         if ok == 0 {
             let code = GetLastError();
             // 1312=特权缺失原文码；5=ACCESS_DENIED（本地非提权 shell 的 CPAU 实际表现——
-            // 两者同归"提权 shell/CI admin"环境依赖，登记偏差）
+            // 两者同归"持 SeAssignPrimaryToken 特权之环境"依赖——实证 GH runner 与本地
+            // Medium IL 皆无（run 35051971812），子进程 suite #[ignore]+BLK-04=①，登记回归清单）
             if code == ERROR_PRIVILEGE_NOT_HELD || code == 5 {
                 close_all(&[out_r, out_w, err_r, err_w]);
                 return Err(RunError::Privilege(
@@ -643,7 +645,7 @@ mod tests {
     }
 
     /// 线程探针（辅助判据）：受限令牌挂当前线程执行闭包。注意——模拟档下读检查实测
-    /// 亦对照 restricting 名单（win.ini/everyone-R 皆拒，本机实证），故本探针只用作
+    /// 亦对照 restricting 名单（本机实证两观察：win.ini Users-only 拒 / 显式 everyone-R 通），故本探针只用作
     /// **写闸两向**与 ws 内读（cap-allow 对象）判定；读轴全开档由子进程面+WP-03 整合裁定。
     fn with_restricted_thread<R: Send + 'static>(
         token: HANDLE,
@@ -863,7 +865,7 @@ mod tests {
         }
     }
 
-    /// DACL 直查：path 上是否存在 [ace_type 允许(1)/拒绝(2)] 且 trustee=psid 且 mask 匹配的 ACE。
+    /// DACL 直查：path 上是否存在 [ace_type 允许(0)/拒绝(1)] 且 trustee=psid 且 mask 匹配的 ACE。
     /// ACL 生效面的无特权硬校验（grant/deny/还原三段断言共用）。
     fn dacl_has_ace(path: &Path, psid: *mut c_void, want_deny: bool, want_mask: u32) -> bool {
         #[repr(C)]
