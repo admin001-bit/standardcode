@@ -71,6 +71,17 @@ describe("S-9 persistence paths (强制确认且 Auto 不豁免——护栏只�
     expect(guardPath({ target: "C:\\Users\\u\\Documents\\WindowsPowerShell\\profile.ps1", cwd: CWD, operation: "write" })).toMatchObject({ action: "confirm", rule: "persistence-path" });
     expect(guardPath({ target: "D:\\repo\\.git\\hooks\\pre-commit", cwd: CWD, operation: "write" })).toMatchObject({ action: "confirm", rule: "persistence-path" });
   });
+
+  // WP-05 DoD⑤：S-9 清单逐条写面断言（§11 行 451 原文五类）+ confirm detail 钉 "Auto mode not exempt" 原文语义
+  //（Auto 豁免面已在 tools 层强制：permission-broker.test "guard confirm → allow 降为 ask（S-9 Auto 不豁免）"）。
+  it("逐条写面：cron/systemd/LaunchAgents 命中 confirm；detail 含 Auto mode not exempt（行 451 原文语义）", () => {
+    for (const target of ["/etc/cron.d/persist", "/var/spool/cron/crontabs/root", "/home/u/.config/systemd/user/evil.service", "/Users/u/Library/LaunchAgents/com.evil.plist"]) {
+      const v = guardPath({ target, cwd: CWD, operation: "write" });
+      expect(v).toMatchObject({ action: "confirm", rule: "persistence-path" });
+      expect(v.action === "confirm" && v.detail).toContain("Auto mode not exempt");
+    }
+    expect(isPersistencePath("/etc/cron.d/persist")).toBe(true);
+  });
 });
 
 describe("checkToolInput (工具层权威判定适配)", () => {

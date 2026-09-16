@@ -9,7 +9,7 @@ import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
-import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, type InstalledPluginView, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
@@ -208,6 +208,8 @@ export interface SessionInit {
   flagOverrides?: Record<string, unknown>;
   /** 跨会话粘滞登记（settings 注入 env 不可 unset；省略则本会话新建）。 */
   settingsEnv?: SettingsEnvHandle;
+  /** SEC-030 keychain 适配器注入（测试；缺省=createKeychainAdapter()，win32=unavailable fail-open）。 */
+  keychain?: KeychainAdapter;
   /** 记忆加载覆写（测试/特殊装配）：inProject 缺省=MEM-043 检测（cwd 祖先链有 .git/.standardcode）。 */
   memoryOptions?: { inProject?: boolean; relevantPaths?: string[] };
   /** 扩展思维直接注入（测试/装配）；缺省走 env/settings 解析（resolveThinking）。 */
@@ -282,6 +284,8 @@ export function createSession(init: SessionInit = {}): Session {
   const gatedSettings = trust.settings;
   const settingsEnv: SettingsEnvHandle = init.settingsEnv ?? { injected: new Set() };
   applySettingsEnv(gatedSettings, env, settingsEnv);
+  // SEC-030 keychain 链首适配器（会话一次创建；测试经 init.keychain 注入；win32=unavailable fail-open）。
+  const keychain = init.keychain ?? createKeychainAdapter();
 
   // —— M4-WP-09：Plugin 装配（ECO-030~033）——安装留痕 <home>/.standardcode/plugins.json（platform installer 纯 fs 面）。
   // 四注入面聚合：hooks/MCP=docs 的 plugin 源位（buildPluginDocs）；skills=loadSkillsFromDir(dir,"plugin")；
@@ -423,7 +427,7 @@ export function createSession(init: SessionInit = {}): Session {
     providerName = init.providerName ?? providerName;
     catalog = init.catalog ?? [];
   } else {
-    const built = buildProvider(providerName, env, gatedSettings);
+    const built = buildProvider(providerName, env, gatedSettings, keychain);
     provider = built.provider;
     providerName = built.providerName;
     catalog = built.catalog;
@@ -506,7 +510,7 @@ export function createSession(init: SessionInit = {}): Session {
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
-      const built = buildProvider(n, env, gatedSettings);
+      const built = buildProvider(n, env, gatedSettings, keychain);
       session.provider = built.provider;
       session.providerName = built.providerName;
       session.catalog = init.catalog ?? built.catalog;
@@ -810,16 +814,21 @@ export function createSession(init: SessionInit = {}): Session {
   return session;
 }
 
-/** WP-11 /provider：按名重建 adapter（MDL-010~013 常规入口；缺 key/未知名抛错）。 */
+/** WP-11 /provider：按名重建 adapter（MDL-010~013 常规入口；缺 key/未知名抛错）。
+ * SEC-030 密钥优先级链（WP-05 清偿）：keychain > 环境变量 > settings env 注入（明文面由 settings 疑似密钥告警覆盖）；
+ * keychain 未命中/适配器不可用=fail-open 静默回落（keychain.ts 契约）。 */
 function buildProvider(
   name: string,
   env: Record<string, string | undefined>,
   settings: LoadedSettings,
+  keychain?: KeychainAdapter,
 ): { provider: ProviderAdapter; providerName: string; catalog: readonly string[] } {
-  const apiKey = name === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
+  const fromKeychain = keychain?.getSecret(keychainAccountFor(name)) ?? null;
+  const apiKey = fromKeychain ?? (name === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY);
   if (!apiKey) {
+    const account = keychainAccountFor(name);
     throw new Error(
-      `missing API key: set ${name === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（env 或 settings 的 env.<KEY> 注入，键位见 ADR-0030）`,
+      `missing API key: set ${name === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}（keychain service "standardcode" account "${account}" 优先，其次 env 或 settings 的 env.<KEY> 注入，键位见 ADR-0030/SEC-030）`,
     );
   }
   const baseUrl = env.STANDARD_CODE_BASE_URL ?? settingsValue<string>(settings, `providers.${name}.baseUrl`);

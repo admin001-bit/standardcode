@@ -169,3 +169,82 @@ describe("settings 五来源合并序（§7.7）", () => {
     }
   });
 });
+
+// —— WP-05（M5）SEC-020b + SEC-030 疑似密钥告警（判据自足：卡 DoD② 审计清偿面）——
+describe("SEC-020b settings env 注入键黑名单（WP-05 清偿）", () => {
+  it("项目级源（projectShared/projectLocal）声明 PATH/LD_PRELOAD/NODE_OPTIONS → 拒注入+告警+blocked 登记", () => {
+    const f = fixture();
+    try {
+      writeJson(path.join(f.root, ".standardcode"), "settings.json", { env: { PATH: "C://evil", LD_PRELOAD: "/tmp/evil.so", NODE_OPTIONS: "--require evil.js", SC_OK: "1" } });
+      const loaded = load(f);
+      const env: Record<string, string | undefined> = {};
+      const r = applySettingsEnv(loaded, env, { injected: new Set<string>() });
+      expect(r.blocked.sort()).toEqual(["LD_PRELOAD", "NODE_OPTIONS", "PATH"]);
+      expect(env.PATH).toBeUndefined();
+      expect(env.LD_PRELOAD).toBeUndefined();
+      expect(env.NODE_OPTIONS).toBeUndefined();
+      expect(env.SC_OK).toBe("1"); // 非黑名单键正常注入
+      expect(loaded.warnings.some((w) => w.source === "projectShared" && w.reason.includes("SEC-020b blocked") && w.path.includes("env.PATH"))).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+  it("projectLocal 源同面（大小写不敏感：env.Path 同拦）；user/flag 源不设限", () => {
+    const f = fixture();
+    try {
+      writeJson(path.join(f.root, ".standardcode"), "settings.local.json", { env: { Path: "C://evil2" } });
+      const env1: Record<string, string | undefined> = {};
+      const loaded1 = load(f);
+      const r1 = applySettingsEnv(loaded1, env1, { injected: new Set<string>() });
+      expect(r1.blocked).toEqual(["Path"]);
+      expect(env1.Path).toBeUndefined();
+      // user 源：黑名单键放行（本机自有设置 [自定] 级别域）——独立 fixture（与 projectLocal 用例隔离）
+      const f2 = fixture();
+      try {
+        writeJson(path.join(f2.home, ".standardcode"), "settings.json", { env: { NODE_OPTIONS: "--max-old-space-size=4096" } });
+        const env2: Record<string, string | undefined> = {};
+        const loaded2 = load(f2);
+        const r2 = applySettingsEnv(loaded2, env2, { injected: new Set<string>() });
+        expect(r2.blocked).toEqual([]);
+        expect(env2.NODE_OPTIONS).toBe("--max-old-space-size=4096");
+      } finally {
+        f2.cleanup();
+      }
+    } finally {
+      f.cleanup();
+    }
+  });
+});
+
+describe("SEC-030 疑似密钥告警（WP-05 清偿；≥20 字符赋 *KEY*/*TOKEN*/*SECRET* 命名键）", () => {
+  it("env.OPENAI_API_KEY 明文（≥20 字符）→ 告警含 keychain 建议；键值本体不落告警", () => {
+    const f = fixture();
+    try {
+      writeJson(path.join(f.root, ".standardcode"), "settings.json", { env: { OPENAI_API_KEY: "sk-1234567890abcdefGHIJ" } });
+      const loaded = load(f);
+      const hit = loaded.warnings.find((w) => w.reason.includes("suspected plaintext secret"));
+      expect(hit).toBeDefined();
+      expect(hit!.source).toBe("projectShared");
+      expect(hit!.path).toBe("settings(env.OPENAI_API_KEY)");
+      expect(hit!.reason).toContain("prefer keychain");
+      expect(JSON.stringify(loaded.warnings)).not.toContain("sk-1234567890abcdefGHIJ"); // 值不二次落盘
+    } finally {
+      f.cleanup();
+    }
+  });
+  it("短值（<20 字符）不告警；monkey 类命名不误报；camelCase apiKey 命中", () => {
+    const f = fixture();
+    try {
+      writeJson(path.join(f.root, ".standardcode"), "settings.json", {
+        env: { SHORT_KEY: "sk-short" },
+        monkeyBusiness: "x".repeat(40),
+        providerApiKeyCamel: "sk-1234567890abcdefGHIJ",
+      });
+      const loaded = load(f);
+      const hits = loaded.warnings.filter((w) => w.reason.includes("suspected plaintext secret"));
+      expect(hits.map((h) => h.path)).toEqual(["settings(providerApiKeyCamel)"]);
+    } finally {
+      f.cleanup();
+    }
+  });
+});

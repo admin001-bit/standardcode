@@ -74,3 +74,17 @@ describe("buildProvider wire_api 线制（WP-02 DoD③）", () => {
     }
   });
 });
+
+// —— WP-05（M5）SEC-030 密钥优先级链接线：keychain 链首命中→无 env 亦可装配；未命中→报错含 keychain account ——
+describe("SEC-030 keychain 链（WP-05 清偿）", () => {
+  it("fake keychain 命中=空 env 下装配成功（链首生效）；未命中=missing API key 报错含 api-key:<provider>", () => {
+    const root = tmpRoot();
+    try {
+      const s = createSession({ ...baseInit(root), env: {}, keychain: { name: "fake", getSecret: () => "sk-from-keychain" } });
+      expect(s.providerName).toBe("anthropic");
+      expect(() => createSession({ ...baseInit(root), env: {}, keychain: { name: "fake", getSecret: () => null } })).toThrow(/api-key:anthropic/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -187,7 +187,28 @@ export function mergeSettingsDocs(docs: Record<SettingsSourceName, SettingsDoc |
   }
 
   const effectiveSources = SETTINGS_SOURCE_ORDER.filter((s) => docs[s] !== null).reverse();
+  scanSuspectedSecrets(docs, warnings);
   return { docs, merged, effectiveSources, warnings };
+}
+
+/** SEC-030 疑似密钥告警（WP-05 清偿；§11 行 457 原文：settings 出现疑似密钥〔≥20 字符赋给 KEY/TOKEN/SECRET 类命名键〕
+ * MUST 警告并建议 keychain）。逐来源扫描叶子键（分词边界匹配，防 "monkey" 类误报 [自定]：
+ * camelCase 先按大写字母切分再按非字母数字分词，段 ∈ {key,keys,token,tokens,secret,secrets,apikey,apikeys}）；
+ * 命名命中且值为长度 ≥20 的字符串 → 告警（键值本体不入告警文本，防二次落盘）。 */
+function scanSuspectedSecrets(docs: Record<SettingsSourceName, SettingsDoc | null>, warnings: LoadedSettings["warnings"]): void {
+  const SECRET_NAME_SEGMENTS = new Set(["key", "keys", "token", "tokens", "secret", "secrets", "apikey", "apikeys"]);
+  for (const source of SETTINGS_SOURCE_ORDER) {
+    const doc = docs[source];
+    if (!doc) continue;
+    const leaves = new Map<string, unknown>();
+    collectLeaves(doc, "", leaves);
+    for (const [key, value] of leaves) {
+      if (typeof value !== "string" || value.length < 20) continue;
+      const segments = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]+/).filter((s) => s !== "");
+      if (!segments.some((s) => SECRET_NAME_SEGMENTS.has(s))) continue;
+      warnings.push({ source, path: `settings(${key})`, reason: "suspected plaintext secret (>=20 chars assigned to a *KEY*/*TOKEN*/*SECRET*-named key) - prefer keychain or environment variables (SEC-030)" });
+    }
+  }
 }
 
 /** 取合并后设置值（merged 为扁平点路径）。 */
@@ -205,12 +226,21 @@ export interface ApplyEnvResult {
   injected: string[];
   /** 因 null/undefined 或注入后被省略而未动作的键。 */
   skipped: string[];
+  /** SEC-020b：黑名单键被拒注入（项目级源；值不落 target）。 */
+  blocked: string[];
 }
+
+/** SEC-020b 黑名单（§11 行 456 原文点名：PATH/LD_PRELOAD/NODE_OPTIONS 类键禁止经项目级 settings 注入）。
+ * 类边界=spec 点名三键 [自定]（BASH_ENV/ENV 等执行面键由 SEC-080 子进程剥离另闸）；匹配对大小写不敏感
+ *（Windows env 键不区分大小写，env.Path 同面）。 */
+export const SEC_020B_BLOCKED_ENV_KEYS: readonly string[] = ["PATH", "LD_PRELOAD", "NODE_OPTIONS"];
 
 /**
  * settings 注入 env（§7.7：进程存活期不可 unset）。粘滞语义（ADR-0030）：
  * 注入后键被省略或置 null → 不解除；同键再注入新值 → 允许更新（managed 可纠偏）。
  * handle 由调用方持有（默认新建）；重复传入同一 handle 即延续粘滞登记。
+ * SEC-020b（WP-05 清偿）：黑名单键（PATH/LD_PRELOAD/NODE_OPTIONS）经**项目级源**（projectShared/projectLocal）
+ * 声明 = 拒注入 + 告警（复用 loaded.warnings 通道，/doctor 自然呈现）；managed/user/flag 源不设限（管理层/本机自有）[自定]。
  */
 export function applySettingsEnv(
   loaded: LoadedSettings,
@@ -219,13 +249,30 @@ export function applySettingsEnv(
 ): ApplyEnvResult {
   const injected: string[] = [];
   const skipped: string[] = [];
+  const blocked: string[] = [];
   const envKeys = Object.keys(loaded.merged).filter((k) => k.startsWith("env."));
   const present = new Set(envKeys);
+  // 逐 env 键解析最高来源（高→低首中即返；collectLeaves 展平语义与合并一致）
+  const sourceOfKey = new Map<string, SettingsSourceName>();
+  for (const source of [...SETTINGS_SOURCE_ORDER].reverse()) {
+    const doc = loaded.docs[source];
+    if (!doc) continue;
+    const leaves = new Map<string, unknown>();
+    collectLeaves(doc, "", leaves);
+    for (const key of envKeys) if (leaves.has(key) && !sourceOfKey.has(key)) sourceOfKey.set(key, source);
+  }
   for (const key of envKeys) {
     const name = key.slice(4);
     const value = loaded.merged[key];
     if (value === null || value === undefined) {
       skipped.push(name);
+      continue;
+    }
+    const source = sourceOfKey.get(key);
+    const isProjectSource = source === "projectShared" || source === "projectLocal";
+    if (isProjectSource && SEC_020B_BLOCKED_ENV_KEYS.some((b) => b.toUpperCase() === name.toUpperCase())) {
+      blocked.push(name);
+      loaded.warnings.push({ source: source!, path: `settings(env.${name})`, reason: "SEC-020b blocked: this env key cannot be injected from project-level settings" });
       continue;
     }
     target[name] = String(value);
@@ -236,5 +283,5 @@ export function applySettingsEnv(
   for (const name of handle.injected) {
     if (!present.has(`env.${name}`)) skipped.push(name);
   }
-  return { injected, skipped };
+  return { injected, skipped, blocked };
 }

@@ -14,3 +14,5 @@ export * from "./plugin/index.ts";
 // M4-WP-08：/update（ENG-041+附录 E npm registry 通道；env 基线剥离共享面+registry 查询/版本比对/npm 执行，全注入面离线）。
 export * from "./env-baseline.ts";
 export * from "./updater.ts";
+// M5-WP-05：SEC-030 keychain 读面适配器（优先级链首；S-6 清偿）。
+export * from "./keychain.ts";
