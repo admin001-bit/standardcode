@@ -13,6 +13,12 @@ use crate::run::plain_exec;
 
 /// 顶层别名前缀重写（仅 /tmp /var /etc 三形，含带尾斜杠子路径；纯词法，不触盘）。
 fn dealias(s: &str) -> String {
+    // -D 参数形：只重写 =号后的值（命令内路径无需重写——内核解析自然对齐 /private）
+    if let Some((head, val)) = s.split_once('=') {
+        if head.starts_with("-D") {
+            return format!("{head}={}", dealias(val));
+        }
+    }
     for (from, to) in [
         ("/tmp", "/private/tmp"),
         ("/var", "/private/var"),
@@ -74,6 +80,11 @@ mod integration {
         assert_eq!(dealias("/private/var/x"), "/private/var/x");
         assert_eq!(dealias("/usr/bin/sandbox-exec"), "/usr/bin/sandbox-exec");
         assert_eq!(dealias("/varfoo/x"), "/varfoo/x");
+        assert_eq!(
+            dealias("-DWR0=/var/folders/w/ws"),
+            "-DWR0=/private/var/folders/w/ws"
+        );
+        assert_eq!(dealias("-DWR0=/private/var/x"), "-DWR0=/private/var/x");
     }
 
     #[test]
