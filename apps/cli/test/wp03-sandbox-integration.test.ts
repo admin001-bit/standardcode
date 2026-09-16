@@ -82,8 +82,15 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
     if (process.platform === "win32") return; // 非提权 privilege 形（上面已锁该断言）
     const h = createSandboxHandle({ tier: "workspace-write", workspaceRoot: root, binaryPath: BIN! });
     try {
-      const big = "0123456789abcdef".repeat(8192); // 128KB > 2×64KB 事件块
-      const r = await h.run({ program: "/bin/sh", args: ["-c", `printf '${big}'`], cwd: root, env: {} });
+      // 生成逻辑放沙箱内（单 argv 128KB 上限实证 CI E2BIG=os error 7；本机栈小恰好过关=
+      // 教训"沙箱测料不得靠宿主栈宽"）：16 字节 × 8192=128KB 跨多 event 帧。
+      const big = "0123456789abcdef".repeat(8192);
+      const r = await h.run({
+        program: "/bin/sh",
+        args: ["-c", "i=0; while [ $i -lt 8192 ]; do printf '0123456789abcdef'; i=$((i+1)); done"],
+        cwd: root,
+        env: { PATH: "/bin:/usr/bin" },
+      });
       expect(r.exitCode).toBe(0);
       expect(r.stdout.length).toBe(big.length);
       expect(r.stdout).toBe(big);
