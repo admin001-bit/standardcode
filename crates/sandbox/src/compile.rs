@@ -447,7 +447,9 @@ fn compile_mac(req: &ExecRequest, plan: &MaskPlan<'_>) -> CompiledCommand {
     }
     for p in meta_create_deny {
         let name = pb.add("PD", p);
-        // 双保险：受保护名 create 与 unlink 皆禁（首次 mkdir 洞 + 替换洞，参考报告 §1.4(c)）
+        // 三重保险：子树写禁 + 名本身 create/unlink 禁（首次 mkdir 洞/替换洞/既有名内容改写，
+        // 参考报告 §1.4(c) 双保险 + 本卡补内容写一重）
+        lines.push(format!("(deny file-write* (subpath (param \"{name}\")))"));
         lines.push(format!(
             "(deny file-write-create (literal (param \"{name}\")))"
         ));
@@ -574,11 +576,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn req() -> ExecRequest {
-        ExecRequest {
-            program: PathBuf::from("git"),
-            args: vec!["push".to_string()],
-            cwd: PathBuf::from("/w"),
-        }
+        ExecRequest::new("git", vec!["push".to_string()], "/w")
     }
 
     fn root(p: &str) -> RootPath {
@@ -758,11 +756,7 @@ mod tests {
     fn windows_wire_net_allowed_serialization() {
         // DoD① "网络 deny·allow"两形之 windows 半（三平台两形全覆盖收口）
         let pol = SandboxPolicy::workspace_write(vec![root("C:/w")]).allow_network();
-        let req = ExecRequest {
-            program: PathBuf::from("git"),
-            args: vec!["push".to_string()],
-            cwd: PathBuf::from("C:/w"),
-        };
+        let req = ExecRequest::new("git", vec!["push".to_string()], "C:/w");
         let out = compile(&req, &pol, &PolicyFacts::default(), Platform::Windows).unwrap();
         let wire: serde_json::Value = serde_json::from_str(&out.policy_json.unwrap()).unwrap();
         assert_eq!(wire["net"], json!("allowed"));
@@ -815,8 +809,10 @@ mod tests {
                     "(allow file-read*)",
                     "(allow file-write* (subpath (param \"WR0\")))",
                     "(deny file-write* (subpath (param \"RO0\")))",
+                    "(deny file-write* (subpath (param \"PD0\")))",
                     "(deny file-write-create (literal (param \"PD0\")))",
                     "(deny file-write-unlink (literal (param \"PD0\")))",
+                    "(deny file-write* (subpath (param \"PD1\")))",
                     "(deny file-write-create (literal (param \"PD1\")))",
                     "(deny file-write-unlink (literal (param \"PD1\")))",
                     "(deny file-write-unlink (require-all (literal (param \"WR0\")) (vnode-type DIRECTORY)))",
@@ -852,11 +848,7 @@ mod tests {
 
     #[test]
     fn windows_helper_shape_and_policy_json_canonical() {
-        let req = ExecRequest {
-            program: PathBuf::from("git"),
-            args: vec!["push".to_string()],
-            cwd: PathBuf::from("C:/w"),
-        };
+        let req = ExecRequest::new("git", vec!["push".to_string()], "C:/w");
         let pol = SandboxPolicy::workspace_write(vec![root("C:/w")]);
         let out = compile(&req, &pol, &PolicyFacts::default(), Platform::Windows).unwrap();
         assert_eq!(out.sandbox, SandboxType::WindowsRestrictedToken);
@@ -928,11 +920,7 @@ mod tests {
             compile(&req(), &up, &PolicyFacts::default(), Platform::Linux).unwrap_err(),
             CompileError::PathNotNormalized(_)
         ));
-        let empty = ExecRequest {
-            program: PathBuf::new(),
-            args: vec![],
-            cwd: PathBuf::from("/w"),
-        };
+        let empty = ExecRequest::new("", Vec::<String>::new(), "/w");
         assert!(matches!(
             compile(
                 &empty,
@@ -943,11 +931,7 @@ mod tests {
             .unwrap_err(),
             CompileError::EmptyProgram
         ));
-        let rel_prog = ExecRequest {
-            program: PathBuf::from("bin/git"),
-            args: vec![],
-            cwd: PathBuf::from("/w"),
-        };
+        let rel_prog = ExecRequest::new("bin/git", Vec::<String>::new(), "/w");
         assert!(matches!(
             compile(
                 &rel_prog,

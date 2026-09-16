@@ -46,3 +46,18 @@ pub enum FrameError {
     #[error("帧含裸换行")]
     EmbeddedNewline,
 }
+
+/// 执行层错误（WP-02 真跑；一律由调用方呈现，不得静默降级为未沙箱执行——B-12 fail-closed）。
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    #[error("编译层拒绝：{0}")]
+    Compile(#[from] CompileError),
+    #[error("子进程拉起失败（fail-closed，非绕过沙箱执行）：{0}")]
+    Spawn(String),
+    #[error("沙箱内层错误：{0}")]
+    Inner(String),
+    #[error("IO：{0}")]
+    Io(#[from] std::io::Error),
+    #[error("Windows 特权不足（CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota；CI=admin 在位，本地非提权 shell 会拒）：{0}")]
+    Privilege(String),
+}

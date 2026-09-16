@@ -1,13 +1,15 @@
 //! 执行请求与宿主注入事实。纯函数编译层不触盘：磁盘存在性/提权态等事实由宿主（WP-03 接线层）
 //! 在调用边界注入（[自定] 载体；同向 Codex"执行边界才做 native 转换"，参考报告 §1.3）。
+//!
+//! WP-02 扩：`env` 字段落地（执行面供给，代理键按策略剥离见 run.rs）；[`ExecOutput`] = 真跑结果。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// 沙箱执行请求（命令半；env 由宿主经 SEC-080 清洗后注入，不在本结构——WP-01 边界，
-/// 接线时见 WP-03 接缝⑭）。
+/// 沙箱执行请求。env 由调用方经 SEC-080 清洗后供给（接缝⑭：沙箱路径不豁免清洗，
+/// 执行层只再加码"策略网络=deny 时剥代理键"一道，run.rs::apply_proxy_policy）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecRequest {
     /// 程序：绝对路径，或 PATH 裸名（裸名解析责任在宿主，[自定] 校验规则=含分隔符必须绝对）。
@@ -15,6 +17,28 @@ pub struct ExecRequest {
     pub args: Vec<String>,
     /// 绝对规范化工作目录。
     pub cwd: PathBuf,
+    /// 子进程环境（入沙箱前面经策略代理剥离）。
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+impl ExecRequest {
+    pub fn new(program: impl Into<PathBuf>, args: Vec<String>, cwd: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            cwd: cwd.into(),
+            env: BTreeMap::new(),
+        }
+    }
+}
+
+/// 真跑产物（WP-02）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecOutput {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 /// 宿主注入事实集。
