@@ -48,7 +48,7 @@ describe("DoD① /update 命令四态（手动路=检查+提示+执行；失败=
     });
     await updateCmd.execute("", ctx);
     expect(npmCalls).toBe(1);
-    expect(out[0]).toContain("new version 9.9.9 (current 1.2.3) — running: npm i -g @standardcode/cli@latest"); // 提示先于执行（[自定] 写入时机）
+    expect(out[0]).toContain("new version 9.9.9 (current 1.2.3) — running: npm i -g @standardcode-oss/cli@latest"); // 提示先于执行（[自定] 写入时机）
     expect(out[out.length - 1]).toContain("installed 9.9.9 — restart standardcode");
   });
   it("安装失败（含 Windows 文件锁 EBUSY 形态）→ 三件套+手动兜底（发生了什么/为什么/建议）", async () => {
@@ -57,7 +57,7 @@ describe("DoD① /update 命令四态（手动路=检查+提示+执行；失败=
       check: async () => ({ ok: true, latest: "9.9.9" }),
       runNpm: async () => ({ status: 1, stderrTail: "npm ERR! code EBUSY: resource busy or locked, rename standardcode" }),
     });
-    await expect(updateCmd.execute("", ctx)).rejects.toThrow(/install failed[\s\S]*what happened[\s\S]*why:[\s\S]*EBUSY[\s\S]*suggestion[\s\S]*npm i -g @standardcode\/cli@latest/);
+    await expect(updateCmd.execute("", ctx)).rejects.toThrow(/install failed[\s\S]*what happened[\s\S]*why:[\s\S]*EBUSY[\s\S]*suggestion[\s\S]*npm i -g @standardcode-oss\/cli@latest/);
   });
   it("查询失败 → 三件套（不静默于手动路）", async () => {
     const { ctx } = fixture({ currentVersion: "1.2.3", check: async () => ({ ok: false, reason: "registry responded HTTP 500" }) });
@@ -82,7 +82,7 @@ describe("DoD① /update 命令四态（手动路=检查+提示+执行；失败=
     });
     await updateCmd.execute("", ctx);
     expect(out[out.length - 1]).toContain("installed 9.9.9");
-    expect(seenArgs).toEqual([...NPM_INSTALL_ARGS]); // ["i","-g","@standardcode/cli@latest"]
+    expect(seenArgs).toEqual([...NPM_INSTALL_ARGS]); // ["i","-g","@standardcode-oss/cli@latest"]
     expect(seenEnv!.PATH).toBe("/usr/bin");
     expect(seenEnv!.STANDARD_CODE_AUTO_UPDATE).toBeUndefined(); // SEC-080 基线剥离（env-baseline 共享面）
     expect(seenEnv!.MY_SECRET).toBeUndefined();

@@ -12,8 +12,8 @@ import {
   type NpmRunResult,
 } from "../src/updater.ts";
 
-const INSTALL_ARGS = ["i", "-g", "@standardcode/cli@latest"];
-const LS_ARGS = ["ls", "-g", "@standardcode/cli", "--json"];
+const INSTALL_ARGS = ["i", "-g", "@standardcode-oss/cli@latest"];
+const LS_ARGS = ["ls", "-g", "@standardcode-oss/cli", "--json"];
 
 /** 序列桩：按调用序弹出响应；记录 (cmd,args,env) 供断言。 */
 function seqRunner(responses: NpmRunResult[]) {
@@ -27,8 +27,8 @@ function seqRunner(responses: NpmRunResult[]) {
   return { runner, calls };
 }
 
-const LS_OK_0101: NpmRunResult = { status: 0, stdout: JSON.stringify({ dependencies: { "@standardcode/cli": { version: "0.1.1" } } }) };
-const LS_OK_0100: NpmRunResult = { status: 0, stdout: JSON.stringify({ dependencies: { "@standardcode/cli": { version: "0.1.0" } } }) };
+const LS_OK_0101: NpmRunResult = { status: 0, stdout: JSON.stringify({ dependencies: { "@standardcode-oss/cli": { version: "0.1.1" } } }) };
+const LS_OK_0100: NpmRunResult = { status: 0, stdout: JSON.stringify({ dependencies: { "@standardcode-oss/cli": { version: "0.1.0" } } }) };
 const INSTALL_OK: NpmRunResult = { status: 0 };
 const INSTALL_EBUSY: NpmRunResult = { status: 1, stderrTail: "npm error code EBUSY\nnpm errorEM file busy" };
 
@@ -52,7 +52,7 @@ describe("DoD③ ADR-0045 层一·锁错重试", () => {
     expect(r.attempts).toBe(1 + ATOMIC_MAX_RETRIES);
     expect(calls.length).toBe(3);
     expect(r.guidance).toContain("关闭正在运行的 standardcode 实例");
-    expect(r.guidance).toContain(`npm i -g @standardcode/cli@latest`);
+    expect(r.guidance).toContain(`npm i -g @standardcode-oss/cli@latest`);
     expect(r.guidance).toContain("post-retries");
   });
   it("重试命令与首试一致（同 args 同 env 剥离面）——ADR-0045 决策 3", async () => {
@@ -73,7 +73,7 @@ describe("DoD③ ADR-0045 层一·非锁错误 fail-fast（决策 2）", () => {
     expect(r.ok).toBe(false);
     expect(r.attempts).toBe(1);
     expect(calls.length).toBe(1);
-    expect(r.guidance).toContain("npm i -g @standardcode/cli@latest");
+    expect(r.guidance).toContain("npm i -g @standardcode-oss/cli@latest");
   });
 });
 
@@ -119,7 +119,7 @@ describe("WP-07 uninstall runner（ADR-0044 决策 5）", () => {
     expect(r.status).toBe(0);
     expect(calls[0]!.cmd).toBe("npm.cmd");
     expect(calls[0]!.args).toEqual(NPM_UNINSTALL_ARGS);
-    expect(NPM_UNINSTALL_ARGS).toEqual(["rm", "-g", "@standardcode/cli"]);
+    expect(NPM_UNINSTALL_ARGS).toEqual(["rm", "-g", "@standardcode-oss/cli"]);
     expect(calls[0]!.env.STANDARD_CODE_SESSION_ID).toBeUndefined();
   });
 });

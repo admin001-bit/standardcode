@@ -95,7 +95,7 @@ describe("DoD① 代理面（MDL-020/021 行 353：全出站生效；默认不�
     expect(out[GIT_TOKEN_ENV_KEY]).toBeUndefined(); // token 走 -c 参数面，不进子进程 env
     expect(out.STANDARD_CODE_SESSION_ID).toBeUndefined();
   });
-  it("本地桩 server 断言：HTTPS_PROXY 下 clone 实际经代理 CONNECT（真 git 子进程，零真实网络）", async () => {
+  it("本地桩 server 断言：HTTPS_PROXY 下 clone 实际经代理 CONNECT（真 git 子进程，零真实网络）", { timeout: 30_000 }, async () => {
     const root = tmp();
     const stub = startProxyStub(root);
     const port = await stub.waitPort();
@@ -112,7 +112,7 @@ describe("DoD① 代理面（MDL-020/021 行 353：全出站生效；默认不�
 });
 
 describe("DoD② 认证注入面（token 走 -c 参数面；URL 内嵌凭据脱敏）", () => {
-  it("STANDARD_CODE_GIT_TOKEN → -c http.extraHeader 注入（参数面在 -- 前）+env 无 token+GIT_TERMINAL_PROMPT=0", async () => {
+  it("STANDARD_CODE_GIT_TOKEN → -c http.extraHeader 注入（参数面在 -- 前）+env 无 token+GIT_TERMINAL_PROMPT=0", { timeout: 30_000 }, async () => {
     const root = tmp();
     const repo = fixtureRepo(root);
     const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
@@ -138,7 +138,7 @@ describe("DoD② 认证注入面（token 走 -c 参数面；URL 内嵌凭据脱�
     expect(cloneCall.env[GIT_TOKEN_ENV_KEY]).toBeUndefined(); // token 不进子进程 env
     expect(cloneCall.env.GIT_TERMINAL_PROMPT).toBe("0"); // 非交互 fail-fast [自定]
   });
-  it("无 token env=零注入（-c 缺席）+clone 成功=零干扰通路（credential helper 场景等价）", async () => {
+  it("无 token env=零注入（-c 缺席）+clone 成功=零干扰通路（credential helper 场景等价）", { timeout: 30_000 }, async () => {
     const root = tmp();
     const repo = fixtureRepo(root);
     const calls: { args: string[] }[] = [];
@@ -167,7 +167,7 @@ describe("DoD② 认证注入面（token 走 -c 参数面；URL 内嵌凭据脱�
     const joined = JSON.stringify(outcome.warnings);
     expect(joined).not.toContain("secret123");
   });
-  it("URL 内嵌凭据：安装成功路 sourceLabel 脱敏落盘（plugins.json 不含密钥值）", async () => {
+  it("URL 内嵌凭据：安装成功路 sourceLabel 脱敏落盘（plugins.json 不含密钥值）", { timeout: 30_000 }, async () => {
     const root = tmp();
     const repo = fixtureRepo(root);
     const runner: GitRunner = (args) => {

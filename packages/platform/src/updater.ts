@@ -1,13 +1,13 @@
 // WP-08（M4）：/update 自动更新检查——ENG-041 落地（v2.8 §10 行 431；§8.2 M4 增 /update）。
-// 通道=附录 E（行 630）npm registry（`@standardcode/cli` 全平台首选；GitHub Releases/二进制通道=M5 边界）。
+// 通道=附录 E（行 630）npm registry（`@standardcode-oss/cli` 全平台首选；GitHub Releases/二进制通道=M5 边界）。
 // 检查/提示形状无 [CC] 一手锚→全 [自定]（卡参考资料栏预登记；mini 决策走结果页偏差登记，B-06 判定
 // 不构成未覆盖级：机制主干在 spec 文字）。更新原子性=M5 设计（§13 行 534），本模块不含原子回滚面。
 // 纯函数+注入面（fetchImpl/runner，仿 mcp/transport.ts 形制）：测试全离线零网络（卡交付物"网络注入面"）。
 import { spawn } from "node:child_process";
 import { stripEnvBaseline } from "./env-baseline.ts";
 
-/** 附录 E 包名（npm `@standardcode/cli`）。 */
-export const NPM_PACKAGE_NAME = "@standardcode/cli";
+/** 附录 E 包名（npm `@standardcode-oss/cli`）。 */
+export const NPM_PACKAGE_NAME = "@standardcode-oss/cli";
 
 /** DoD③ 检查超时上限 [自定]：10s（网络闪断快速降级；AbortSignal.timeout 内部 unref 计时器——不吊事件循环）。 */
 export const UPDATE_CHECK_TIMEOUT_MS = 10_000;
@@ -165,7 +165,7 @@ function updateGuidance(reason: string): string {
   }; action: 关闭正在运行的 standardcode 实例后重试，或手动执行 npm i -g ${NPM_PACKAGE_NAME}@latest`;
 }
 
-/** 层二：全局实装版本查询（`npm ls -g @standardcode/cli --json`；任何失败结构化不抛）。 */
+/** 层二：全局实装版本查询（`npm ls -g @standardcode-oss/cli --json`；任何失败结构化不抛）。 */
 export async function verifyInstalledVersion(
   opts: { runner?: NpmRunner; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
 ): Promise<{ ok: true; version: string } | { ok: false; reason: string }> {

@@ -50,7 +50,7 @@ for (const k of LIFECYCLE_SCRIPT_KEYS) {
     process.exit(1);
   }
 }
-if (staged.name !== "@standardcode/cli") {
+if (staged.name !== "@standardcode-oss/cli") {
   console.error("[pack-release] audit FAILED: package name mismatch (附录 E 行 630)");
   process.exit(1);
 }

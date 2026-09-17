@@ -314,11 +314,11 @@ Object.assign(EN, {
   // —— M4-WP-08：/update（ENG-041；附录 E npm registry 通道；失败文案=ADR-0034 三件套+手动兜底；技术术语 npm/registry/update 保留英文——ECO-011）——
   "cmd.update.desc": "check npm registry for a new release (ENG-041); when found: prompt, then run the npm global install",
   "cmd.update.err.args": "/update takes no arguments",
-  "cmd.update.queryFailed": "[update] check failed — what happened: npm registry latest-version query failed; why: {value}; suggestion: check network/proxy, or update manually: npm i -g @standardcode/cli@latest",
+  "cmd.update.queryFailed": "[update] check failed — what happened: npm registry latest-version query failed; why: {value}; suggestion: check network/proxy, or update manually: npm i -g @standardcode-oss/cli@latest",
   "cmd.update.latest": "[update] already up to date — current {version} (registry latest: {latest})",
-  "cmd.update.found": "[update] new version {latest} (current {version}) — running: npm i -g @standardcode/cli@latest",
+  "cmd.update.found": "[update] new version {latest} (current {version}) — running: npm i -g @standardcode-oss/cli@latest",
   "cmd.update.installed": "[update] installed {latest} — restart standardcode to run the new version",
-  "cmd.update.installFailed": "[update] install failed — what happened: npm global install did not complete; why: {value}; suggestion: close running instances (EBUSY/EPERM file lock) and retry manually: npm i -g @standardcode/cli@latest",
+  "cmd.update.installFailed": "[update] install failed — what happened: npm global install did not complete; why: {value}; suggestion: close running instances (EBUSY/EPERM file lock) and retry manually: npm i -g @standardcode-oss/cli@latest",
   "repl.update.available": "[update] new version {latest} available (current {version}) — run /update to install",
 });
 Object.assign(ZH_CN, {
@@ -460,11 +460,11 @@ Object.assign(ZH_CN, {
   // —— M4-WP-08：/update zh 包（技术术语 npm/registry/update 保留英文——ECO-011；三件套形制对位 ADR-0034）——
   "cmd.update.desc": "检查 npm registry 新版本（ENG-041）；发现新版先提示，再执行 npm 全局安装",
   "cmd.update.err.args": "/update 不接受参数",
-  "cmd.update.queryFailed": "[update] 检查失败——发生了什么：无法查询 npm registry 最新版本；为什么：{value}；建议动作：检查网络/代理（HTTP(S)_PROXY）后重试，或手动执行 npm i -g @standardcode/cli@latest",
+  "cmd.update.queryFailed": "[update] 检查失败——发生了什么：无法查询 npm registry 最新版本；为什么：{value}；建议动作：检查网络/代理（HTTP(S)_PROXY）后重试，或手动执行 npm i -g @standardcode-oss/cli@latest",
   "cmd.update.latest": "[update] 已是最新——当前 {version}（registry 最新：{latest}）",
-  "cmd.update.found": "[update] 发现新版本 {latest}（当前 {version}）——执行：npm i -g @standardcode/cli@latest",
+  "cmd.update.found": "[update] 发现新版本 {latest}（当前 {version}）——执行：npm i -g @standardcode-oss/cli@latest",
   "cmd.update.installed": "[update] 已安装 {latest}——重启 standardcode 以生效",
-  "cmd.update.installFailed": "[update] 安装失败——发生了什么：'npm i -g @standardcode/cli@latest' 未完成；为什么：{value}；建议动作：关闭正在运行的 standardcode 实例（Windows 文件锁 EBUSY/EPERM）后手动重试：npm i -g @standardcode/cli@latest",
+  "cmd.update.installFailed": "[update] 安装失败——发生了什么：'npm i -g @standardcode-oss/cli@latest' 未完成；为什么：{value}；建议动作：关闭正在运行的 standardcode 实例（Windows 文件锁 EBUSY/EPERM）后手动重试：npm i -g @standardcode-oss/cli@latest",
   "repl.update.available": "[update] 发现新版本 {latest}（当前 {version}）——运行 /update 安装",
 });
 

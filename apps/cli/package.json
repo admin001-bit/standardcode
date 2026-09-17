@@ -1,5 +1,5 @@
 {
-  "name": "@standardcode/cli",
+  "name": "@standardcode-oss/cli",
   "version": "0.1.0",
   "description": "StandardCode — open-source CLI coding agent (generic multi-protocol).",
   "license": "Apache-2.0",

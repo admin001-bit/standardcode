@@ -115,7 +115,7 @@ describe("DoD①：runNpmUpdate（子进程注入面+全硬编码零用户输入
     expect(npmCliCommand("linux")).toBe("npm");
     expect(npmCliCommand("darwin")).toBe("npm");
   });
-  it("缺省命令=i -g @standardcode/cli@latest；env 源过 SEC-080 剥离后交付 runner", async () => {
+  it("缺省命令=i -g @standardcode-oss/cli@latest；env 源过 SEC-080 剥离后交付 runner", async () => {
     let seen: { cmd: string; args: readonly string[]; env: NodeJS.ProcessEnv } | null = null;
     const r = await runNpmUpdate({
       platform: "linux",

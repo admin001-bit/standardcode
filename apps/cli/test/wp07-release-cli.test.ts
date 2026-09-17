@@ -61,7 +61,7 @@ describe("DoD④ 默认卸载（程序体+PATH 清偿+残留断言）", () => {
     const code = await runUninstall(["--purge"], io);
     expect(code).toBe(1);
     expect(out.join("\n")).toContain("remove FAILED");
-    expect(out.join("\n")).toContain("npm rm -g @standardcode/cli");
+    expect(out.join("\n")).toContain("npm rm -g @standardcode-oss/cli");
     expect(lsCalls).toBe(0); // 校验与 purge 均未达
     expect(existsSync(dataDir)).toBe(true); // purge 未执行（防半卸态）
   });
@@ -133,7 +133,7 @@ describe("DoD⑤ 包形制审计（postinstall 零提权=附录 E 供应链约�
     }
   });
   it("发布形制字段：name=附录 E 包名+public access+engines>=18+bin 在位", () => {
-    expect(pkg.name).toBe("@standardcode/cli");
+    expect(pkg.name).toBe("@standardcode-oss/cli");
     expect(pkg.publishConfig?.access).toBe("public");
     expect(pkg.engines?.node).toBe(">=18");
     expect(existsSync(join(repoRoot, "apps/cli/bin/standardcode.js"))).toBe(true);
