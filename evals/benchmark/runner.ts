@@ -164,15 +164,23 @@ function score(task: EvalTask, ctx: ScoreCtx, completionPass: boolean, completio
   return { id: task.id, name: task.name, model: BENCHMARK_MODEL, dims, pass: Object.values(dims).every((d) => d.pass) };
 }
 
-/** 报告渲染（docs/evals/v0.md 内容面；无时间戳/路径——字节级守卫可比对，日期随 git 留痕）。 */
+/** 报告题头系谱（WP-09 O2 清偿：派生式取代 v1 硬编码；v0/v1 串=存档题头逐字保留，v2 起新系谱）。 */
+function lineageFor(version: string): string {
+  if (version === "v0") return "WP-11，M3 DoD②";
+  if (version === "v1") return "WP-11；M3 v0 基座+M4 DoD② 扩列";
+  return "WP-09；M3 v0 基座+M4 DoD② 扩列+M5 能力族（沙箱/SEC/遥测）扩列+live 门禁";
+}
+
+/** 报告渲染（docs/evals/<VERSION>.md 内容面；无时间戳/路径——字节级守卫可比对，日期随 git 留痕）。 */
 export function renderReport(results: TaskResult[], version: string): string {
   const passed = results.filter((r) => r.pass).length;
   const pct = ((passed / results.length) * 100).toFixed(1);
+  const liveNote = version === "v0" || version === "v1" ? "live 模式=M5 门禁（B-03 不进本板）。" : `live 模式=WP-09 落地（release evals-gate；live 报告 docs/evals/live-${version}.md）。`;
   const lines = [
-    `# evals 基准集 ${version} 出分记录（WP-11；M3 v0 基座+M4 DoD② 扩列）`,
+    `# evals 基准集 ${version} 出分记录（${lineageFor(version)}）`,
     "",
     `> 生成法：\`npm run evals:run\`（recorded 模式，零网络）。本报告由 evals/benchmark/benchmark.test.ts 与运行结果逐字节守卫（漂移=红，重采集=UPDATE_EVALS=1）。`,
-    `> 结论模型版本号（ENG-030"结论附模型版本号"）：**${BENCHMARK_MODEL}**（recorded 夹具标定面）；基准集独立版本化=\`evals/benchmark/VERSION\`=${version}。live 模式=M5 门禁（B-03 不进本板）。`,
+    `> 结论模型版本号（ENG-030"结论附模型版本号"）：**${BENCHMARK_MODEL}**（recorded 夹具标定面）；基准集独立版本化=\`evals/benchmark/VERSION\`=${version}。${liveNote}`,
     "",
     `| 任务 | 名称 | 完成度 | 工具效率 | 上下文开销 | 破坏性操作 | 总判 |`,
     `| :-- | :-- | :-- | :-- | :-- | :-- | :-- |`,

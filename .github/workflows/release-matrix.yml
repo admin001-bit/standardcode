@@ -62,3 +62,28 @@ jobs:
           name: matrix-${{ matrix.os }}
           path: apps/cli/dist/
           if-no-files-found: warn
+
+  # WP-09（ENG-030~032 行 483）：发布前 evals 门禁挂接——recorded 常绿+live 抽样双绿=release 前置（DoD③）。
+  # live=真实 Provider 抽样（密钥=repo secrets；缺席=本 job 红 LIVE-NOT-CONFIGURED 非静默假过，卡边界明文）。
+  evals-gate:
+    name: evals-gate (recorded+live 双绿=发布前置)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: install (workspace)
+        run: pnpm install --frozen-lockfile
+      - name: recorded evals (常绿门)
+        run: pnpm run evals:run
+      - name: live evals (发布前 live 门；无密钥=红=LIVE-NOT-CONFIGURED 非假绿)
+        env:
+          STANDARD_CODE_EVALS_LIVE: "1"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          STANDARD_CODE_EVALS_MODEL: ${{ vars.STANDARD_CODE_EVALS_MODEL }}
+          STANDARD_CODE_EVALS_BASE_URL: ${{ vars.STANDARD_CODE_EVALS_BASE_URL }}
+        run: pnpm run evals:live

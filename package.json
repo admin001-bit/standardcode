@@ -11,6 +11,7 @@
     "golden:capture:antifab": "node evals/golden/capture-antifab.mjs > evals/golden/baselines/anti-fabrication.json",
     "golden:compare": "node evals/golden/compare.mjs",
     "evals:run": "vitest run evals/benchmark/benchmark.test.ts",
+    "evals:live": "vitest run evals/benchmark/live.test.ts",
     "test": "vitest run",
     "typecheck": "tsc -p packages/providers && tsc -p packages/harness && tsc -p packages/context && tsc -p packages/platform && tsc -p packages/executor && tsc -p packages/capabilities && tsc -p apps/cli && tsc -p evals",
     "rust:fmt": "cargo fmt --all --check",

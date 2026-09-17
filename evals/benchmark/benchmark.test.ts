@@ -32,9 +32,9 @@ afterAll(() => {
   }
 });
 
-describe("DoD①/② runner recorded 全绿+基准集（v0 ≥10；v1 ≥20=M4 DoD② 原文判据）", () => {
-  it("任务数 ≥20 且逐任务四维度结构完整（完成度/工具效率/上下文开销/破坏性操作数）", () => {
-    expect(results.length).toBeGreaterThanOrEqual(20);
+describe("DoD①/② runner recorded 全绿+基准集（v0 ≥10；v1 ≥20=M4 DoD②；v2 >20=WP-09 未解决①清偿）", () => {
+  it("任务数 >20 且逐任务四维度结构完整（完成度/工具效率/上下文开销/破坏性操作数）", () => {
+    expect(results.length).toBeGreaterThan(20);
     for (const r of results) {
       expect(Object.keys(r.dims).sort()).toEqual(["completion", "contextOverhead", "destructiveOps", "toolEfficiency"]);
       expect(r.model).toBe(BENCHMARK_MODEL); // 结论附模型版本号（ENG-030）

@@ -7,6 +7,8 @@
 // skills 清单预算+展开注入（b17，WP-05）/memory 索引硬截断+互链（b18，WP-06）/custom agent 端到端
 // （b19，session 生产装配链——WP-10 链）/plugin 安装确认 fail-closed+聚合（b20，WP-09 S-5）。
 // M4 注记②清偿：b08/b11/b12 补 directBudget（toolEfficiency/contextOverhead 真判据，非恒过虚位）。
+// M5-WP-09 扩列 v2（b21-b24，">20 恰界"清偿=M4-WP-11 未解决①）：沙箱策略 wire 契约+帧 codec（b21，WP-01/03）/
+// SEC-020b env 注入黑名单（b22）+SEC-030 疑似密钥告警+脱敏链（b23，均 WP-05）/遥测契约+opt-in 门序+接缝⑮（b24，WP-06）。
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +29,8 @@ import {
 import { buildMcpToolsForConnection, buildSkillListing, connectAll, createHookEngine, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, sanitizeMcpNameSegment } from "../../packages/capabilities/src/index.ts";
 import { loadAutoMemory } from "../../packages/context/src/index.ts";
 import { buildPluginDocs, componentCounts, installPlugin, loadInstalledPlugins, loadPluginsDoc, pluginsRootDir } from "../../packages/platform/src/index.ts";
-import { execBash } from "../../packages/executor/src/index.ts";
+import { applySettingsEnv, createTelemetryFacade, mergeSettingsDocs, redactSecrets, resolveTelemetryEnabled, TELEMETRY_ENV_KEY, type TelemetryEnvelope } from "../../packages/platform/src/index.ts";
+import { DEFAULT_METADATA_PROTECTION, decodeFrame, encodeFrame, execBash, IPC_PROTOCOL_VERSION, policyFor, SANDBOX_TIERS, type Frame } from "../../packages/executor/src/index.ts";
 import { createSession } from "../../apps/cli/src/session.ts";
 import { scriptedProvider, BENCHMARK_MODEL, type EvalTask, type ScoreCtx } from "./runner.ts";
 
@@ -461,6 +464,120 @@ export function buildTasks(work: string): EvalTask[] {
         return { ctx: ctxLite({ calls: [{ name: "plugin", input: { installs: 3 } }] }), completion: ok, completionDetail: ok ? "" : `zero=${zeroLanding} e2=${second.error} hooks=${JSON.stringify(docs.hooksDoc)} skills=${counts.skills}` };
       },
       directBudget: { maxToolCalls: 3, maxInputTokens: 0 },
+    },
+
+    // —— M5-WP-09 扩列 v2（b21-b24；M5 三族：沙箱/SEC/遥测）——
+    {
+      id: "b21", name: "sandbox-policy-wire-contract", kind: "direct",
+      seed: "三档 wire 策略形状+元数据默认名单（EXE-011 行 427）+帧 codec 往返/坏帧拒绝（WP-01/03，ARCH-008）",
+      async run() {
+        const ro = policyFor("read-only", "/ws");
+        const ww = policyFor("workspace-write", "/ws");
+        const danger = policyFor("danger-full-access", "/ws");
+        const frame: Frame = { v: IPC_PROTOCOL_VERSION, kind: "request", id: 7, payload: { x: 1 } };
+        const encoded = encodeFrame(frame);
+        const round = decodeFrame(encoded);
+        let mismatch = "";
+        let oversized = "";
+        try {
+          decodeFrame(encoded.replace(`"v":${IPC_PROTOCOL_VERSION}`, '"v":4'));
+        } catch (e) {
+          mismatch = (e as Error).message;
+        }
+        try {
+          encodeFrame({ v: IPC_PROTOCOL_VERSION, kind: "response", id: 1, payload: "x".repeat(17 * 1024 * 1024) });
+        } catch (e) {
+          oversized = (e as Error).message;
+        }
+        const metaOk = [ro, ww, danger].every((p) => JSON.stringify(p.fs.metadata) === JSON.stringify(DEFAULT_METADATA_PROTECTION));
+        const ok =
+          SANDBOX_TIERS.join() === "read-only,workspace-write,danger-full-access" &&
+          ro.fs.kind === "restricted" && ro.fs.writable_roots.length === 0 && ro.net === "denied" &&
+          ww.fs.writable_roots[0]?.path === "/ws" && ww.fs.writable_roots[0]?.shape === "real" && ww.net === "denied" &&
+          danger.fs.kind === "unrestricted" && danger.net === "allowed" &&
+          metaOk &&
+          DEFAULT_METADATA_PROTECTION.protected_names.join() === ".git,.standardcode" &&
+          DEFAULT_METADATA_PROTECTION.read_only_subpaths.join() === ".git/hooks" &&
+          encoded.endsWith("\n") && round.kind === "request" && round.id === 7 &&
+          mismatch.includes("protocol version mismatch") && oversized.includes("frame too large");
+        return { ctx: ctxLite({ calls: [{ name: "sandbox", input: { tiers: 3, frames: 2 } }] }), completion: ok, completionDetail: ok ? "" : `mismatch="${mismatch}" oversized="${oversized}" meta=${metaOk}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b22", name: "sec020b-env-blacklist", kind: "direct",
+      seed: "黑名单键（PATH/LD_PRELOAD/NODE_OPTIONS）经项目级源拒注入+告警、大小写不敏感；user 源不设限（WP-05 SEC-020b）",
+      async run() {
+        const loaded = mergeSettingsDocs({
+          managed: null,
+          flag: null,
+          projectLocal: { env: { path: "C:\\evil-bin" } },
+          projectShared: { env: { PATH: "/evil", NODE_OPTIONS: "--inspect" } },
+          user: { env: { EVALS_B22_OK: "1" } },
+        });
+        const target: Record<string, string | undefined> = {};
+        const r = applySettingsEnv(loaded, target);
+        const upperBlocked = r.blocked.map((b) => b.toUpperCase());
+        const ok =
+          upperBlocked.includes("PATH") && upperBlocked.includes("NODE_OPTIONS") &&
+          r.blocked.length === 3 &&
+          target.PATH === undefined && target.NODE_OPTIONS === undefined && target.path === undefined &&
+          target.EVALS_B22_OK === "1" && r.injected.includes("EVALS_B22_OK") &&
+          loaded.warnings.filter((w) => w.reason.includes("SEC-020b")).length === 3;
+        return { ctx: ctxLite({ calls: [{ name: "settings", input: { blocked: r.blocked, injected: r.injected } }] }), completion: ok, completionDetail: ok ? "" : `blocked=${JSON.stringify(r.blocked)} injected=${JSON.stringify(r.injected)} warns=${JSON.stringify(loaded.warnings)}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b23", name: "sec030-redaction-chain", kind: "direct",
+      seed: "疑似密钥告警（≥20 字符 KEY/TOKEN/SECRET 命名键；分词边界防误报）+redactSecrets 形状白名单脱敏幂等（WP-05 SEC-030/S-10）",
+      async run() {
+        const loaded = mergeSettingsDocs({
+          managed: null,
+          flag: null,
+          projectLocal: null,
+          projectShared: null,
+          user: { env: { DEPLOY_TOKEN: "supersecretvalue1234567890", MONKEY_BUSINESS: "x".repeat(30) } },
+        });
+        const secretWarn = loaded.warnings.filter((w) => w.reason.includes("suspected plaintext secret"));
+        const monkeyWarn = loaded.warnings.filter((w) => w.path.includes("MONKEY"));
+        const redacted = redactSecrets("key sk-ant-api03-abcdefghijklmnop Bearer abcdefghijklmnopqrstux");
+        const ok =
+          secretWarn.length === 1 && secretWarn[0]!.path.includes("DEPLOY_TOKEN") &&
+          monkeyWarn.length === 0 &&
+          redacted.includes("[REDACTED]") && !redacted.includes("sk-ant-api03-abcdefghijklmnop") &&
+          !redacted.includes("abcdefghijklmnopqrstux") &&
+          redactSecrets(redacted) === redacted;
+        return { ctx: ctxLite({ calls: [{ name: "sec030", input: { warns: secretWarn.length } }] }), completion: ok, completionDetail: ok ? "" : `warns=${secretWarn.length} monkey=${monkeyWarn.length} redacted="${redacted}"` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
+    },
+    {
+      id: "b24", name: "telemetry-contract-gate-redact", kind: "direct",
+      seed: "七事件 sc_ 前缀+opt-in 门序（env>settings>缺省关 fail-closed）+关态零发射+事件体 redactSecrets 单源（WP-06/接缝⑮）",
+      async run() {
+        const gate =
+          resolveTelemetryEnabled({ env: { [TELEMETRY_ENV_KEY]: "1" } }) === true &&
+          resolveTelemetryEnabled({ env: { [TELEMETRY_ENV_KEY]: "0" }, settingsEnabled: true }) === false &&
+          resolveTelemetryEnabled({ settingsEnabled: true }) === true &&
+          resolveTelemetryEnabled({ env: { [TELEMETRY_ENV_KEY]: "weird" }, settingsEnabled: true }) === false &&
+          resolveTelemetryEnabled({}) === false;
+        const seen: TelemetryEnvelope[] = [];
+        const sink = { write: (events: readonly TelemetryEnvelope[]) => void seen.push(...events) };
+        const off = createTelemetryFacade({ env: {}, sink });
+        off.queryError({ message: "should not emit" });
+        const offQuiet = seen.length === 0 && off.isEnabled() === false;
+        const on = createTelemetryFacade({ env: { [TELEMETRY_ENV_KEY]: "1" }, sink });
+        on.queryError({ message: "token sk-ant-api03-abcdefghijklmnop leaked?" });
+        await on.flush();
+        const ok =
+          gate && offQuiet &&
+          seen.length === 1 && seen[0]!.event === "sc_query_error" &&
+          !JSON.stringify(seen).includes("sk-ant-api03-abcdefghijklmnop") &&
+          JSON.stringify(seen).includes("[REDACTED]");
+        return { ctx: ctxLite({ calls: [{ name: "telemetry", input: { emitted: seen.length, gate } }] }), completion: ok, completionDetail: ok ? "" : `gate=${gate} off=${offQuiet} seen=${JSON.stringify(seen)}` };
+      },
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 },
     },
   ];
 }
