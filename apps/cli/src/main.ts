@@ -181,7 +181,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   process.stdout.write(`standardcode ${CLI_VERSION} — /help 查看命令，/exit 退出\n`);
   await runRepl({
     session,
-    io: { lines: router.lines, write: (s) => process.stdout.write(s), close: () => rl.close() },
+    io: {
+      lines: router.lines,
+      write: (s) => process.stdout.write(s),
+      close: () => rl.close(),
+      // WP-08 DoD③：auto 更新通知行重绘（清当前行+写通知+重绘提示符；preserveCursor=保留已输入缓冲，
+      // M4-WP-08 未解决②并发尾窗乱码清偿）。非 TTY/无 rl 宿主不走此路（repl 回落 write）。
+      redrawNotice: process.stdin.isTTY
+        ? (line) => {
+            process.stdout.write("\r\x1b[2K");
+            process.stdout.write(line);
+            rl.prompt(true);
+          }
+        : undefined,
+    },
     fileHistory,
     confirm: ttyConfirm,
     sessionPicker,

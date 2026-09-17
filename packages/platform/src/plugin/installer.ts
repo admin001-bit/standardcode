@@ -127,14 +127,42 @@ export type GitRunner = (args: string[], env: NodeJS.ProcessEnv) => { status: nu
 // updater npm 子进程与 git clone "清洗同面" DoD①）。
 
 export const defaultGitRunner: GitRunner = (args, env) => {
-  const r = spawnSync("git", args, { encoding: "utf8", env, windowsHide: true });
+  // timeout/maxBuffer=保险面（WP-08：代理/网络路径子进程防悬挂；fast-path 零影响）[自定]
+  const r = spawnSync("git", args, { encoding: "utf8", env, windowsHide: true, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
   return { status: r.status, stderr: r.stderr };
 };
 
+/** WP-08 DoD②（SEC-030 链/S-3"持久记录"不含密钥值）：URL 内嵌凭据脱敏（userinfo 密码段→***；任意位置，
+ * 错误消息与留痕统一走此形）[自定]。scp 式（git@host:）无密码段=原样。 */
+export function redactUrlCredentials(source: string): string {
+  return source.replace(/((?:https?|ssh):\/\/[^/\s:@/]+:)([^/\s:@]+)@/gi, "$1***@");
+}
+
+/** WP-08 DoD②：token 来源 env 键 [自定]（基线剥离 STANDARD_CODE_*→提取走参数面 -c http.extraHeader，
+ * 凭据永不进子进程 env、不落盘；credential helper 场景=用户 .gitconfig 原生路，本模块零干扰）。 */
+export const GIT_TOKEN_ENV_KEY = "STANDARD_CODE_GIT_TOKEN";
+
+function gitTokenFrom(env: NodeJS.ProcessEnv): string | null {
+  const t = env[GIT_TOKEN_ENV_KEY];
+  return typeof t === "string" && t.trim() !== "" ? t.trim() : null;
+}
+
 function gitClone(source: string, destDir: string, runGit: GitRunner, env: NodeJS.ProcessEnv): string | null {
   mkdirSync(path.dirname(destDir), { recursive: true });
-  const r = runGit(["clone", "--depth", "1", "--", source, destDir], stripEnvBaseline(env));
-  if (r.status !== 0) return `git clone failed (status ${String(r.status)}): ${(r.stderr ?? "").trim().slice(0, 300) || source}`;
+  const token = gitTokenFrom(env);
+  // WP-08 DoD①（MDL-020/021 行 353）：代理族（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY 含小写）不在
+  // 剥离面→按策略透传生效，env 未设=默认不开启（透传语义即原文"默认不开启"）；基线剥离先于本步。
+  const clean = stripEnvBaseline(env);
+  // WP-08 DoD②：认证注入面=临时 -c http.extraHeader（进程内存态、零落盘）；credential helper 不受影响。
+  // GIT_TERMINAL_PROMPT=0=非交互 fail-fast（凭据缺失快速失败而非挂起；helper 通路不受此限）[自定]。
+  const authArgs = token !== null ? ["-c", "http.extraHeader=AUTHORIZATION: bearer " + token] : [];
+  const args = ["clone", "--depth", "1", ...authArgs, "--", source, destDir];
+  const r = runGit(args, { ...clean, GIT_TERMINAL_PROMPT: "0" });
+  if (r.status !== 0) {
+    const stderr = (r.stderr ?? "").trim().slice(0, 300);
+    // SEC-030 链：错误消息（含 git 自身回显的 URL）统一脱敏——内嵌凭据不进 warnings/留痕。
+    return `git clone failed (status ${String(r.status)}): ${redactUrlCredentials(stderr) || redactUrlCredentials(source)}`;
+  }
   return null;
 }
 
@@ -233,10 +261,12 @@ export async function installPlugin(target: string, ctx: ResolveContext): Promis
   if (existsSync(target) && statSync(target).isDirectory()) return landPluginDir(target, target, ctx, doc);
   // 2) git URL（插件仓库或市场仓库）
   if (isGitSource(target)) {
+    // WP-08 DoD②（SEC-030 链/S-3）：留痕 sourceLabel 一律脱敏形——URL 内嵌凭据不落 plugins.json 明文。
+    const label = redactUrlCredentials(target);
     const mat = materializeMarketplace(target, ctx);
     if ("error" in mat) return { ok: false, error: "clone-failed", warnings: [mat.error] };
     try {
-      return await landPluginDir(mat.dir, target, ctx, doc);
+      return await landPluginDir(mat.dir, label, ctx, doc);
     } finally {
       if (mat.tempDir) rmSync(path.dirname(mat.tempDir), { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }

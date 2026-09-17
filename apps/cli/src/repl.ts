@@ -32,6 +32,9 @@ export interface ReplIo {
   lines: AsyncIterable<string>;
   write(s: string): void;
   close(): void;
+  /** WP-08 DoD③：异步通知的行重绘通道（清当前行+写通知+重绘提示符保留已输入缓冲）；
+   * 缺席=回落 write（尾窗形态 [自定] 处置=有 readline 宿主时优先重绘，M4 WP-08 未解决②清偿）。 */
+  redrawNotice?(line: string): void;
 }
 
 export interface ReplDeps {
@@ -650,7 +653,11 @@ export function startAutoUpdateCheck(deps: ReplDeps, env: NodeJS.ProcessEnv = de
   return (u.check ? u.check() : checkRegistryLatest({ fetchImpl: u.fetchImpl, timeoutMs: u.timeoutMs }))
     .then((r) => {
       if (r.ok && compareVersions(r.latest, current) > 0) {
-        deps.io.write(`${s.i18n.t("repl.update.available", { latest: r.latest, version: current })}\n`);
+        const line = `${s.i18n.t("repl.update.available", { latest: r.latest, version: current })}\n`;
+        // WP-08 DoD③（M4 未解决②清偿）：readline 提示符在场时经行重绘通道（清行+写通知+prompt(true)
+        // 重绘并保留已输入缓冲）——直写 stdout 的并发尾窗乱码形制就此处置；无宿主（测试/非 TTY）=回落 write。
+        if (deps.io.redrawNotice) deps.io.redrawNotice(line);
+        else deps.io.write(line);
       }
     })
     .catch(() => {}); // DoD③ 静默（含注入桩抛错形态）
