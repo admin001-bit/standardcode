@@ -35,6 +35,7 @@ jobs:
       - name: version verify
         run: standardcode --version
       - name: update (bump overlay — 模拟通道更新路)
+        shell: bash
         run: |
           node scripts/pack-release.mjs --version 0.1.1
           npm i -g ./apps/cli/dist/standardcode-cli-0.1.1.tgz
@@ -42,6 +43,7 @@ jobs:
       - name: uninstall (CLI default; DoD④)
         run: standardcode uninstall
       - name: residue assert (package gone)
+        shell: bash
         run: "! npm ls -g @standardcode/cli"
       - name: purge (cleanup script; user data seeded)
         shell: bash
