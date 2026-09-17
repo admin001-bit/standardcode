@@ -1,2 +1,5 @@
 node_modules/
 target/
+
+# WP-07：发布构建产物（pack-release.mjs 输出；tarball/checksum 不入库，由矩阵 workflow 现场构建）
+apps/cli/dist/

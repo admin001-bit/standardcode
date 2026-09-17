@@ -1,0 +1,62 @@
+name: release-matrix
+
+# WP-07（ADR-0044 决策 7）：三平台发布矩阵实跑（DoD① 载体）——装（本地 tarball）→--version→更（bump 覆盖）
+# →卸（CLI uninstall）→残留断言→purge（cleanup 脚本）→残留断言。模拟通道（BLK-02=①）；registry 真实发布步
+# =外发动作逐项用户授权（本 workflow 零 publish）。workflow_dispatch 手动触发，非 CI gate（ci.yml 门面不变）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: release-matrix (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: install (workspace)
+        run: pnpm install --frozen-lockfile
+      - name: pack release (bundle+staged manifest+checksum; DoD⑤⑥)
+        run: node scripts/pack-release.mjs --version 0.1.0
+      - name: checksum verify (SEC-040)
+        run: node scripts/checksum.mjs verify apps/cli/dist
+      - name: install (local tarball channel)
+        run: npm i -g ./apps/cli/dist/standardcode-cli-0.1.0.tgz
+      - name: version verify
+        run: standardcode --version
+      - name: update (bump overlay — 模拟通道更新路)
+        run: |
+          node scripts/pack-release.mjs --version 0.1.1
+          npm i -g ./apps/cli/dist/standardcode-cli-0.1.1.tgz
+          standardcode --version | grep 0.1.1
+      - name: uninstall (CLI default; DoD④)
+        run: standardcode uninstall
+      - name: residue assert (package gone)
+        run: "! npm ls -g @standardcode/cli"
+      - name: purge (cleanup script; user data seeded)
+        shell: bash
+        run: |
+          mkdir -p ~/.standardcode && echo x > ~/.standardcode/marker
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -ExecutionPolicy Bypass -File scripts/cleanup.ps1 -PurgeHome
+          else
+            bash scripts/cleanup.sh --purge-home
+          fi
+          [ ! -e ~/.standardcode ] && echo PURGED-OK
+      - name: upload matrix evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-${{ matrix.os }}
+          path: apps/cli/dist/
+          if-no-files-found: warn

@@ -72,6 +72,8 @@ export interface NpmRunResult {
   status: number | null;
   error?: string;
   stderrTail?: string;
+  /** WP-07（ADR-0045 层二）：stdout 捕获（npm ls --json 校验路消费；additive，既有消费者零影响）。 */
+  stdout?: string;
 }
 
 /** npm 子进程注入面（测试桩；缺省真 spawn shell 分型见 defaultNpmRunner）。 */
@@ -83,6 +85,7 @@ export function npmCliCommand(platform: NodeJS.Platform = process.platform): str
 }
 
 const STDERR_TAIL_CHARS = 400; // 三件套 {value} 只带上尾，防爆行 [自定]
+const STDOUT_CAPTURE_CHARS = 65_536; // npm ls --json 小体积；防极端爆内存 [自定]
 
 function tailStderr(s: string | undefined): string | undefined {
   if (!s) return undefined;
@@ -91,21 +94,25 @@ function tailStderr(s: string | undefined): string | undefined {
   return t.length > STDERR_TAIL_CHARS ? `…${t.slice(-STDERR_TAIL_CHARS)}` : t;
 }
 
-/** 缺省 runner：非 win32 shell:false；win32 shell:true+npm.cmd（windowsHide 对位 stdio spawn 先例）。 */
+/** 缺省 runner：非 win32 shell:false；win32 shell:true+npm.cmd（windowsHide 对位 stdio spawn 先例）。stdout 捕获（WP-07 校验路）。 */
 export const defaultNpmRunner: NpmRunner = (cmd, args, env) =>
   new Promise((resolve) => {
     const child = spawn(cmd, [...args], {
       env,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       shell: process.platform === "win32",
     });
     let stderr = "";
+    let stdout = "";
     child.stderr.on("data", (d: Buffer) => {
       if (stderr.length < STDERR_TAIL_CHARS * 4) stderr += d.toString();
     });
+    child.stdout.on("data", (d: Buffer) => {
+      if (stdout.length < STDOUT_CAPTURE_CHARS) stdout += d.toString();
+    });
     child.on("error", (err) => resolve({ status: null, error: err instanceof Error ? err.message : String(err) }));
-    child.on("close", (code) => resolve({ status: code, stderrTail: tailStderr(stderr) }));
+    child.on("close", (code) => resolve({ status: code, stderrTail: tailStderr(stderr), stdout: stdout.trim() === "" ? undefined : stdout }));
   });
 
 /** DoD①：执行全局安装。env 过 SEC-080 基线剥离（与 git clone 共享同面——env-baseline.ts）。 */
@@ -115,4 +122,121 @@ export async function runNpmUpdate(
   const runner = opts.runner ?? defaultNpmRunner;
   const source = opts.env ?? process.env;
   return runner(npmCliCommand(opts.platform), NPM_INSTALL_ARGS, stripEnvBaseline(source));
+}
+
+// —— WP-07（ADR-0045 更新原子性；§13 行 534 清偿）：层一锁错重试 · 层二装后校验 · 层三明确引导 ——
+
+/** Windows 文件锁族失败签名（层一判定；[自定] 名单=Node/npm 常见占用错误码）。 */
+export const LOCK_ERROR_SIGNATURES: readonly string[] = ["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"];
+
+/** 层一重试参数 [自定]：npm 每轮完整事务、重试间零状态残留；2 次×1.5s=占用释放的常态窗口。 */
+export const ATOMIC_MAX_RETRIES = 2;
+export const ATOMIC_RETRY_DELAY_MS = 1_500;
+
+/** 成功当且仅当 status=0 且 verified=true；其余一切终态带 guidance（无半装态判据，ADR-0045 决策 1）。 */
+export interface AtomicUpdateResult {
+  ok: boolean;
+  attempts: number;
+  status: number | null;
+  error?: string;
+  stderrTail?: string;
+  /** 层二解析结果（校验失败时缺席）。 */
+  installedVersion?: string;
+  verified?: boolean;
+  /** 层三明确引导（失败终态必带；三件套 ADR-0034 同族）。 */
+  guidance?: string;
+}
+
+function isLockError(r: NpmRunResult): boolean {
+  const hay = `${r.error ?? ""} ${r.stderrTail ?? ""}`;
+  return LOCK_ERROR_SIGNATURES.some((s) => hay.includes(s));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    if (typeof t === "object" && t !== null && "unref" in t) (t as { unref?(): void }).unref?.();
+  });
+}
+
+function updateGuidance(reason: string): string {
+  return `update failed: ${reason}; why: ${
+    reason.includes("post-verify") ? "安装命令成功但装后校验未过（可能半装态或运行中实例占用）" : "npm 更新命令失败（文件锁占用且重试未恢复，或非锁类错误不重试）"
+  }; action: 关闭正在运行的 standardcode 实例后重试，或手动执行 npm i -g ${NPM_PACKAGE_NAME}@latest`;
+}
+
+/** 层二：全局实装版本查询（`npm ls -g @standardcode/cli --json`；任何失败结构化不抛）。 */
+export async function verifyInstalledVersion(
+  opts: { runner?: NpmRunner; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+): Promise<{ ok: true; version: string } | { ok: false; reason: string }> {
+  const runner = opts.runner ?? defaultNpmRunner;
+  const args = ["ls", "-g", NPM_PACKAGE_NAME, "--json"] as const;
+  const r = await runner(npmCliCommand(opts.platform), args, stripEnvBaseline(opts.env ?? process.env));
+  if (r.status !== 0) return { ok: false, reason: `npm ls exited ${r.status}${r.stderrTail ? `: ${r.stderrTail}` : ""}` };
+  try {
+    const parsed = JSON.parse(r.stdout ?? "") as { dependencies?: Record<string, { version?: unknown }> };
+    const entry = parsed.dependencies?.[NPM_PACKAGE_NAME];
+    const v = entry !== undefined && typeof entry.version === "string" ? entry.version : null;
+    if (v === null) return { ok: false, reason: `npm ls output has no version entry for ${NPM_PACKAGE_NAME}` };
+    return { ok: true, version: v };
+  } catch (err) {
+    return { ok: false, reason: `npm ls output is not JSON: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/** ADR-0045：原子更新执行（重试→校验→引导）。expectedVersion 缺省=不比对（仅校验实装存在性）。 */
+export async function runNpmUpdateAtomic(
+  opts: {
+    runner?: NpmRunner;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    expectedVersion?: string;
+    maxRetries?: number;
+    retryDelayMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<AtomicUpdateResult> {
+  const maxRetries = opts.maxRetries ?? ATOMIC_MAX_RETRIES;
+  const sleep = opts.sleep ?? delay;
+  const total = 1 + Math.max(0, maxRetries);
+  let attempts = 0;
+  let last: NpmRunResult = { status: null };
+  while (attempts < total) {
+    attempts++;
+    last = await runNpmUpdate(opts);
+    if (last.status === 0) break;
+    const lock = isLockError(last);
+    if (!lock || attempts >= total) {
+      const reason = last.error ?? last.stderrTail ?? `npm exited ${last.status}`;
+      return { ok: false, attempts, status: last.status, error: last.error, stderrTail: last.stderrTail, guidance: updateGuidance(lock ? `post-retries: ${reason}` : reason) };
+    }
+    await sleep(opts.retryDelayMs ?? ATOMIC_RETRY_DELAY_MS);
+  }
+  const v = await verifyInstalledVersion(opts);
+  if (!v.ok) {
+    return { ok: false, attempts, status: last.status, error: last.error, stderrTail: last.stderrTail, guidance: updateGuidance(`post-verify: ${v.reason}`) };
+  }
+  if (opts.expectedVersion !== undefined && v.version !== opts.expectedVersion) {
+    return {
+      ok: false,
+      attempts,
+      status: last.status,
+      installedVersion: v.version,
+      guidance: updateGuidance(`post-verify: installed ${v.version} but expected ${opts.expectedVersion}`),
+    };
+  }
+  return { ok: true, attempts, status: last.status, installedVersion: v.version, verified: true };
+}
+
+// —— WP-07（ADR-0044 决策 5）：uninstall 程序体卸载 runner（命令全硬编码零注入面 [自定]）——
+
+export const NPM_UNINSTALL_ARGS = ["rm", "-g", NPM_PACKAGE_NAME] as const;
+
+/** uninstall 默认步①：全局包移除。env 过 SEC-080 基线剥离（同 runNpmUpdate 面）。 */
+export async function runNpmUninstall(
+  opts: { runner?: NpmRunner; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+): Promise<NpmRunResult> {
+  const runner = opts.runner ?? defaultNpmRunner;
+  const source = opts.env ?? process.env;
+  return runner(npmCliCommand(opts.platform), NPM_UNINSTALL_ARGS, stripEnvBaseline(source));
 }

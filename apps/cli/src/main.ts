@@ -42,7 +42,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // 命令全集 30 断言=斜杠命令面，旗标不触（WP-10 DoD⑤ 同形）。
   const sandboxCliFlag = argv.length === 1 && argv[0] === "-sdb";
   if (argv.length > 0 && !sandboxCliFlag) {
-    process.stdout.write(`usage: standardcode [-sdb]\n   (interactive REPL; --version for version)\n`);
+    process.stdout.write(`usage: standardcode [-sdb]\n   (interactive REPL; --version for version; uninstall [--purge] for removal)\n`);
     process.exitCode = 1;
     return;
   }
@@ -187,3 +187,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     sessionPicker,
   });
 }
+
+// WP-07：uninstall 子命令经 bin shim 路由至本入口的重导出（bundle 单入口；ADR-0044 决策 3/5）。
+export { runUninstall } from "./uninstall.ts";

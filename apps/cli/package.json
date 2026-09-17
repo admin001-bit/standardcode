@@ -1,10 +1,17 @@
 {
   "name": "@standardcode/cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "StandardCode — open-source CLI coding agent (generic multi-protocol).",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "standardcode": "bin/standardcode.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@standardcode/capabilities": "workspace:*",
