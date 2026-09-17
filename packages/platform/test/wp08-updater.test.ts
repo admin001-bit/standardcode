@@ -32,7 +32,7 @@ describe("DoD①：checkRegistryLatest（npm registry 通道——附录 E）", 
     const r = await checkRegistryLatest({ fetchImpl: f });
     expect(r).toEqual({ ok: true, latest: "9.9.9" });
     expect(seenUrl).toBe(DEFAULT_REGISTRY_LATEST_URL);
-    expect(seenUrl).toContain(encodeURIComponent(NPM_PACKAGE_NAME)); // @standardcode%2Fcli
+    expect(seenUrl).toContain(encodeURIComponent(NPM_PACKAGE_NAME)); // @standardcode-oss%2Fcli
     expect(seenUrl.endsWith("/latest")).toBe(true);
     expect(seenOpts?.signal).toBeTruthy();
     expect(JSON.stringify(seenOpts?.headers)).toContain("application/json");
