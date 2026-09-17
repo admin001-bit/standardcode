@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
-import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue } from "@standardcode/platform";
+import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue, TELEMETRY_SETTINGS_KEY } from "@standardcode/platform";
 import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
 import { checkRegistryLatest, compareVersions, runNpmUpdate, AUTO_UPDATE_ENV_KEY, type UpdateCheckResult, type NpmRunResult, type NpmRunner } from "@standardcode/platform";
 import { CLI_VERSION } from "./version.ts";
@@ -382,7 +382,13 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           },
         },
       );
-      if (launch.status === "refused") return { text: s.i18n.t("repl.subtask.refused", { value: launch.message }) };
+      if (launch.status === "refused") {
+        // M5-WP-06：subagent_launch refused 分支（outcome 枚举 [自定]；产生点=/subtask 唯一生产 spawn 面）。
+        s.telemetry.subagentLaunch({ outcome: "refused", refusedCode: launch.code, ...(type !== undefined ? { agentType: type } : {}) });
+        return { text: s.i18n.t("repl.subtask.refused", { value: launch.message }) };
+      }
+      // M5-WP-06：subagent_launch launched 分支（refused 外三态 async_launched/backgrounded/completed 均已注册+取槽）。
+      s.telemetry.subagentLaunch({ outcome: "launched", taskId: launch.taskId, agentId: launch.agentId, ...(type !== undefined ? { agentType: type } : {}) });
       if (launch.status !== "completed") return { text: s.i18n.t("repl.subtask.unexpected", { value: launch.status }) };
       // 结果注入（DoD①）：报告以 user 消息入会话（下一 turn 模型可见）+落转录保 resume 等价
       const injected = {
@@ -707,6 +713,10 @@ async function exitRepl(deps: ReplDeps): Promise<void> {
 
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
+  // M5-WP-06：遥测 turn 界门刷新（SEC-050 一键关：env STANDARD_CODE_TELEMETRY 每 turn 重读=翻回即时生效；
+  // settings telemetry.enabled 随 session.settings/装配与 /reload 解析=次会话或 reload 生效口径 [自定]）。
+  s.telemetry.refreshGate({ env: process.env, settingsEnabled: settingsValue<boolean>(s.settings, TELEMETRY_SETTINGS_KEY) });
+  const turnStartedAt = performance.now(); // turn_end duration_ms 墙钟（WP-06）
   // M4-WP04：UserPromptSubmit 门（exit2/decision:block → 提示词不进轮次，blockingError 告知用户）
   if (s.hooks) {
     const up = await s.hooks.gate("UserPromptSubmit", undefined, { prompt: text }).catch(() => null);
@@ -768,7 +778,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
         // WP-04：AutoCompact 执行体接线（协调器=WP-03 装配；CTX-101 交接终点）
         autocompact: {
           evaluate: (used, turn) => s.autocompact.evaluate(used, turn),
-          perform: async (turn) => {
+          perform: (turn) => performAutoCompactWithTelemetry(s, turn, async () => {
             const preCompact = [...s.messages]; // 压缩前快照（ADR-0038 对齐前提：未落盘消息先补写）
             await s.hooks.gate("PreCompact", undefined, {}).catch(() => null); // M4-WP04：PreCompact 触发
             const r = await runCompaction({
@@ -797,7 +807,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             });
             await s.hooks.gate("PostCompact", undefined, {}).catch(() => null); // M4-WP04：PostCompact 触发
             return { ok: true, postCompactTokens: r.postTokens, messages: r.newMessages };
-          },
+          }),
         },
         // WP-09（EXE-030/040）：写盘前快照（Write/Edit 取 file_path；Bash 重定向启发式，[自定]）
         fileHistory: deps.fileHistory
@@ -849,7 +859,16 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       }),
       deps.io.write,
       s.meter,
-      { onDone: (reason) => (doneReason = reason) },
+      {
+        onDone: (reason) => (doneReason = reason),
+        // M5-WP-06：遥测观察面（产生点=事件流观察，不经 harness 依赖倒灌）——
+        // tool_use_cancelled：中断落在工具执行相（interrupted phase:"tool"，§8.4 中断合成 error tool_result 同源）；
+        // max_tokens_reached：恢复链③续写触发（recovery max_tokens_continue）。
+        onEvent: (ev) => {
+          if (ev.type === "interrupted" && ev.phase === "tool") s.telemetry.toolUseCancelled();
+          else if (ev.type === "recovery" && ev.chain === "max_tokens_continue") s.telemetry.maxTokensReached({ round: ev.round });
+        },
+      },
     );
     s.messages = final.messages;
     // WP-10 R1+R3 修复（V 退回+复验发现）：仅追加本轮新增的消息块（含 prompt user/tool_result user/assistant
@@ -879,6 +898,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     break;
     }
     transcriptAppend(deps, { kind: "done", reason: (doneReason ?? "end") as never, usage: s.meter.snapshot() });
+    // M5-WP-06：turn_end（ENG-090 terminal_reason/turn_count/duration_ms；turn_count=门面内会话序数 [自定]）。
+    s.telemetry.turnEnd({ terminalReason: doneReason ?? "end", durationMs: Math.round(performance.now() - turnStartedAt) });
   } catch (err) {
     // 硬错误路径：未落盘消息补写（appendFrom=已落盘水位——Stop 续轮后不重复）
     for (const m of s.messages.slice(appendFrom)) {
@@ -886,9 +907,31 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
       else if (m.role === "assistant") transcriptAppend(deps, { kind: "assistant_message", message: m });
     }
     transcriptAppend(deps, { kind: "done", reason: "error" });
+    // M5-WP-06：query_error + turn_end(terminal_reason="error")（错误消息经门面 SEC-030 单源脱敏后入事件体）。
+    s.telemetry.queryError({ message: err instanceof Error ? err.message : String(err) });
+    s.telemetry.turnEnd({ terminalReason: "error", durationMs: Math.round(performance.now() - turnStartedAt) });
     deps.io.write(`\n${deps.session.i18n.t("repl.error.prefix", { value: err instanceof Error ? err.message : String(err) })}\n`);
   } finally {
     s.activeAbort = null;
+  }
+}
+
+/** M5-WP-06：autocompact.perform 包装——压缩失败经 recordCompactFailure 登记（CTX-035 闸②熔断器生产接线；
+ * 原树 recordCompactFailure 零生产调用方=熔断器死态，本卡为 auto_compact_circuit_breaker 事件产生点的最小接线
+ * [偏差登记供 V]：失败后原样重抛=turn 失败传播路径零变，唯一增量=协调器状态推进（连续失败 ≥3→闸② blocked=
+ * CTX-035 设计语义）；trip 迁移即发 auto_compact_circuit_breaker 事件）。 */
+async function performAutoCompactWithTelemetry(
+  s: Session,
+  turn: number,
+  perform: () => Promise<{ ok: boolean; postCompactTokens: number; messages?: Session["messages"] }>,
+): Promise<{ ok: boolean; postCompactTokens: number; messages?: Session["messages"] }> {
+  try {
+    return await perform();
+  } catch (err) {
+    const wasTripped = s.autocompact.state.tripped;
+    s.autocompact.recordCompactFailure(turn);
+    if (!wasTripped && s.autocompact.state.tripped) s.telemetry.autoCompactCircuitBreaker({ turn });
+    throw err;
   }
 }
 

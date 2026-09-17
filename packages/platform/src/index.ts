@@ -16,3 +16,5 @@ export * from "./env-baseline.ts";
 export * from "./updater.ts";
 // M5-WP-05：SEC-030 keychain 读面适配器（优先级链首；S-6 清偿）。
 export * from "./keychain.ts";
+// M5-WP-06：遥测 opt-in（ENG-090 七事件+SEC-050 默认关；接缝⑮ 脱敏复用 session-store redactSecrets 单源）。
+export * from "./telemetry.ts";

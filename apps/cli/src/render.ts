@@ -7,7 +7,7 @@ export async function renderTurn(
   events: AsyncGenerator<AgentEvent, TurnState, unknown>,
   write: (s: string) => void,
   meter: UsageMeter,
-  hooks?: { onDone?(reason: string): void },
+  hooks?: { onDone?(reason: string): void; onEvent?(ev: AgentEvent): void },
 ): Promise<TurnState> {
   const it = events[Symbol.asyncIterator]();
   let sawText = false;
@@ -21,6 +21,7 @@ export async function renderTurn(
       return r.value;
     }
     const ev = r.value;
+    hooks?.onEvent?.(ev); // M5-WP-06：遥测观察面（interrupted phase:tool→tool_use_cancelled；recovery max_tokens_continue→max_tokens_reached）；缺席零开销
     switch (ev.type) {
       case "text_delta":
         write(ev.text);

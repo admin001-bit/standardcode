@@ -9,7 +9,7 @@ import { UsageMeter } from "@standardcode/context";
 import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
-import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle } from "@standardcode/platform";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, createTelemetryFacade, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, TELEMETRY_SETTINGS_KEY, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle, type TelemetryFacade, type TelemetrySink } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
@@ -175,6 +175,8 @@ export interface Session {
   sandbox?: SandboxHandle;
   /** 任务注册表（M3 WP-04；/subtask 走 spawn 与 WP-05 /tasks 面板的共享实例）。 */
   taskRegistry: TaskRegistry;
+  /** M5-WP-06：遥测门面（ENG-090 七事件+SEC-050 默认关；sink 可注入，关态零构造；门刷新=repl turn 界）。 */
+  telemetry: TelemetryFacade;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
   switchProvider(name: string): void;
   /** WP-11 /reload：重载记忆与设置（原位更新可变字段）。 */
@@ -218,6 +220,10 @@ export interface SessionInit {
   trusted?: boolean;
   /** M5-WP-03 沙箱开启（装配层已解析确认，缺席=默认关 DoD①）：档+二进制覆写。 */
   sandbox?: { tier: SandboxTier; binaryPath?: string };
+  /** M5-WP-06 遥测 sink 注入（测试；缺席=默认文件桩）。 */
+  telemetrySink?: TelemetrySink;
+  /** M5-WP-06 文件桩基目录覆写（测试隔离；缺省 ~/.standardcode）。 */
+  telemetryBaseDir?: string;
 }
 
 /**
@@ -286,6 +292,17 @@ export function createSession(init: SessionInit = {}): Session {
   applySettingsEnv(gatedSettings, env, settingsEnv);
   // SEC-030 keychain 链首适配器（会话一次创建；测试经 init.keychain 注入；win32=unavailable fail-open）。
   const keychain = init.keychain ?? createKeychainAdapter();
+
+  // M5-WP-06：遥测门面（SEC-050 默认关；门初值=env STANDARD_CODE_TELEMETRY > settings telemetry.enabled > 关，
+  // 非法值 fail-closed 不猜；sink 测试注入，缺席=文件桩 <~/.standardcode>/telemetry/events.ndjson 惰性构造；
+  // turn 界门刷新（env 重读即时生效）在 repl runPromptTurn。sessionId 懒取=repl 初始化时才赋 UUID）。
+  const telemetry = createTelemetryFacade({
+    sessionId: () => session.id,
+    env: process.env,
+    settingsEnabled: settingsValue<boolean>(gatedSettings, TELEMETRY_SETTINGS_KEY),
+    ...(init.telemetrySink ? { sink: init.telemetrySink } : {}),
+    ...(init.telemetryBaseDir !== undefined ? { baseDir: init.telemetryBaseDir } : {}),
+  });
 
   // —— M4-WP-09：Plugin 装配（ECO-030~033）——安装留痕 <home>/.standardcode/plugins.json（platform installer 纯 fs 面）。
   // 四注入面聚合：hooks/MCP=docs 的 plugin 源位（buildPluginDocs）；skills=loadSkillsFromDir(dir,"plugin")；
@@ -466,6 +483,7 @@ export function createSession(init: SessionInit = {}): Session {
     ...(init.home !== undefined ? { home: init.home } : {}),
     // —— WP-11：/provider /reload /add-dir 会话操作面（MDL-010~013 下一 turn 生效；M1 环境重载语义）——
     taskRegistry: createTaskRegistry(),
+    telemetry,
     // M4-WP-02：MCP 装配占位（真值在 session 构造后即位——见下方 bootstrap 块）。
     mcpConnections: [],
     mcpReady: Promise.resolve(),
