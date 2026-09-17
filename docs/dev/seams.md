@@ -57,3 +57,24 @@
 - 锚点：v2.8 §11 SEC-080；dig-04 §7 安全清单；实现 packages/capabilities/src/hooks/engine.ts:90+packages/platform/src/env-baseline.ts。
 - 测试：packages/capabilities/test/hooks-engine.test.ts:170（hook 子进程密钥剔除/PATH 在位）+packages/platform/test/wp08-updater.test.ts:87/:103/:118（剥除规则/共享化回归/runner 交付）+packages/platform/test/wp09-plugin.test.ts:164（clone env 剥离）。
 - 未解决：无（WP-08 V 针 C 变异横红双消费者=共享面判别实锤）。
+
+## 接缝③（M5 沙箱落地更新，2026-09-17，WP-10 补登——M4 原条目见上，既有行零触碰，本条为落地补充）
+
+- 定义：M4 条目留出的第三层沙箱空位已落地——执行序=guard 硬停（EXE-020 行 429 护栏独立于沙箱常驻）→ schema 校验 → PreToolUse hooks 裁决（deny 恒赢、严重度只升不降）→ 权限仲裁 → guard confirm → **沙箱执行**（默认关，`-sdb` 旗标/settings 键显式开，开启默认档 workspace-write；`.git/hooks`、`.standardcode` 元数据路径默认禁写）；后端拉起/握手失败=执行拒绝非绕过（fail-closed，B-12）；thinking/stdout 不截断不过滤。
+- 锚点：v2.8 §5.3(3)（三档策略）/§5.4（执行序）/EXE-010~012/ENG-072/B-12；实现 packages/harness/src/tools.ts:148（执行回路）+packages/executor/src/bash.ts:21/:67/:71（沙箱臂）+packages/executor/src/sandbox/client.ts:256（createSandboxHandle）+crates/sandbox/src/serve.rs:47（spawn+policy）。
+- 测试：apps/cli/test/wp03-sandbox-config.test.ts:8/:13/:17（全缺省关/旗标开且默认档 workspace-write/settings 独立开）+apps/cli/test/wp03-sandbox-integration.test.ts:44/:59/:68/:102（越界写拒且可诊断/元数据禁写/文件写面/fail-closed）+packages/executor/test/wp03-sandbox-routing.test.ts:29/:34（无 sandbox 零经手/env 与退出码同形）。
+- 未解决：Windows deny-read 需 elevated（首版按非 elevated 常态档，BLK-04=① 三段形终态）；elevated 路线并入实机回归清单（提权渠道到手后 `--ignored` 补跑）。
+
+## 接缝⑭ 沙箱 × SEC-080 env 清洗（2026-09-17，WP-10 补登）
+
+- 定义：入沙箱执行路径同经 SEC-080 清洗，禁"开沙箱即豁免"——宿主侧先剥离（工具子进程 env 基线：STANDARD_CODE_*/KEY/TOKEN/SECRET/GIT_CONFIG_*/NODE_OPTIONS/BASH_ENV/ENV），沙箱 server 侧再按策略剥离代理族（策略 net=deny 时 HTTP(S)_PROXY/ALL_PROXY/NO_PROXY 不外逃=WP-02 DoD⑤ 代理 fail-closed）；env 未设=默认不开启（透传语义）。两闸独立可验、规则单一事实源。
+- 锚点：v2.8 §11 SEC-080、§5.3(3) 教训清单；实现 packages/platform/src/env-baseline.ts:7（stripEnvBaseline，installer/updater/plugin 共享单源）+crates/sandbox/src/run.rs:18（PROXY_ENV_KEYS 策略剥离）+packages/executor/src/sandbox/client.ts（请求 env 透传）。
+- 测试：packages/executor/test/wp03-sandbox-routing.test.ts:45（接缝⑭：SEC-080 剔除键不入沙箱请求，代理键由 server 策略闸承担=双闸归位）+packages/platform/test/wp08-git-net.test.ts（策略透传语义：代理族不在剥离面、env 未设=默认不开启）。
+- 未解决：无。
+
+## 接缝⑮ 遥测 × 转录 × 脱敏（2026-09-17，WP-10 补登）
+
+- 定义：转录落盘与遥测事件体共用 SEC-030 同一脱敏单源函数（session-store `redactSecrets`），非各自复制实现；遥测侧经 `sanitizeProps` 对事件体字符串属性逐值过同一函数，键名不脱敏（固定枚举）；关态零构造=无脱敏调用面。
+- 锚点：v2.8 §11 SEC-030 行 457/S-10 行 452；实现 packages/platform/src/session-store.ts:29（redactSecrets 单源）+packages/platform/src/telemetry.ts:14（自 session-store 导入）/199-203（sanitizeProps 逐值调用）。
+- 测试：packages/platform/test/telemetry.test.ts:127/:128（事件体字符串值经 redactSecrets，sk- 形状→SECRET_PLACEHOLDER）/packages/platform/test/telemetry.test.ts:134（结构证据：telemetry.ts 自 session-store.ts 导入=单源非复制）+packages/platform/test/session-store.test.ts:58（转录侧形状白名单脱敏）+evals/benchmark/tasks.ts b23/b24（recorded 族同面对位：疑似密钥告警+redactSecrets 幂等 / 遥测门序+事件体脱敏）。
+- 未解决：无。
