@@ -206,6 +206,23 @@ export interface WorkflowOrchestratorOptions {
   /** log() 回调（进度叙述=WP-05，本卡仅转发）。 */
   onLog?: (message: string) => void;
 
+  /**
+   * 逐 agent 前置安全分类器（接线点，非本卡实现真分类器；本仓 grep 仅命中 classifyHttpError/classifySendFailure
+   * 等「错误分类」，无「逐 agent 安全分类器」能力，故以可注入 hook 落接线点，不平行实现）。
+   * 签名：`{prompt, schemaJson?, agentType?} → Promise<{blocked: boolean; reason?: string}>`。
+   * 在 validateSpawn 派生前调用；`blocked=true` → 该 agent 结果 `null`（同 §4.1 skip 语义，且**不调 runSubagent**），并触发 `onAgentBlocked`。
+   * 默认缺位 = 放行（无分类器=不阻断）。理由（登记供 V）：kernel 已复用 M3 `validateSpawn` 作真门控；
+   * 若选 fail-closed（缺省即全拒），宿主未注入分类器时所有 agent 被拒，破坏 WP-03 既有行为与已核销测试，违背「不回退 WP-02/03」边界。
+   * 真实安全分类器能力由宿主注入，本卡只落接线点。
+   */
+  agentSafetyClassifier?: (input: {
+    prompt: string;
+    schemaJson?: unknown;
+    agentType?: string;
+  }) => Promise<{ blocked: boolean; reason?: string }>;
+  /** 分类器阻断时进度回调（进度 UI 属 WP-05；本卡仅转发，等价 `workflow_agent_<idx>_blocked` 事件，供核验员观察）。 */
+  onAgentBlocked?: (info: { prompt: string; agentType?: string; reason: string }) => void;
+
   /** items 上限（[自定] 默认 4096）。 */
   maxItems?: number;
   /** StructuredOutput 重试上限（[自定] 默认 3）。 */
@@ -252,7 +269,26 @@ export function createWorkflowOrchestrator(options: WorkflowOrchestratorOptions)
     : options.definitionsOf;
 
   async function runOneAgent(prompt: string, opts?: WorkflowAgentOptions): Promise<unknown> {
-    // ② ORC-022 校验序列（复用 M3 validateSpawn；九段全序；并发段接待本内核信号量=capacity，见下方注释）。
+    // 安全分类器前置接线（§4.1）：派生前判定；blocked=true → 该 agent 结果 null（同 §4.1 skip 语义，
+    // 且不调 runSubagent / 不占 cap / 不占并发槽），并触发 onAgentBlocked 进度回调（等价 workflow_agent_<idx>_blocked）。
+    // 缺位=放行（默认行为，见 options 注释理由）。
+    if (options.agentSafetyClassifier) {
+      const verdict = await options.agentSafetyClassifier({
+        prompt,
+        schemaJson: opts?.schema,
+        agentType: opts?.agentType,
+      });
+      if (verdict.blocked) {
+        options.onAgentBlocked?.({
+          prompt,
+          agentType: opts?.agentType,
+          reason: verdict.reason ?? "blocked by safety classifier",
+        });
+        return null;
+      }
+    }
+
+    // ② ORC-022 校验序列（复用 M3 validateSpawn；九段全序；并发段见下方方案 1 注释）。
     const description = opts?.label ?? prompt;
     const spawnInput: SubagentSpawnInput = {
       prompt,
@@ -260,9 +296,11 @@ export function createWorkflowOrchestrator(options: WorkflowOrchestratorOptions)
       subagentType: opts?.agentType,
       isolation: opts?.isolation,
     };
-    // 并发段：ORC-022 的「并发 20」是 M3 全局 subagent 并发；workflow 内部并发由本内核信号量（DoD②
-    // min(16,max(2,cpus−2))）治理，故把 workflow 当前在途数与本内核容量传入，使该段以 workflow 容量为限、
-    // 不触发 M3 全局 20 误拒（[自定] 口径，登记供 V）。信号量仍是有效闸。
+    // 并发段【方案 1（缺口 B 修复）】：workflow 内部并发完全由本内核信号量（DoD② min(16,max(2,cpus−2))）排队治理，
+    // 故向 validateSpawn 申报在途数恒为 0、不复用 M3 全局并发段——M3 的 concurrentSubagents>=max 硬拒（subagent.ts:208）
+    // 会把饱和后的 agent 静默丢弃而非排队，故以 0 使其永不在此段触发；真闸门是下方 await semaphore.acquire() 的排队。
+    // 选方案 1 理由：最贴合「workflow 内并发交本内核信号量」语义，天然消除 M3 全局并发段硬拒；方案 3（先 acquire 再
+    // validateSpawn）需额外在拒绝路径补 release 防槽位泄漏，方案 2（复用 M3 全局计数）又绕回全局并发段，均不如方案 1 干净。
     // 注意：ORC-022 校验序列第④步「预算」是**会话级 USD 预算**（不同轴），workflow 的 token budget 由本内核
     // 自有硬顶（下方 step ④ / §6 O()）按 L169801 文案抛错治理，故此处不把 token budget 注入 validateSpawn
     // 的 budget 段，避免其以 budget_exhausted 静默 skip 抢在 kernel 硬顶之前（[自定] 口径，登记供 V）。
@@ -271,7 +309,7 @@ export function createWorkflowOrchestrator(options: WorkflowOrchestratorOptions)
       availableTypes: options.availableTypes,
       definitionsOf: augmentDefinitionsOf,
       deniedAgentTypes: options.deniedAgentTypes,
-      concurrentSubagents: concurrentAgents,
+      concurrentSubagents: 0,
       maxConcurrentSubagents: capacity,
       backgroundDisabled: options.backgroundDisabled,
       pendingRequiredMcp: options.pendingRequiredMcp,

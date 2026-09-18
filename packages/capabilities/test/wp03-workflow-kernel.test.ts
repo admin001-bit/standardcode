@@ -335,3 +335,82 @@ describe("phase()/log() 转发（进度=WP-05，本卡仅转发）", () => {
     expect(logs).toEqual(["working"]);
   });
 });
+
+// ─────────── 缺口 A：安全分类器前置接线（§4.1 skip 语义；本仓无真分类器，落可注入接线点） ───────────
+describe("缺口A 安全分类器前置接线（blocked→skip 且不派生）", () => {
+  it("分类器返回 blocked → 该 agent 结果 null，且假 provider 的 onStart 未被调用（确未派生）+ onAgentBlocked 触发", async () => {
+    const onStart = vi.fn();
+    const provider = makeFakeProvider("ok", { onStart });
+    const classifier = vi.fn(async () => ({ blocked: true, reason: "policy-deny" }));
+    const onBlocked = vi.fn();
+    const o = orch({ provider, agentSafetyClassifier: classifier, onAgentBlocked: onBlocked });
+    const r = await o.agent("p", { agentType: "general-purpose", schema: { type: "object" } });
+    expect(r).toBeNull();
+    expect(classifier).toHaveBeenCalledTimes(1);
+    expect(classifier).toHaveBeenCalledWith({ prompt: "p", schemaJson: { type: "object" }, agentType: "general-purpose" });
+    expect(onStart).not.toHaveBeenCalled(); // 确未派生（runSubagent 路径未触及）
+    expect(onBlocked).toHaveBeenCalledWith({ prompt: "p", agentType: "general-purpose", reason: "policy-deny" });
+  });
+
+  it("分类器放行 / 缺位 → 正常派生（provider onStart 被调用，返回文本）", async () => {
+    const onStart = vi.fn();
+    const provider = makeFakeProvider("ok", { onStart });
+    // 放行
+    const o1 = orch({ provider, agentSafetyClassifier: async () => ({ blocked: false }) });
+    expect(await o1.agent("p")).toBe("ok");
+    expect(onStart).toHaveBeenCalledTimes(1);
+    // 缺位（默认放行）
+    const o2 = orch({ provider });
+    expect(await o2.agent("p")).toBe("ok");
+    expect(onStart).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─────────── 缺口 B：并发由内核信号量排队治理（饱和后不静默丢弃） ───────────
+describe("缺口B 并发由内核信号量排队治理（饱和后进入者排队不丢弃）", () => {
+  it("fan-out>容量：在途已满后进入的 agent 仍排队拿到非null，且在途不超过容量（主动破坏时序巧合）", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const provider = makeFakeProvider("ok", {
+      onStart: () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+      },
+      onEnd: () => {
+        active--;
+      },
+      delayMs: 50,
+    });
+    const o = orch({ provider, concurrencyCapacityOverride: 2 });
+
+    // 同步 fan-out 7 个：它们几乎同时进入 validateSpawn 并自增 concurrentAgents（时序巧合窗口，旧实现下也会过）。
+    const futures: Promise<unknown>[] = [];
+    for (let i = 1; i <= 7; i++) futures.push(o.agent(`p${i}`));
+    // 人为延迟：让前 7 个完成自增与排队后再派发 p0——此时 concurrentAgents 已饱和（旧实现会硬拒 p0）。
+    await new Promise((r) => setTimeout(r, 20));
+    futures.push(o.agent("p0")); // 派生前延迟，破坏时序巧合
+
+    const results = await Promise.all(futures);
+    expect(results.every((r) => r === "ok")).toBe(true); // 全非 null = 排队不丢弃
+    expect(maxActive).toBe(2); // 同时在途不超过容量
+  });
+
+  it("容量=1 时：串行排队，所有 agent 仍非 null 且在途不超过 1", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const provider = makeFakeProvider("ok", {
+      onStart: () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+      },
+      onEnd: () => {
+        active--;
+      },
+      delayMs: 30,
+    });
+    const o = orch({ provider, concurrencyCapacityOverride: 1 });
+    const results = await o.parallel(Array.from({ length: 6 }, (_, i) => () => o.agent(`p${i}`)));
+    expect(results).toEqual(Array(6).fill("ok"));
+    expect(maxActive).toBe(1);
+  });
+});
