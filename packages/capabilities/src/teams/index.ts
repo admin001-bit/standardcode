@@ -7,3 +7,5 @@ export * from "./send-message.ts";
 export * from "./prompt.ts";
 export * from "./roster.ts";
 export * from "./mailbox.ts";
+export * from "./protocol.ts";
+export * from "./runner.ts";

@@ -61,3 +61,27 @@ export function restrictSpawnToolForTeammate<T extends TeammateToolDefinitionLik
 export function restrictToolsForTeammate<T extends TeammateToolDefinitionLike>(tools: readonly T[]): T[] {
   return tools.map((tool) => restrictSpawnToolForTeammate(tool));
 }
+
+/**
+ * Teams 协议使用规范（A 级 §6.4 两条，[自定] 措辞，注明非逐字）：
+ *   ① 不得主动发起 `shutdown_request`（除非被要求）；
+ *   ② 不得发结构化 JSON 状态消息——进度用任务工具或纯文本汇报。
+ * 落提示词供 teammate 遵循（WP-08 交付物第四件）。
+ */
+export const TEAMS_PROTOCOL_USAGE_RULES = `
+# Teams Protocol Usage Rules
+
+- Do NOT proactively send a \`shutdown_request\` unless you are explicitly asked to shut down. (A-level §6.4)
+- Do NOT send structured JSON status messages over SendMessage. Report progress through your task tools if you have them, otherwise in plain prose. (A-level §6.4)
+`;
+
+/**
+ * 组合 teammate 系统提示词：既有 addendum（[CC] 逐字常量，本体零改动）+ 协议使用规范。
+ * 返回**新串**，不修改 `TEAMMATE_SYSTEM_PROMPT_ADDENDUM` 常量本体。
+ */
+export function composeTeammateSystemPrompt(
+  addendum: string = TEAMMATE_SYSTEM_PROMPT_ADDENDUM,
+  rules: string = TEAMS_PROTOCOL_USAGE_RULES,
+): string {
+  return `${addendum}\n${rules}`;
+}
