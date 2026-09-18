@@ -12,6 +12,7 @@
 import { CLI_COMMANDS, type SlashCommand } from "./commands.ts";
 import { SEND_MESSAGE_TOOL_NAME } from "@standardcode/capabilities";
 import { EXPERIMENTAL_FLAGS, type ExperimentalFlag, type ExperimentalGate } from "@standardcode/platform";
+import { workflowsCommand } from "./workflows-command.ts";
 
 /** 具名 flag → 门内斜杠命令名（缺项=该 flag 无命令面）。 */
 export const EXPERIMENTAL_FLAG_COMMANDS: Readonly<Record<ExperimentalFlag, readonly string[]>> = {
@@ -50,9 +51,18 @@ export function gateCommands(all: readonly SlashCommand[], gate: ExperimentalGat
   return all.filter((c) => !gated.has(c.name) || active.has(c.name));
 }
 
-/** 宿主默认装配：现表 + 门（main.ts 消费）。 */
+/**
+ * 门内的命令实现（具名 flag → 斜杠命令体的映射面）。这些实现**不进** `CLI_COMMANDS`（维持其恰 30 件不变），
+ * 仅作为候选并入后由 `gateCommands` 依门过滤：门关 → 被实验命令名全集滤除 → 注册表逐字等于 `CLI_COMMANDS`；
+ * 对应 flag 开启 → 放行并入。WP-05 落 `/workflows`（flag=`workflow`）；/fork /export 由 WP-10 落。
+ */
+export function experimentalCommandImplementations(): readonly SlashCommand[] {
+  return [workflowsCommand];
+}
+
+/** 宿主默认装配：现表 + 门内实现 + 门（main.ts 消费）。门关时注册表逐字等于 `CLI_COMMANDS`（仍 30 件）。 */
 export function gatedRegistry(gate: ExperimentalGate): readonly SlashCommand[] {
-  return gateCommands(CLI_COMMANDS, gate);
+  return gateCommands([...CLI_COMMANDS, ...experimentalCommandImplementations()], gate);
 }
 
 // —— M6-WP-06：门内的**对外工具面**（DoD⑥"flag 默认关=工具零注册"）——

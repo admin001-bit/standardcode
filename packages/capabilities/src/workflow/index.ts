@@ -7,3 +7,4 @@ export * from "./sandbox.ts";
 export * from "./script-store.ts";
 export * from "./kernel.ts";
 export * from "./journal.ts";
+export * from "./progress.ts";

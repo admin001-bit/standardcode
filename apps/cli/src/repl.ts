@@ -21,6 +21,7 @@ import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, M
 import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
 import { isTrusted } from "@standardcode/platform";
 import { createStandardTools } from "@standardcode/capabilities";
+import { workflowBoard } from "./workflow-board.ts";
 import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
@@ -738,6 +739,13 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   for (const note of s.drainMcpNotifications()) {
     s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${note}</system-reminder>` }] });
     s.hooks.fire("Notification", undefined, { message: note }); // M4-WP04：Notification 事件触发面
+  }
+  // M6-WP-05（DoD③）：workflow 完成通知注入（isomorphic 到上方 MCP drain 路径）。workflow 完成时 runner 经
+  // workflowBoard.queue.push 投递 <task-notification>，此处作为 user turn 回灌主循环、并触发 Notification 钩子。
+  // 与 /tasks + 后台 subagent 任务族（packages/harness task-*）互不干扰——独立缓冲、独立 drain 循环。
+  for (const note of workflowBoard.drainNotifications()) {
+    s.messages.push({ role: "user", content: [{ type: "text", text: note }] });
+    s.hooks.fire("Notification", undefined, { message: note });
   }
   // M4-WP05：skills 清单增量注入（meta user 消息追加，CTX-005 不动既有前缀字节；DoD③⑧）
   const listing = s.skills.listing();
