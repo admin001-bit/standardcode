@@ -12,7 +12,8 @@ import { EXPERIMENTAL_ENV_KEY, resolveExperimental } from "@standardcode/platfor
 import { createSession } from "../src/session.ts";
 import { createCommandContext, type ReplDeps } from "../src/repl.ts";
 import { workflowBoard } from "../src/workflow-board.ts";
-import { createWorkflowProgressTracker, renderWorkflowProgressTree, type ProviderAdapter } from "@standardcode/capabilities";
+import { createWorkflowProgressTracker, renderWorkflowProgressTree } from "@standardcode/capabilities";
+import type { ProviderAdapter } from "@standardcode/providers";
 
 function fakeProvider(): ProviderAdapter {
   return {
