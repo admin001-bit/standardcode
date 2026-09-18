@@ -99,7 +99,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
   let session;
   try {
-    session = createSession({ ...(sandboxInit ? { sandbox: sandboxInit } : {}) });
+    session = createSession({
+      ...(sandboxInit ? { sandbox: sandboxInit } : {}),
+      experimental, // M6-WP-07：teams 工具面装配消费同一份启动期门判定（DoD⑤ 默认关=零构造零触盘）
+    });
     if (sandboxInit) process.stdout.write(`[sandbox] 已启用（档=${sandboxInit.tier}，执行面=Bash/写盘经 standardcode-sandbox；关=现状直通）\n`);
   } catch (err) {
     process.stderr.write(

@@ -747,6 +747,13 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     s.messages.push({ role: "user", content: [{ type: "text", text: note }] });
     s.hooks.fire("Notification", undefined, { message: note });
   }
+  // M6-WP-07（DoD④）：teammate→main 投递回灌（"main" 恒路由主对话的落点；isomorphic 到上方 workflow 通知段）。
+  // teammate 经 SendMessage to:"main" 的消息由 roster port 渲染进会话缓冲，此处作为 user turn 回灌主循环、
+  // 并触发 Notification 钩子；teams flag 不活跃=drainTeammateMessages 恒空（bootstrap 占位零开销）。
+  for (const note of s.drainTeammateMessages()) {
+    s.messages.push({ role: "user", content: [{ type: "text", text: note }] });
+    s.hooks.fire("Notification", undefined, { message: note });
+  }
   // M4-WP05：skills 清单增量注入（meta user 消息追加，CTX-005 不动既有前缀字节；DoD③⑧）
   const listing = s.skills.listing();
   if (listing !== null) {

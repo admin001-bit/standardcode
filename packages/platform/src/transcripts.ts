@@ -55,6 +55,12 @@ export function workflowsDir(projectRoot: string, baseDir = path.join(homedir(),
   return path.join(baseDir, "projects", encoded, "workflows");
 }
 
+/** M6-WP-07：Teams 文件 mailbox 根（BLK-07=① 跨 teammate 载体；与 transcripts/ 同 enc 基座；成员 inbox 布局 [自定] 见 capabilities teams/mailbox.ts）。 */
+export function teamsDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
+  const encoded = encodeProjectPath(projectRoot);
+  return path.join(baseDir, "projects", encoded, "teams");
+}
+
 export function encodeProjectPath(projectRoot: string): string {
   // [自定]：`/` `\` `:` → '-'（ADR-0028 决策 2）；其余非 [A-Za-z0-9._-] → x<hex>（无歧义、Windows 文件名合法）
   let out = "";

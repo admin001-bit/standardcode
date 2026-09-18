@@ -139,10 +139,14 @@ export function createTeammateMessagePump(options: TeammateMessagePumpOptions): 
     switch (event.type) {
       case "shutdown_request": {
         // A 级 §4.1：转 user 消息「passing to model」——由模型决定响应，**不自动终止**。
+        // 渲染与 new_message 同构走 formatTeammateMessage（WP-06 V 观察 O1 收敛：A 级该分支逐字
+        // `W = j3({from: M.request?.from || "team-lead", text: M.originalMessage})`——同一渲染器，无独立前缀形）。
         handled.shutdown_request++;
         const from = event.request?.from ?? TEAMMATE_DEFAULT_LEAD_NAME;
-        const text = `${from} (shutdown request): ${event.originalMessage}`;
-        options.deliver({ message: userTurn(text), meta: { kind: "shutdown_request", from } });
+        options.deliver({
+          message: userTurn(formatTeammateMessage({ from, text: event.originalMessage })),
+          meta: { kind: "shutdown_request", from },
+        });
         return;
       }
       case "new_message": {

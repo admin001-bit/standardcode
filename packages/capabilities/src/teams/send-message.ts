@@ -193,7 +193,12 @@ export function createSendMessageTool(options: SendMessageToolOptions): Standard
           type: "string",
           description: `A 5-10 word summary shown as a one-line preview. Defaults to the first line of a plain-text message; longer summaries are truncated to ${SEND_MESSAGE_SUMMARY_MAX} characters rather than rejected.`,
         },
-        message: { type: "object", description: "Plain text message content, or a structured protocol object" },
+        message: {
+          // A 级 §2.1 union（纯文本或结构化协议 JSON）——WP-06 V 观察 O2 收敛：runtime 本就放行字符串，
+          // schema 由 `type:"object"` 收敛为 anyOf 两枝，消除声明面与运行时面不一致。
+          anyOf: [{ type: "string" }, { type: "object" }],
+          description: "Plain text message content, or a structured protocol object",
+        },
         notify_when_idle: {
           type: "boolean",
           description:
