@@ -202,6 +202,10 @@ export interface CommandContext {
   resumeSession(): Promise<boolean>;
   /** WP-10：当前会话重命名（sidecar 标题；/resume 列表即时反映）。 */
   renameSession(title: string): Promise<void>;
+  /** M6-WP-10 /fork：fork 型 subagent（后台异步；prompt=父消息历史渲染块＋指令复合形；[CC] _353.js fork 语义束同构）。 */
+  fork(args: string): Promise<{ text: string }>;
+  /** M6-WP-10 /export：导出当前会话转录为 Markdown（落点 <cwd>/export-<sessionId>.md；已存在=拒绝点名）。 */
+  exportSession(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 

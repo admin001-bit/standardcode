@@ -13,6 +13,8 @@ import { CLI_COMMANDS, type SlashCommand } from "./commands.ts";
 import { SEND_MESSAGE_TOOL_NAME } from "@standardcode/capabilities";
 import { EXPERIMENTAL_FLAGS, type ExperimentalFlag, type ExperimentalGate } from "@standardcode/platform";
 import { workflowsCommand } from "./workflows-command.ts";
+import { forkCommand } from "./fork-command.ts";
+import { exportCommand } from "./export-command.ts";
 
 /** 具名 flag → 门内斜杠命令名（缺项=该 flag 无命令面）。 */
 export const EXPERIMENTAL_FLAG_COMMANDS: Readonly<Record<ExperimentalFlag, readonly string[]>> = {
@@ -57,7 +59,8 @@ export function gateCommands(all: readonly SlashCommand[], gate: ExperimentalGat
  * 对应 flag 开启 → 放行并入。WP-05 落 `/workflows`（flag=`workflow`）；/fork /export 由 WP-10 落。
  */
 export function experimentalCommandImplementations(): readonly SlashCommand[] {
-  return [workflowsCommand];
+  // M6-WP-10：/fork /export 并入（flag=fork 映射 EXPERIMENTAL_FLAG_COMMANDS.fork 已在位）；WP-05 先例同形。
+  return [workflowsCommand, forkCommand, exportCommand];
 }
 
 /** 宿主默认装配：现表 + 门内实现 + 门（main.ts 消费）。门关时注册表逐字等于 `CLI_COMMANDS`（仍 30 件）。 */

@@ -3,8 +3,8 @@
 // 该两件 WP-08 复验登记"零生产消费者，真实接入=WP-10"）。
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
 import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue, TELEMETRY_SETTINGS_KEY } from "@standardcode/platform";
@@ -22,6 +22,8 @@ import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
 import { isTrusted } from "@standardcode/platform";
 import { createStandardTools } from "@standardcode/capabilities";
 import { workflowBoard } from "./workflow-board.ts";
+import { DEFAULT_FORK_INSTRUCTION, deriveForkDescription, renderForkContextPrompt } from "./fork-command.ts";
+import { exportTargetPath, renderSessionMarkdown } from "./export-command.ts";
 import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
@@ -636,6 +638,61 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         throw new Error(s.i18n.t("cmd.update.installFailed", { value: run.error ?? `exit=${run.status}${run.stderrTail ? `; stderr: ${run.stderrTail}` : ""}` }));
       }
       return { text: s.i18n.t("cmd.update.installed", { latest: check.latest }) };
+    },
+    // —— M6-WP-10：/fork（fork 型 subagent；[CC] _353.js fork 语义束同构——父上下文携带＋后台异步；
+    // spawn 走 spawnSubagentTask 同一入口=ORC-022 校验序列复用（DoD①），不碰 harness 既有校验面）——
+    fork: async (args) => {
+      const s = deps.session;
+      // [CC] subagent_fork_prompt_missing 同构：空会话=无父上下文可 fork（点名报错，与 /subtask 守卫同形）；
+      // [CC] 的 ended_by_model/coordinator_mode 两拒绝态本仓无对应面（无该状态机）——[CC]-only 不移植，非静默吞。
+      if (s.messages.length === 0) throw new Error("[fork] cannot fork an empty session: no parent context to derive from");
+      const { type, prompt } = splitSubtaskType(args, s.agents.names()); // 类型缺省 general-purpose（首词可指定，/subtask 同族 [自定]）
+      const instruction = prompt !== "" ? prompt : DEFAULT_FORK_INSTRUCTION; // 空指令=缺省指令 [自定]
+      const spawn = s.agents.prepareSpawn(type);
+      const launch = await spawnSubagentTask(
+        {
+          prompt: renderForkContextPrompt(s.messages, instruction), // DoD①：fork 携带父转录（复合形 [自定]）
+          ...(type !== undefined ? { subagentType: type } : {}),
+          description: deriveForkDescription(instruction), // [CC] Te slug 同构（空回落 "fork"）
+          runInBackground: true, // fork=后台异步（[CC] isAsync:!0）→ async_launched
+        },
+        spawn.ctx,
+        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
+        {
+          registry: s.taskRegistry,
+          env: {}, // 同 /subtask：翻转面无涉（后台显式 true 恒走后台分支）
+          onStart: (info) => {
+            s.hooks.fire("SubagentStart", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}) });
+          },
+          onSettled: (info) => {
+            s.hooks.fire("SubagentStop", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}), outcome: info.ok ? "success" : "failure" });
+          },
+        },
+      );
+      if (launch.status === "refused") {
+        s.telemetry.subagentLaunch({ outcome: "refused", refusedCode: launch.code, ...(type !== undefined ? { agentType: type } : {}) });
+        return { text: `[fork] refused: ${launch.message}` };
+      }
+      s.telemetry.subagentLaunch({ outcome: "launched", taskId: launch.taskId, agentId: launch.agentId, ...(type !== undefined ? { agentType: type } : {}) });
+      if (launch.status !== "async_launched") return { text: `[fork] unexpected launch status: ${launch.status}` };
+      // 回显 taskId/agentId：agentId 为内部 ID 不向用户暴露（WP-07 spawnAddressingNote 同族口径 [自定]）；
+      // 完成通知经既有任务事件面（/tasks /background）——不做结果注入（与 /subtask 同步语义的差异，如实登记）。
+      return {
+        text: `[fork] dispatched (background task ${launch.taskId}, agent ${type ?? "general-purpose"}); completion arrives via the task event feed (${launch.agentId} is internal - do not mention to user)`,
+      };
+    },
+    // —— M6-WP-10：/export（导出当前会话转录为 Markdown；目标已存在=拒绝点名 fail-closed，不静默覆盖）——
+    exportSession: async (args) => {
+      const s = deps.session;
+      if (args.trim() !== "") throw new Error("[export] takes no arguments");
+      const assets = sessionAssets.get(s);
+      if (!assets) throw new Error(s.i18n.t("repl.session.transcriptUnavailable", { value: "no transcript writer for this session" })); // 复用既有 i18n 同族 key（不新增条目）
+      if (s.messages.length === 0) throw new Error("[export] session is empty: nothing to export");
+      const target = exportTargetPath(s.cwd, assets.sessionId);
+      if (existsSync(target)) throw new Error(`[export] target already exists, refusing to overwrite: ${target}`);
+      const md = renderSessionMarkdown({ sessionId: assets.sessionId, exportedAt: new Date().toISOString(), messages: s.messages });
+      await writeFile(target, md, { encoding: "utf8", flag: "wx" }); // wx=存在即失败（TOCTOU 双保险，B-12 fail-closed）
+      return { text: `[export] wrote ${s.messages.length} message(s) to ${target}` };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

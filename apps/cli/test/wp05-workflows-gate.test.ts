@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { CLI_COMMANDS } from "../src/commands.ts";
 import { gatedRegistry } from "../src/experimental-gate.ts";
-import { EXPERIMENTAL_ENV_KEY, resolveExperimental } from "@standardcode/platform";
+import { EXPERIMENTAL_ENV_KEY, resolveExperimental, type ExperimentalGate } from "@standardcode/platform";
 import { createSession } from "../src/session.ts";
 import { createCommandContext, type ReplDeps } from "../src/repl.ts";
 import { workflowBoard } from "../src/workflow-board.ts";
@@ -34,7 +34,9 @@ function fakeProvider(): ProviderAdapter {
 }
 
 const closed = resolveExperimental({ env: {}, settings: undefined });
-const open = resolveExperimental({ env: { [EXPERIMENTAL_ENV_KEY]: "1" }, settings: undefined });
+// M6-WP-10 断言同步：open 由 env 全量 gate 收窄为显式 workflow 单 flag gate（设计口径「workflow 开=31」的语义）。
+// env "1" 白名单缺席=全量随总闸——fork/export 实现落地后全量态=33；本卡前全量态与单 flag 态等价（实现面仅 1 件）。
+const open: ExperimentalGate = { enabled: true, flags: ["workflow"], notices: [] };
 
 afterEach(() => {
   workflowBoard.unregister("wp05-test-run");
