@@ -645,7 +645,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const s = deps.session;
       // [CC] subagent_fork_prompt_missing 同构：空会话=无父上下文可 fork（点名报错，与 /subtask 守卫同形）；
       // [CC] 的 ended_by_model/coordinator_mode 两拒绝态本仓无对应面（无该状态机）——[CC]-only 不移植，非静默吞。
-      if (s.messages.length === 0) throw new Error("[fork] cannot fork an empty session: no parent context to derive from");
+      if (s.messages.length === 0) throw new Error(s.i18n.t("repl.fork.emptySession"));
       const { type, prompt } = splitSubtaskType(args, s.agents.names()); // 类型缺省 general-purpose（首词可指定，/subtask 同族 [自定]）
       const instruction = prompt !== "" ? prompt : DEFAULT_FORK_INSTRUCTION; // 空指令=缺省指令 [自定]
       const spawn = s.agents.prepareSpawn(type);
@@ -671,28 +671,28 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       );
       if (launch.status === "refused") {
         s.telemetry.subagentLaunch({ outcome: "refused", refusedCode: launch.code, ...(type !== undefined ? { agentType: type } : {}) });
-        return { text: `[fork] refused: ${launch.message}` };
+        return { text: s.i18n.t("repl.fork.refused", { value: launch.message }) };
       }
       s.telemetry.subagentLaunch({ outcome: "launched", taskId: launch.taskId, agentId: launch.agentId, ...(type !== undefined ? { agentType: type } : {}) });
-      if (launch.status !== "async_launched") return { text: `[fork] unexpected launch status: ${launch.status}` };
+      if (launch.status !== "async_launched") return { text: s.i18n.t("repl.fork.unexpected", { value: launch.status }) };
       // 回显 taskId/agentId：agentId 为内部 ID 不向用户暴露（WP-07 spawnAddressingNote 同族口径 [自定]）；
       // 完成通知经既有任务事件面（/tasks /background）——不做结果注入（与 /subtask 同步语义的差异，如实登记）。
       return {
-        text: `[fork] dispatched (background task ${launch.taskId}, agent ${type ?? "general-purpose"}); completion arrives via the task event feed (${launch.agentId} is internal - do not mention to user)`,
+        text: s.i18n.t("repl.fork.dispatched", { taskId: launch.taskId, type: type ?? "general-purpose", agentId: launch.agentId }),
       };
     },
     // —— M6-WP-10：/export（导出当前会话转录为 Markdown；目标已存在=拒绝点名 fail-closed，不静默覆盖）——
     exportSession: async (args) => {
       const s = deps.session;
-      if (args.trim() !== "") throw new Error("[export] takes no arguments");
+      if (args.trim() !== "") throw new Error(s.i18n.t("repl.export.takesNoArgs"));
       const assets = sessionAssets.get(s);
       if (!assets) throw new Error(s.i18n.t("repl.session.transcriptUnavailable", { value: "no transcript writer for this session" })); // 复用既有 i18n 同族 key（不新增条目）
-      if (s.messages.length === 0) throw new Error("[export] session is empty: nothing to export");
+      if (s.messages.length === 0) throw new Error(s.i18n.t("repl.export.emptySession"));
       const target = exportTargetPath(s.cwd, assets.sessionId);
-      if (existsSync(target)) throw new Error(`[export] target already exists, refusing to overwrite: ${target}`);
+      if (existsSync(target)) throw new Error(s.i18n.t("repl.export.exists", { value: target }));
       const md = renderSessionMarkdown({ sessionId: assets.sessionId, exportedAt: new Date().toISOString(), messages: s.messages });
       await writeFile(target, md, { encoding: "utf8", flag: "wx" }); // wx=存在即失败（TOCTOU 双保险，B-12 fail-closed）
-      return { text: `[export] wrote ${s.messages.length} message(s) to ${target}` };
+      return { text: s.i18n.t("repl.export.wrote", { n: s.messages.length, target }) };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

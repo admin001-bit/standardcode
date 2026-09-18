@@ -320,6 +320,15 @@ Object.assign(EN, {
   "cmd.update.installed": "[update] installed {latest} — restart standardcode to run the new version",
   "cmd.update.installFailed": "[update] install failed — what happened: npm global install did not complete; why: {value}; suggestion: close running instances (EBUSY/EPERM file lock) and retry manually: npm i -g @standardcode-oss/cli@latest",
   "repl.update.available": "[update] new version {latest} available (current {version}) — run /update to install",
+  // —— M6-WP-10（R1 修复）：/fork /export 渲染面 i18n 化（DoD④ 守卫闭合；en 值=原固定字面逐字，零语义变化）——
+  "repl.fork.emptySession": "[fork] cannot fork an empty session: no parent context to derive from",
+  "repl.fork.refused": "[fork] refused: {value}",
+  "repl.fork.unexpected": "[fork] unexpected launch status: {value}",
+  "repl.fork.dispatched": "[fork] dispatched (background task {taskId}, agent {type}); completion arrives via the task event feed ({agentId} is internal - do not mention to user)",
+  "repl.export.takesNoArgs": "[export] takes no arguments",
+  "repl.export.emptySession": "[export] session is empty: nothing to export",
+  "repl.export.exists": "[export] target already exists, refusing to overwrite: {value}",
+  "repl.export.wrote": "[export] wrote {n} message(s) to {target}",
 });
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
@@ -466,6 +475,15 @@ Object.assign(ZH_CN, {
   "cmd.update.installed": "[update] 已安装 {latest}——重启 standardcode 以生效",
   "cmd.update.installFailed": "[update] 安装失败——发生了什么：'npm i -g @standardcode-oss/cli@latest' 未完成；为什么：{value}；建议动作：关闭正在运行的 standardcode 实例（Windows 文件锁 EBUSY/EPERM）后手动重试：npm i -g @standardcode-oss/cli@latest",
   "repl.update.available": "[update] 发现新版本 {latest}（当前 {version}）——运行 /update 安装",
+  // —— M6-WP-10（R1 修复）：/fork /export zh 包（技术术语 fork/export/agent/task 保留英文——DoD⑥ 同族）——
+  "repl.fork.emptySession": "[fork] 空会话无法 fork：无父上下文可派生",
+  "repl.fork.refused": "[fork] 被拒：{value}",
+  "repl.fork.unexpected": "[fork] 意外启动状态：{value}",
+  "repl.fork.dispatched": "[fork] 已派发（后台任务 {taskId}，agent {type}）；完成通知经任务事件面送达（{agentId} 为内部 ID——勿向用户提及）",
+  "repl.export.takesNoArgs": "[export] 不接受参数",
+  "repl.export.emptySession": "[export] 会话为空：无可导出内容",
+  "repl.export.exists": "[export] 目标已存在，拒绝覆盖：{value}",
+  "repl.export.wrote": "[export] 已写入 {n} 条消息至 {target}",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };
