@@ -10,6 +10,7 @@
 // 命令全集断言（M5 `wp10-milestone.test.ts` 恰 30 件）在默认关态逐字不变。
 
 import { CLI_COMMANDS, type SlashCommand } from "./commands.ts";
+import { SEND_MESSAGE_TOOL_NAME } from "@standardcode/capabilities";
 import { EXPERIMENTAL_FLAGS, type ExperimentalFlag, type ExperimentalGate } from "@standardcode/platform";
 
 /** 具名 flag → 门内斜杠命令名（缺项=该 flag 无命令面）。 */
@@ -52,4 +53,31 @@ export function gateCommands(all: readonly SlashCommand[], gate: ExperimentalGat
 /** 宿主默认装配：现表 + 门（main.ts 消费）。 */
 export function gatedRegistry(gate: ExperimentalGate): readonly SlashCommand[] {
   return gateCommands(CLI_COMMANDS, gate);
+}
+
+// —— M6-WP-06：门内的**对外工具面**（DoD⑥"flag 默认关=工具零注册"）——
+// 分工与命令面同形：判定在 platform（resolveExperimental），本模块只做 flag→工具名映射与表过滤。
+// [自定] 接线点：工具面的实际装配（session.ts 把门内工具并入 `session.tools`）随 WP-07 成员注册表落地——
+// 该卡提供 SendMessage 的投递口（deliver/router），本卡只落门映射与零注册断言（不落一个永远 not_reachable 的工具）。
+
+/** 具名 flag → 门内对外工具名（缺项=该 flag 无工具面；BLK-08=① 团队任务工具集零增量，故 teams 只出 SendMessage）。 */
+export const EXPERIMENTAL_FLAG_TOOLS: Readonly<Record<ExperimentalFlag, readonly string[]>> = {
+  workflow: [],
+  teams: [SEND_MESSAGE_TOOL_NAME],
+  fork: [],
+};
+
+/** 门管的工具名全集（默认关时不得出现在装配面）。 */
+export function experimentalToolNames(): readonly string[] {
+  const all = new Set<string>();
+  for (const flag of EXPERIMENTAL_FLAGS) for (const name of EXPERIMENTAL_FLAG_TOOLS[flag]) all.add(name);
+  return [...all];
+}
+
+/** 门内可用工具名（总闸关=空；白名单未含某 flag=该 flag 工具仍不注册）。 */
+export function activeExperimentalToolNames(gate: ExperimentalGate): readonly string[] {
+  if (!gate.enabled) return [];
+  const active = new Set<string>();
+  for (const flag of gate.flags) for (const name of EXPERIMENTAL_FLAG_TOOLS[flag]) active.add(name);
+  return [...active];
 }

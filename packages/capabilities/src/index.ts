@@ -31,3 +31,5 @@ export * from "./hooks/index.ts";
 export * from "./skills/index.ts";
 // M6-WP-02：workflow vm 沙箱与脚本求值（ORC-023/024 行 295；DoD① 载体=逃逸测试集）。
 export * from "./workflow/index.ts";
+// M6-WP-06：Teams 消息面（ORC-023 行 295 + Q-4 行 578；DoD② 载体=消息泵五事件）。
+export * from "./teams/index.ts";
