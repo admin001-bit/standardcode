@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { runAgentLoop } from "@standardcode/harness";
 import type { Tool } from "@standardcode/harness";
 import type { LLMEvent } from "@standardcode/providers";
-import { encodeProjectPath, rebuildMessages, readTranscript, resumeFrom, TranscriptWriter } from "../src/transcripts.ts";
+import { encodeProjectPath, rebuildMessages, readTranscript, resumeFrom, TranscriptWriter, workflowsDir } from "../src/transcripts.ts";
 
 async function tmpBase() {
   return mkdtemp(path.join(tmpdir(), "stdc-tr-"));
@@ -22,6 +22,16 @@ describe("路径编码（ADR-0028 决策 2）", () => {
     expect(encodeProjectPath("D:\\a b\\c")).toBe("D--a-b-c");
     expect(encodeProjectPath("/tmp/x")).toBe("-tmp-x");
     expect(encodeProjectPath("D:\\中文")).toBe("D----");
+  });
+
+  it("M6-WP-02 workflow 运行目录与 transcripts/ 同 enc 基座（A 级 workflow 报告 §7.4 `workflows/<runId>/`）", () => {
+    const base = path.join(path.sep, "base");
+    expect(workflowsDir("D:\\projects\\standardcode", base)).toBe(
+      path.join(base, "projects", "D--projects-standardcode", "workflows"),
+    );
+    expect(workflowsDir("D:\\projects\\standardcode", base)).not.toBe(
+      path.join(base, "projects", "D--projects-standardcode", "transcripts"),
+    );
   });
 });
 

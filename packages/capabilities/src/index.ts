@@ -29,3 +29,5 @@ export * from "./mcp/index.ts";
 export * from "./hooks/index.ts";
 // M4-WP-05：skills（frontmatter+三源发现+清单预算+Skill 工具）。
 export * from "./skills/index.ts";
+// M6-WP-02：workflow vm 沙箱与脚本求值（ORC-023/024 行 295；DoD① 载体=逃逸测试集）。
+export * from "./workflow/index.ts";

@@ -49,6 +49,12 @@ export function projectMemoryDir(projectRoot: string, baseDir = path.join(homedi
   return path.join(baseDir, "projects", encoded, "memory");
 }
 
+/** M6-WP-02：workflow 运行目录根（A 级 workflow 报告 §7.4：每个 run 的转录在 `workflows/<runId>/`；与 transcripts/ 同 enc 基座）。 */
+export function workflowsDir(projectRoot: string, baseDir = path.join(homedir(), ".standardcode")): string {
+  const encoded = encodeProjectPath(projectRoot);
+  return path.join(baseDir, "projects", encoded, "workflows");
+}
+
 export function encodeProjectPath(projectRoot: string): string {
   // [自定]：`/` `\` `:` → '-'（ADR-0028 决策 2）；其余非 [A-Za-z0-9._-] → x<hex>（无歧义、Windows 文件名合法）
   let out = "";
