@@ -18,3 +18,5 @@ export * from "./updater.ts";
 export * from "./keychain.ts";
 // M5-WP-06：遥测 opt-in（ENG-090 七事件+SEC-050 默认关；接缝⑮ 脱敏复用 session-store redactSecrets 单源）。
 export * from "./telemetry.ts";
+// M6-WP-01：实验特性位基座（ORC-050 Teams/workflow 默认关；env/settings 双源+具名 flag 注册表+告警面）。
+export * from "./experimental.ts";

@@ -126,6 +126,8 @@ This file provides guidance to StandardCode (standardcode CLI) when working with
 `;
 
 export interface CommandContext {
+  /** WP-01：现行注册表（已过实验特性门；/help 与补全/派发同源——门关时实验命令不出现也不可执行）。 */
+  commands(): readonly SlashCommand[];
   catalog(): readonly string[];
   /** 会话工作目录（/diff 的 git 执行目录）。 */
   workingDir(): string;
@@ -218,7 +220,7 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     },
     execute(_args, ctx) {
       ctx.write(ctx.t("repl.help.header"));
-      for (const c of CLI_COMMANDS) ctx.write(`  /${c.name}${c.usage ? ` ${c.usage}` : ""} — ${c.description}`);
+      for (const c of ctx.commands()) ctx.write(`  /${c.name}${c.usage ? ` ${c.usage}` : ""} — ${c.description}`);
     },
   },
   {

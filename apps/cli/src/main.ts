@@ -2,8 +2,8 @@
 import { createInterface } from "node:readline";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
-import { CLI_COMMANDS } from "./commands.ts";
-import { FileHistoryStoreImpl, acceptTrust, findGitRoot, isTrusted, isNativeDirSymlink, loadSettings, settingsValue, type SessionIndexEntry } from "@standardcode/platform";
+import { gatedRegistry } from "./experimental-gate.ts";
+import { FileHistoryStoreImpl, acceptTrust, experimentalSettingsFrom, findGitRoot, isTrusted, isNativeDirSymlink, loadSettings, resolveExperimental, settingsValue, type SessionIndexEntry } from "@standardcode/platform";
 import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
 // M5-WP-03：沙箱开关解析（-sdb 旗标/env 逃逸舱/settings sandbox.*；纯函数面可单测）。
 import { gateDangerTier, resolveSandboxSettings } from "./sandbox-config.ts";
@@ -46,9 +46,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = 1;
     return;
   }
+  // 启动期 settings 一次装配（沙箱/实验特性位共用同一份合并结果；§7.7 五来源序在 loadSettings 内承载）。
+  const bootSettings = loadSettings({ projectRoot: process.cwd() });
+  // WP-01：实验特性位（ORC-050 默认关闭）——env STANDARD_CODE_EXPERIMENTAL（逃逸舱）> settings experimental.enabled
+  // > 缺省关；非法值 fail-closed；告警（非法值/未知 flag 名）启动即打印，不静默丢弃。门判定=platform 纯函数，
+  // 命令表过滤=experimental-gate（装配/补全/派发/help 同一份表，故门关时实验命令既不出现也不可执行）。
+  const experimentalSettings = experimentalSettingsFrom(bootSettings.merged);
+  const experimental = resolveExperimental({
+    env: process.env,
+    ...(experimentalSettings !== undefined ? { settings: experimentalSettings } : {}),
+  });
+  for (const notice of experimental.notices) process.stdout.write(`${notice}\n`);
+  const commands = gatedRegistry(experimental);
   const rl = createInterface({
     input: process.stdin,
-    completer: completerFor(CLI_COMMANDS), // UI-001
+    completer: completerFor(commands), // UI-001
   });
   const router = createLineRouter(rl);
   // WP-07（UI-061）：启动信任对话框——非 TTY/已信任跳过；接受以 git 仓库根为密钥写 trust store。
@@ -62,19 +74,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       else process.stdout.write("[trust] proceeding without trust — shared settings stay gated (deny/ask still apply)\n");
     }
   }
-  // M5-WP-03 沙箱装配（解析序/键位见 sandbox-config.ts 头注）：settings 用 loadSettings 同路
-  // 读取——sandbox.* 非 env 注入非 allow 规则，未信任共享层置 enabled=收紧执行非攻击面；
+  // M5-WP-03 沙箱装配（解析序/键位见 sandbox-config.ts 头注）：settings 读启动期同一次合并结果（bootSettings）
+  // ——sandbox.* 非 env 注入非 allow 规则，未信任共享层置 enabled=收紧执行非攻击面；
   // danger 档另有逐会话显式确认闸（DoD③）兜住放宽方向（[自定] 登记供 V 判）。
   let sandboxInit: { tier: SandboxTier } | undefined;
   {
-    const sbxSettings = loadSettings({ projectRoot: process.cwd() });
     const assembly = await gateDangerTier(
       resolveSandboxSettings({
         cliFlag: sandboxCliFlag,
         env: process.env,
         settings: {
-          enabled: settingsValue<boolean>(sbxSettings, "sandbox.enabled"),
-          tier: settingsValue<string>(sbxSettings, "sandbox.tier"),
+          enabled: settingsValue<boolean>(bootSettings, "sandbox.enabled"),
+          tier: settingsValue<string>(bootSettings, "sandbox.tier"),
         },
       }),
       async () => {
@@ -181,6 +192,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   process.stdout.write(`standardcode ${CLI_VERSION} — /help 查看命令，/exit 退出\n`);
   await runRepl({
     session,
+    commands, // WP-01：门控后的注册表（派发/help/补全同源）
     io: {
       lines: router.lines,
       write: (s) => process.stdout.write(s),

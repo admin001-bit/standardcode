@@ -146,7 +146,9 @@ async function drainSessionAssets(deps: ReplDeps): Promise<void> {
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
   const s = deps.session;
-  return {    catalog: () => s.catalog,
+  return {    // WP-01：现行注册表（门控后；/help 同源）
+    commands: () => deps.commands ?? CLI_COMMANDS,
+    catalog: () => s.catalog,
     currentModel: () => s.model,
     switchModel: (name) => {
       if (!s.catalog.includes(name)) throw new Error(s.i18n.t("cmd.model.err.unknownModel", { value: name, list: s.catalog.join(", ") }));
