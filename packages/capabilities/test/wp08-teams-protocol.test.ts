@@ -454,6 +454,90 @@ describe("五事件封闭不变量（本卡不新增事件型，泵仍恰五型�
   });
 });
 
+// —— X-2 补充判别用例（盲态 V 实测的两枚 0 红针对应判别面；只新增，既有 40 例断言零改动）——
+//   V6：protocol.ts `open()` 的 `duplicate open request_id` 分支被短路时，既有套件无一条变红（无判别力）。
+//   V7：runner.ts `receive()` 的 `entry.from || TEAM_LEAD_ADDRESS` 被写死 team-lead 时，既有套件无一条变红
+//       （既有用例入站条目 from 全是 "team-lead"，DoD③「回灌真正发起方」语义不可证伪）。
+/** 虚拟 teamsRoot：全程 memFs 注入，不真落盘。 */
+const X2_TEAMS_ROOT = "/tmp/wp08-x2-teams";
+
+describe("X-2 判别①：同一 request_id 二次 open 抛错且点名该 id", () => {
+  it("重复 open 抛错点名 request_id，且首次请求未被覆盖", () => {
+    const p = createProtocolPairing();
+    const first = buildShutdownRequest({ request_id: "dup-open-1", idGen });
+    expect(p.open(first)).toBe("dup-open-1");
+    expect(() => p.open(buildShutdownRequest({ request_id: "dup-open-1", idGen }))).toThrow(
+      /duplicate open request_id `dup-open-1`/,
+    );
+    expect(p.pending()).toHaveLength(1);
+    expect(p.pending()[0]!.request).toEqual(first); // 第二次 open 不得覆盖在途请求
+  });
+});
+
+describe("X-2 判别②：回灌**真正发起方**（入站 from=alice ≠ team-lead）", () => {
+  const REQ_ID = "plan-alice-1";
+  /** alice 为发起方（非 team-lead），自 teammate=name 的视角收 plan_approval_request。 */
+  function setupAliceInitiator(approve: boolean) {
+    const mem = memFs();
+    const roster = createTeamRoster({ teamName: "teamX" });
+    roster.addMember("alice", { agentId: "a111111111111-2222" });
+    const self = roster.addMember("mateA");
+    const selfInbox = teammateInboxPath(X2_TEAMS_ROOT, roster.teamName, self.name);
+    mem.writeFileSync(
+      selfInbox,
+      JSON.stringify([
+        {
+          from: "alice", // 真正的发起方（既有 40 例全是 "team-lead"，故该语义无判别力）
+          text: "",
+          message: buildPlanApprovalRequest({ request_id: REQ_ID, content: "alice's plan body" }),
+        },
+      ]),
+    );
+    const deliveredToMain: string[] = [];
+    const runner = createTeammateRunner({
+      roster,
+      selfName: self.name,
+      teamsRoot: X2_TEAMS_ROOT,
+      fs: mem,
+      deliverToMain: (t) => deliveredToMain.push(t),
+      warn: () => {},
+      requestApproval: () => ({ approve, feedback: "ok" }),
+    });
+    return {
+      runner,
+      mem,
+      deliveredToMain,
+      aliceInbox: teammateInboxPath(X2_TEAMS_ROOT, roster.teamName, "alice"),
+    };
+  }
+
+  it("批准：plan_approval_response 落 alice 的 mailbox（request_id 一致），deliverToMain 零调用", async () => {
+    const { runner, mem, deliveredToMain, aliceInbox } = setupAliceInitiator(true);
+    await runner.receive();
+    expect(deliveredToMain).toHaveLength(0); // 回灌走真正发起方，不是主对话
+    expect(mem.store.has(aliceInbox)).toBe(true);
+    const entries = JSON.parse(mem.store.get(aliceInbox)!) as Array<{
+      message?: { type?: string; request_id?: string; approve?: boolean };
+    }>;
+    const hit = entries.find((e) => e.message?.type === "plan_approval_response");
+    expect(hit).toBeDefined();
+    expect(hit!.message!.request_id).toBe(REQ_ID);
+    expect(hit!.message!.approve).toBe(true);
+  });
+
+  it("拒绝：approve=false 同样落 alice 的 mailbox，deliverToMain 零调用", async () => {
+    const { runner, mem, deliveredToMain, aliceInbox } = setupAliceInitiator(false);
+    await runner.receive();
+    expect(deliveredToMain).toHaveLength(0);
+    const entries = JSON.parse(mem.store.get(aliceInbox)!) as Array<{
+      message?: { type?: string; request_id?: string; approve?: boolean };
+    }>;
+    const hit = entries.find((e) => e.message?.type === "plan_approval_response");
+    expect(hit!.message!.request_id).toBe(REQ_ID);
+    expect(hit!.message!.approve).toBe(false);
+  });
+});
+
 describe("sanity：isTeamsProtocolType 与 TEAMMATE_DEFAULT_LEAD_NAME", () => {
   it("类型判别器", () => {
     expect(isTeamsProtocolType("shutdown_request")).toBe(true);
