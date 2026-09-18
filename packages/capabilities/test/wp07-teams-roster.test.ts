@@ -88,6 +88,23 @@ describe("DoD④ 通讯录（可寻址名单）与 agentId", () => {
     expect(roster.byAgentId("a0123456789ab-cdef")).toBe(m);
   });
 
+  it("契约不变量：addressable() 中每个成员名与 agentId 都可解析（V 发现的 DoD④ 断裂回归位：混合大小写注册名）", () => {
+    const roster = createTeamRoster({ teamName: "t" });
+    const m1 = roster.addMember("Alice", { agentId: "a0123456789ab-cdef" });
+    const m2 = roster.addMember("BOB", { agentId: "a0123456789ab-ffff" });
+    roster.addMember("researcher"); // 全小写成员同住
+    // 注册名原样可解析（修复前：resolve("Alice")→unknown＝可寻址不可解析的契约断裂）
+    expect(roster.resolve("Alice")).toEqual({ kind: "member", member: m1 });
+    expect(roster.resolve("BOB")).toEqual({ kind: "member", member: m2 });
+    // 全集不变量：非别名条目逐一可解析且命中 member
+    for (const a of roster.addressable()) {
+      if (a === "main" || a === TEAM_LEAD_ADDRESS) continue;
+      expect(roster.resolve(a).kind).toBe("member");
+    }
+    // [自定]⑤ 精确匹配口径：未注册的大小写变体不解析（去重的大小写不敏感只作用于注册面）
+    expect(roster.resolve("alice")).toEqual({ kind: "unknown" });
+  });
+
   it("addressable() 含 main、lead 别名、全部成员名与 agentId（顺序稳定）", () => {
     const roster = createTeamRoster({ teamName: "t" });
     const m = roster.addMember("researcher", { agentId: "a0123456789ab-cdef" });

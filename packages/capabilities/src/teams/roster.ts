@@ -118,7 +118,8 @@ export function createTeamRoster(init: { teamName: string }): TeamRoster {
   if (invalid) throw new Error(invalid);
   const teamName = init.teamName;
   const members: TeamMember[] = [];
-  const byNameLower = new Map<string, TeamMember>();
+  const byName = new Map<string, TeamMember>(); // 原名精确键（寻址面：addressable ⊆ resolvable 不变量）
+  const byNameLower = new Map<string, TeamMember>(); // 小写键（仅 §3.2 去重面）
   const byId = new Map<string, TeamMember>();
 
   const addMember = (name: string, opts?: { agentId?: string }): TeamMember => {
@@ -128,6 +129,7 @@ export function createTeamRoster(init: { teamName: string }): TeamRoster {
     const dedup = dedupeMemberName(name, new Set(byNameLower.keys()));
     const member: TeamMember = { name: dedup.name, agentId: opts?.agentId ?? generateAgentId(), deduped: dedup.deduped };
     members.push(member);
+    byName.set(member.name, member);
     byNameLower.set(member.name.toLowerCase(), member);
     byId.set(member.agentId, member);
     return member;
@@ -137,8 +139,8 @@ export function createTeamRoster(init: { teamName: string }): TeamRoster {
     if (to === SEND_MESSAGE_MAIN_RECIPIENT || to === TEAM_LEAD_ADDRESS) return { kind: "main" };
     const byIdHit = byId.get(to);
     if (byIdHit) return { kind: "member", member: byIdHit };
-    const byName = byNameLower.get(to); // 精确匹配（[自定]⑤：键本身小写归一，等价大小写敏感查原名）
-    if (byName) return { kind: "member", member: byName };
+    const byNameHit = byName.get(to); // 原名精确匹配（[自定]⑤：与 addressable 同域——注册名原样可寻址必可解析）
+    if (byNameHit) return { kind: "member", member: byNameHit };
     return { kind: "unknown" };
   };
 
