@@ -5,7 +5,9 @@
 //
 // 逃逸面实证（2026-09-18 本机探针，见结果页"过程要点"）：直接注入宿主函数时
 // `hostFn.constructor("return process")()` **可取到宿主 process**（宿主 realm 的 Function 不受本 context 的
-// codeGeneration 约束）→ 故本套件必须覆盖两条宿主注入通路：钩子返回值（同步对象）与宿主 async Promise 本体。
+// codeGeneration 约束）→ 故本套件必须覆盖**四条**宿主注入通路：同步返回值、async Promise 本体、
+// **同步 throw**、**异步 rejection**（后两条=错误对象的 constructor 同样携带宿主 Function；V 核验 R1 退回项），
+// 且两条返回值通路须**各自**有用例（V 核验 R2：只测 async 会让同步 clone 分支零判别力）。
 import { runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -46,18 +48,28 @@ function hooks(overrides: Partial<WorkflowHooks> = {}): WorkflowHooks {
   };
 }
 
-/** 在沙箱里求值一个表达式，把抛错收成 `{ err, message }`（避免宿主侧 try/catch 掩盖判别力）。 */
+/** 在沙箱里求值一个表达式，把抛错收成 `{ err, message, leak }`（避免宿主侧 try/catch 掩盖判别力）。
+ * `leak` = 在 **context 内**用错误对象的 constructor 链尝试取宿主 process——宿主机注入面（含错误对象）的判别位。 */
 async function probe(
   expression: string,
   options: Partial<WorkflowRunOptions> = {},
-): Promise<{ ok?: unknown; err?: string; message?: string }> {
+): Promise<{ ok?: unknown; err?: string; message?: string; leak?: string }> {
   const source = script(
-    `try { return { ok: await (${expression}) }; } catch (err) { return { err: String(err && err.name), message: String(err && err.message) }; }`,
+    [
+      `try { return { ok: await (${expression}) }; }`,
+      `catch (err) {`,
+      `  var leak;`,
+      `  try { leak = "LEAK:" + String(err.constructor.constructor("return process")()); }`,
+      `  catch (guard) { leak = "BLOCKED:" + String(guard && guard.name); }`,
+      `  return { err: String(err && err.name), message: String(err && err.message), leak: leak };`,
+      `}`,
+    ].join("\n"),
   );
   return (await runWorkflowScript({ script: source, hooks: hooks(), ...options })) as {
     ok?: unknown;
     err?: string;
     message?: string;
+    leak?: string;
   };
 }
 
@@ -130,6 +142,69 @@ describe("DoD① vm context 基座与逃逸面", () => {
   it("逃逸·context 内无宿主对象可作原型链跳板（宿主侧注入面全经桥接）", () => {
     const context = createWorkflowContext();
     expect(runInContext(`typeof hostLeak`, context)).toBe("undefined");
+  });
+
+  it("逃逸·宿主注入面⑤：**同步**（非 async）钩子返回的宿主对象经克隆落 context realm（V 核验 R2 缺口回归）", async () => {
+    const hostObject = { deep: { value: 11 } };
+    const syncHooks = hooks({ agent: ((prompt: string) => ({ ...hostObject, prompt })) as unknown as WorkflowHooks["agent"] });
+    const realm = await probe(
+      `(async () => { const r = agent("x"); return { proto: Object.getPrototypeOf(r) === Object.prototype, value: r.deep.value }; })()`,
+      { hooks: syncHooks },
+    );
+    expect(realm.ok).toEqual({ proto: true, value: 11 });
+    expect((await probe(`agent("x").constructor.constructor("return process")()`, { hooks: syncHooks })).err).toBe("EvalError");
+  });
+
+  it("逃逸·宿主注入面⑥：同步钩子返回**函数值**同样明报拒绝（非静默）", async () => {
+    await expect(
+      runWorkflowScript({
+        script: script(`return agent("x");`),
+        hooks: hooks({ agent: (() => (() => 1)) as unknown as WorkflowHooks["agent"] }),
+      }),
+    ).rejects.toThrow(/不得是函数/);
+  });
+});
+
+describe("DoD③ 宿主错误对象不得逃逸（V 核验 R1 修复回归）", () => {
+  const hostError = Object.assign(new Error("host sync boom"), { code: "E_HOST" });
+  const syncThrowing = hooks({ agent: (() => { throw hostError; }) as unknown as WorkflowHooks["agent"] });
+  const asyncThrowing = hooks({ agent: (async () => { throw hostError; }) as unknown as WorkflowHooks["agent"] });
+
+  it("同步抛错：错误在 context 内重建（message/code 保留），constructor 链不可达宿主 Function", async () => {
+    const result = await probe(`agent("x")`, { hooks: syncThrowing });
+    expect(result.err).toBe("Error");
+    expect(result.message).toBe("host sync boom");
+    expect(result.leak).toBe("BLOCKED:EvalError");
+    const codeEcho = await probe(`(function(){ try { agent("x"); } catch (e) { return String(e.code); } })()`, { hooks: syncThrowing });
+    expect(codeEcho.ok).toBe("E_HOST");
+  });
+
+  it("async reject：rejection reason 同样归一", async () => {
+    const result = await probe(`agent("x")`, { hooks: asyncThrowing });
+    expect(result.message).toBe("host sync boom");
+    expect(result.leak).toBe("BLOCKED:EvalError");
+  });
+
+  it("hooks.workflow 缺位时实现自产的宿主 reject 同样归一", async () => {
+    const result = await probe(`workflow("inner")`);
+    expect(result.message).toBe(WORKFLOW_HOOK_MISSING_MESSAGE);
+    expect(result.leak).toBe("BLOCKED:EvalError");
+  });
+
+  it("非 Error 抛出物（字符串）归一为 context Error", async () => {
+    const result = await probe(`agent("x")`, {
+      hooks: hooks({ agent: (async () => Promise.reject("plain-host-reason")) as unknown as WorkflowHooks["agent"] }),
+    });
+    expect(result.message).toBe("plain-host-reason");
+    expect(result.leak).toBe("BLOCKED:EvalError");
+  });
+
+  it("宿主错误缺 message 时回落带 label 的缺省文案（信息不丢且不夹带宿主对象）", async () => {
+    const result = await probe(`agent("x")`, {
+      hooks: hooks({ agent: (() => { throw { weird: true }; }) as unknown as WorkflowHooks["agent"] }),
+    });
+    expect(result.message).toBe("workflow hook agent failed");
+    expect(result.leak).toBe("BLOCKED:EvalError");
   });
 });
 

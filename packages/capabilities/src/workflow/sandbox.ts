@@ -14,6 +14,9 @@
 //      （宿主 realm 的 Function 不受本 context 的 codeGeneration 约束，探针实证返回 `[object process]`）。
 //      故全部宿主钩子 MUST 经 **context 内桥接器**包裹、全部宿主数据 MUST 经 **context 内 JSON 克隆**，
 //      使脚本侧 `x.constructor` 恒为 context realm 的 Function（→ EvalError）。
+//      **错误对象同属该面**（V 会话核验 R1）：宿主 Error 的 `constructor` 也是宿主 realm 的 Function，
+//      原样抛出即逃逸（探针实证可取宿主 process 并读宿主 fs）→ 同步 `throw` 与 Promise rejection
+//      一律经 context 内 `toContextError` 重建（见 BRIDGE_FACTORY_SOURCE）。
 //   ③ Date/Math 守卫 MUST 在 context 内定义且 configurable:false（宿主侧定义会经 `.constructor` 泄漏宿主 Function；
 //      configurable:true 则 `delete Date` 会回落 realm 原版）。探针实证：delete 返回 false、守卫仍生效。
 //
@@ -180,10 +183,39 @@ const CLONE_FACTORY_SOURCE = `(function () {
 const BRIDGE_FACTORY_SOURCE = `(function () {
   "use strict";
   return function makeWorkflowBridge(hostFn, label, clone) {
+    // 宿主错误归一（R1 修复）：宿主 Error 的 \`constructor\` 是**宿主 realm 的 Function**，
+    // 原样抛出即等于把宿主 realm 交给脚本——\`err.constructor.constructor("return process")()\` 可取到宿主 process
+    // （V 会话独立探针实证：真读出宿主文件与 process.env）。故一律在 context 内重建 Error，
+    // 只搬运**原始值**属性（message/name/code），不搬运宿主对象、不搬运宿主堆栈。
+    function toContextError(cause) {
+      var message = "workflow hook " + label + " failed";
+      var name = "Error";
+      var code;
+      try {
+        if (cause !== null && (typeof cause === "object" || typeof cause === "function")) {
+          if (typeof cause.message === "string" && cause.message.length > 0) message = cause.message;
+          if (typeof cause.name === "string" && cause.name.length > 0) name = cause.name;
+          if (typeof cause.code === "string") code = cause.code;
+        } else if (cause !== undefined) {
+          message = String(cause);
+        }
+      } catch (inspectionFailure) {}
+      var error = new Error(message);
+      error.name = name;
+      if (code !== undefined) error.code = code;
+      return error;
+    }
     var wrapper = function () {
-      var out = hostFn.apply(undefined, arguments);
+      var out;
+      try {
+        out = hostFn.apply(undefined, arguments);
+      } catch (err) {
+        throw toContextError(err);
+      }
       if (out !== null && typeof out === "object" && typeof out.then === "function") {
-        return Promise.resolve(out).then(clone);
+        return Promise.resolve(out).then(clone, function (err) {
+          throw toContextError(err);
+        });
       }
       return clone(out);
     };
