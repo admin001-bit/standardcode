@@ -6,10 +6,10 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, createSendMessageTool, createRosterSendMessagePort, createTeamRoster, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, appendMailbox, teammateInboxPath, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, TEAMMATE_DEFAULT_LEAD_NAME, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool, type TeamRoster } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, createSendMessageTool, createRosterSendMessagePort, createTeamRoster, createWorkerResume, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, appendMailbox, teammateInboxPath, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, TEAMMATE_DEFAULT_LEAD_NAME, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool, type TeamRoster, type WorkerResumePort } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
-import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, createTelemetryFacade, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, teamsDir, TELEMETRY_SETTINGS_KEY, type ExperimentalGate, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle, type TelemetryFacade, type TelemetrySink } from "@standardcode/platform";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, createTelemetryFacade, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, resumeFrom, teamsDir, transcriptsDir, TELEMETRY_SETTINGS_KEY, type ExperimentalGate, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle, type TelemetryFacade, type TelemetrySink } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
@@ -179,6 +179,8 @@ export interface Session {
   drainTeammateMessages(): string[];
   /** M6-WP-07：团队注册表（teams flag 活跃时在位；成员注册/通讯录/后续运行器消费面）。 */
   teamRoster?: TeamRoster;
+  /** M6-WP-09：停止 worker 续聊面（teams flag 活跃且 transcription 基座可在时装配；DoD③ 的装配落点）。 */
+  workerResume?: WorkerResumePort;
   /** M5-WP-06：遥测门面（ENG-090 七事件+SEC-050 默认关；sink 可注入，关态零构造；门刷新=repl turn 界）。 */
   telemetry: TelemetryFacade;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -812,6 +814,21 @@ export function createSession(init: SessionInit = {}): Session {
     session.tools.push(createSendMessageTool({ port, selfName: TEAMMATE_DEFAULT_LEAD_NAME })); // self-target 预检=lead 自发被拒
     session.teamRoster = roster;
     session.drainTeammateMessages = () => mainInbox.splice(0, mainInbox.length);
+    // —— M6-WP-09：停止 worker 续聊装配（接缝⑲；flag 默认关=零构造零触盘，DoD⑤ 同口径）——
+    // 转录基座同上 home 覆写口径；worker 转录表命名=`<transcriptsDir>/<agentId>.jsonl`（[自定]②：本仓转录为
+    // 会话级，无 per-worker 文件——生产者不在本卡范围，登记为未接线 F1）。恢复必需**复用** platform `resumeFrom`
+    // （禁复制实现），此处以注入方式接真身（capabilities 不依赖 platform，边界由装配层承担）。
+    const transcriptsRoot = init.home !== undefined
+      ? transcriptsDir(agentsProjectRoot, path.join(init.home, ".standardcode"))
+      : transcriptsDir(agentsProjectRoot);
+    session.workerResume = createWorkerResume({
+      roster,
+      registry: session.taskRegistry,
+      port,
+      selfName: TEAMMATE_DEFAULT_LEAD_NAME,
+      transcriptPathFor: (agentId) => path.join(transcriptsRoot, `${agentId}.jsonl`),
+      resumeTranscript: resumeFrom,
+    });
   }
   session.mcpServers = () => {
     const views: McpServerView[] = [];

@@ -9,3 +9,6 @@ export * from "./roster.ts";
 export * from "./mailbox.ts";
 export * from "./protocol.ts";
 export * from "./runner.ts";
+// M6-WP-09：共享任务看板（接缝⑲；**新增文件**，teams 七件一行未改）+ 停止 worker 续聊恢复。
+export * from "./task-board.ts";
+export * from "./worker-resume.ts";

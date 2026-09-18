@@ -28,6 +28,14 @@ export interface TaskRecord {
   /** 终态结果摘要（SubagentRunResult 收敛面）。 */
   result?: { content: string; totalTokens: number; totalToolUseCount: number; totalDurationMs: number; doneReason: string };
   error?: string;
+  // —— M6-WP-09 共享看板扩展（纯追加；两字段均可选，缺席=既有行为零变化）——
+  // 依据 `_440.js` L190966-190968（TaskCreate 初始形：`owner: void 0` / `blockedBy: []`）
+  // 与 L191526-191528（TaskList outputSchema：`owner: I().optional()` / `blockedBy: Me(I())`）。
+  // BLK-08=①：**不新增工具名**、不扩 TaskStatus 联合类型——status 复用既有三态充当看板 status 列。
+  /** 认领者/负责人（团队成员名或 agentId；仲裁=团队可寻址集，见 capabilities teams/task-board.ts）。 */
+  owner?: string;
+  /** 前置依赖（taskId 引用；悬空引用=拒绝并点名，同文件 q.v.）。 */
+  blockedBy?: string[];
 }
 
 export interface TaskRegistryOptions {
@@ -60,6 +68,13 @@ export interface TaskRegistry {
   /** 终态前移除（并发槽竞态拒绝面；run 前清理，不走 evict 链）。 */
   remove(taskId: string): void;
   get(taskId: string): TaskRecord | undefined;
+  // —— M6-WP-09 共享看板写入原语（纯追加）——
+  // 返回=false 表示任务不在表中（调用方必须处理，禁静默忽略；仲裁层=capabilities teams/task-board.ts，
+  // 该层点名报错实现 fail-closed）。写入成功 emit `updated`（接缝⑲：走进程内事件，**不产出任何消息**）。
+  /** 写 owner（undefined=释放认领）。 */
+  setOwner(taskId: string, owner: string | undefined): boolean;
+  /** 写 blockedBy（去重、保序、去自身引用）。 */
+  setBlockedBy(taskId: string, taskIds: readonly string[]): boolean;
   /** 任务枚举（activeOnly=仅 running——WP-05 /tasks active_only 默认 true 的消费面）。 */
   list(opts?: { activeOnly?: boolean }): TaskRecord[];
   /** 事件：updated（status/isBackgrounded 变更）、completed、failed、evicted（payload=taskId）。 */
@@ -155,6 +170,29 @@ export function createTaskRegistry(opts: TaskRegistryOptions = {}): TaskRegistry
       }
     },
     get: (taskId) => tasks.get(taskId),
+    // M6-WP-09：共享看板写入原语（只看板接缝⑲的写入半边；**不触碰 mailbox/消息面**）
+    setOwner: (taskId, owner) => {
+      const t = tasks.get(taskId);
+      if (!t) return false; // 调用方（仲裁层）负责点名拒绝，此处不静默成功
+      t.owner = owner;
+      emitUpdated(taskId);
+      return true;
+    },
+    setBlockedBy: (taskId, taskIds) => {
+      const t = tasks.get(taskId);
+      if (!t) return false;
+      const seen = new Set<string>();
+      const next: string[] = [];
+      for (const id of taskIds) {
+        if (id === taskId) continue; // 自依赖无意义，剔除（禁把自己压成死锁——非"静默吞错"，形态可由调用方断言）
+        if (seen.has(id)) continue; // 去重保序
+        seen.add(id);
+        next.push(id);
+      }
+      t.blockedBy = next;
+      emitUpdated(taskId);
+      return true;
+    },
     list: (o) => {
       const all = [...tasks.values()];
       return o?.activeOnly ? all.filter((t) => t.status === "running") : all;
