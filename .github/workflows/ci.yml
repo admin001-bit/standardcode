@@ -5,6 +5,8 @@ name: ci
 # WP-12：冷启动阈值在步骤级 env 钉死 400——仓库级 env/vars 无法覆盖（ENG-070：CI 即验收，阈值不可被环境弱化）。
 # WP-13（M2 DoD①④）：全量测试门（vitest run，含 WP-03 压缩阈值表测）与七包 typecheck 门入 CI。
 # M5-WP-01：rust 泳道（三平台 cargo fmt/clippy/test）——沙箱 crate 纯函数层；真隔离测 WP-02 随本泳道续跑。
+# WP-09（ADR-0047 决策 5）：新增 binaries 泳道——三平台**各自**构建本机单文件产物并实跑 version/冷启动门
+# （macOS 臂本机不可执行，只能在此 runner 跑；Linux=WSL2 本地/此处双证）。零交叉下载（--native），产物不入库。
 on:
   push:
     branches: [main]
@@ -67,3 +69,29 @@ jobs:
         run: pnpm run rust:clippy
       - name: rust test gate
         run: pnpm run rust:test
+
+  # WP-09（ADR-0047 决策 1/5）：独立二进制臂——本机目标 Bun compile 单文件产物 + version/冷启动门。
+  # 门面不变（gate job 零改动）；本泳道只做本机臂（--native），三平台各自实跑其产物。
+  binaries:
+    name: binaries (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: build standalone binary (native target; version 门)
+        run: node scripts/build-binaries.mjs --native --verify
+      - name: standalone binary cold-start gate
+        shell: bash
+        run: node apps/cli/scripts/cold-start.mjs --bin "$(node scripts/build-binaries.mjs --print-native)"
+        env:
+          COLD_START_MAX_MS: 400

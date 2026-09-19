@@ -65,12 +65,19 @@ cpSync(join(CLI_DIR, "bin", "standardcode.js"), join(stage, "bin", "standardcode
 cpSync(join(CLI_DIR, "dist", "standardcode.mjs"), join(stage, "dist", "standardcode.mjs"));
 
 // ④ npm pack（staging 内；tarball 落 dist/）
+// WP-09 卡外最小修复（D-2）：ADR-0044 决策 10 包名改判后，npm pack 产物名随 staged.name 变为
+// `<scope 去 @、/ 改 ->-<ver>.tgz`（=standardcode-oss-cli-<ver>.tgz，release-matrix.yml 已按此名取用）；
+// 本文件原按旧名 `standardcode-cli-<ver>.tgz` 断言"产物存在"，在**干净树（CI）**下必误报缺位，且被本机
+// 历史残留同名 tarball 掩盖（2026-09-20 实测 masking 成立：pack 出 oss 名、断言查旧名、靠残件假过）。
+// 处置=按 staged.name 推导名 + pack 前清同名旧产物（防陈旧产物假过），checksums 行同源改名。
+const tarballName = `${staged.name.replace(/^@/, "").replace(/\//g, "-")}-${outVersion}.tgz`;
+const tarball = join(DIST, tarballName);
+rmSync(tarball, { force: true });
 const pack = spawnSync("npm", ["pack", "--pack-destination", DIST], { stdio: "inherit", cwd: stage, shell: process.platform === "win32" });
 if (pack.status !== 0) {
   console.error("[pack-release] npm pack failed");
   process.exit(1);
 }
-const tarball = join(DIST, `standardcode-cli-${outVersion}.tgz`);
 if (!existsSync(tarball)) {
   console.error(`[pack-release] expected tarball missing: ${tarball}`);
   process.exit(1);
@@ -80,10 +87,7 @@ if (!existsSync(tarball)) {
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 const bundleSum = sha256(join(stage, "dist", "standardcode.mjs"));
 const tarballSum = sha256(tarball);
-writeFileSync(
-  join(DIST, "SHA256SUMS.txt"),
-  `${bundleSum}  standardcode.mjs\n${tarballSum}  standardcode-cli-${outVersion}.tgz\n`,
-);
+writeFileSync(join(DIST, "SHA256SUMS.txt"), `${bundleSum}  standardcode.mjs\n${tarballSum}  ${tarballName}\n`);
 
 // ⑥ 收尾：staging 目录清删（tarball 与 SHA256SUMS 留 dist/）
 rmSync(stage, { recursive: true, force: true });

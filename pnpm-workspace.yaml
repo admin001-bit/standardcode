@@ -3,5 +3,9 @@ packages:
   - "packages/*"
 # ENG-071（禁 install script 豁免制）：esbuild 平台二进制由 @esbuild/* 平台包提供，
 # 其 install script 无需运行——显式登记为禁用（false）而非豁免放行。
+# WP-09（ADR-0047 决策 3）同款处置：bun 的 install script（install.js）同样**不豁免**——
+# 真实二进制由 @oven/bun-<platform> 平台包提供，构建脚本按 realpath 直取该包内二进制
+# （scripts/build-binaries.mjs resolveBunBinary），故此处一并显式禁用。
 allowBuilds:
+  bun: false
   esbuild: false

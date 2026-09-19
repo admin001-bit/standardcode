@@ -4,17 +4,29 @@
 // 参照 [CC] dig-08 §1，待真实启动链落地后细化）。3 次预热不计入，取 21 次实测中位数。
 // 阈值默认 400ms（v2.8 §2 M0 DoD）；CI 侧经 ci.yml 步骤级 env 钉死 400（WP-12，仓库级 env 不可覆盖），
 // COLD_START_MAX_MS 本地覆盖仅供演示失败路径。
+// WP-09（ADR-0047 决策 5）：`--bin <path>` 供**独立二进制**冷启动门复用同一阈值源（Mac 臂由 CI runner 跑；
+// 缺省行为不变=node 直跑 bin shim，保既有 CI 步零改动）。
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../bin/standardcode.js", import.meta.url));
+const binIdx = process.argv.indexOf("--bin");
+const BIN = binIdx >= 0 ? process.argv[binIdx + 1] : undefined;
+// --bin 缺参数=用法错误：置 exitCode 后跳过门（不用 process.exit——承 WP-12 结论，保 stderr 自然 flush）。
+const BIN_ARG_MISSING = binIdx >= 0 && !BIN;
+if (BIN_ARG_MISSING) {
+  console.error("usage: cold-start.mjs [--bin <path-to-standalone-binary>]");
+  process.exitCode = 1;
+}
 const MAX_MS = Number(process.env.COLD_START_MAX_MS ?? 400);
 const RUNS = 21;
 const WARMUP = 3;
 
 function once() {
   const t0 = performance.now();
-  const r = spawnSync(process.execPath, [CLI, "--version"], { encoding: "utf8" });
+  const r = BIN
+    ? spawnSync(BIN, ["--version"], { encoding: "utf8" })
+    : spawnSync(process.execPath, [CLI, "--version"], { encoding: "utf8" });
   const t1 = performance.now();
   if (r.status !== 0 || !r.stdout.includes("standardcode")) {
     throw new Error(`[cold-start] 被测 CLI 未正常输出：exit=${r.status} stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr)}`);
@@ -23,20 +35,24 @@ function once() {
 }
 
 try {
-  for (let i = 0; i < WARMUP; i++) once();
-
-  const times = Array.from({ length: RUNS }, once).sort((a, b) => a - b);
-  const median = times[Math.floor(RUNS / 2)];
-  const fmt = (ms) => `${ms.toFixed(1)}ms`;
-  console.log(`[cold-start] ${RUNS} 次实测（预热 ${WARMUP} 次不计）：中位 ${fmt(median)}，min ${fmt(times[0])}，max ${fmt(times[RUNS - 1])}，阈值 ${MAX_MS}ms`);
-
-  if (median > MAX_MS) {
-    console.error(`[cold-start] 超限：中位 ${fmt(median)} > 阈值 ${MAX_MS}ms。发生了什么：CLI 空载冷启动中位数超标；为什么：M0 DoD 目标 ≤400ms；建议动作：排查启动链新增开销，勿放宽阈值（口径调整须走 ADR）。`);
-    // WP-12 加固（M0 跑偏②）：不用 process.exit——POSIX 下其跳过 stderr 刷新的异步写有理论截断风险；
-    // exitCode 让流自然 flush 后以退出码 2 结束（门禁信号不变，pnpm/Actions 传播链一致）。
-    process.exitCode = 2;
+  if (BIN_ARG_MISSING) {
+    // no-op：用法错误已在上面报出（门不跑，保 exitCode=1）
   } else {
-    process.exitCode = 0;
+    for (let i = 0; i < WARMUP; i++) once();
+
+    const times = Array.from({ length: RUNS }, once).sort((a, b) => a - b);
+    const median = times[Math.floor(RUNS / 2)];
+    const fmt = (ms) => `${ms.toFixed(1)}ms`;
+    console.log(`[cold-start] ${RUNS} 次实测（预热 ${WARMUP} 次不计）：中位 ${fmt(median)}，min ${fmt(times[0])}，max ${fmt(times[RUNS - 1])}，阈值 ${MAX_MS}ms`);
+
+    if (median > MAX_MS) {
+      console.error(`[cold-start] 超限：中位 ${fmt(median)} > 阈值 ${MAX_MS}ms。发生了什么：CLI 空载冷启动中位数超标；为什么：M0 DoD 目标 ≤400ms；建议动作：排查启动链新增开销，勿放宽阈值（口径调整须走 ADR）。`);
+      // WP-12 加固（M0 跑偏②）：不用 process.exit——POSIX 下其跳过 stderr 刷新的异步写有理论截断风险；
+      // exitCode 让流自然 flush 后以退出码 2 结束（门禁信号不变，pnpm/Actions 传播链一致）。
+      process.exitCode = 2;
+    } else {
+      process.exitCode = 0;
+    }
   }
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
