@@ -232,9 +232,9 @@ describe("DoD⑤⑥：list/remove+命令清单 29→30 适配", () => {
     out = await runLines(s, ["/plugin list extra", "/exit"]);
     expect(out).toContain("unexpected argument");
   });
-  it("命令清单恰 30（DoD⑥：/plugin 为 M4 第 29 件注册【勘误 2026-09-15：WP-08 注册 /update=第 30 件，计划编号 30 兑现，断言 29→30 随清单递增】）", () => {
+  it("命令清单恰 31（DoD⑥ 断言随清单递增【2026-09-19：M7-WP-01 /goal 30→31】）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(30);
+    expect(names).toHaveLength(31);
     expect(names).toContain("plugin");
   });
 });

@@ -190,7 +190,7 @@ describe("DoD⑦ /skills 命令（list+run）", () => {
   });
 
   it("命令清单恰 30【勘误 2026-09-14：WP-06 注册 /memory 后 27→28；WP-09 /plugin 28→29；2026-09-15：WP-08 /update 29→30】", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(30);
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(31);
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("skills");
   });
 });

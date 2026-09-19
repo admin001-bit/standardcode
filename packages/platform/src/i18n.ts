@@ -329,6 +329,22 @@ Object.assign(EN, {
   "repl.export.emptySession": "[export] session is empty: nothing to export",
   "repl.export.exists": "[export] target already exists, refusing to overwrite: {value}",
   "repl.export.wrote": "[export] wrote {n} message(s) to {target}",
+  // —— M7-WP-01：/goal（Kimi goal mode 语义束收敛 [自定]；注入面=<session-goal> XML 块，repl.subtask.injected 先例形）——
+  "cmd.goal.usage": "[<objective> | status | refine | clear]",
+  "cmd.goal.desc": "set, view, refine or clear the session goal (the objective is injected as a user turn, so the model sees it next turn — Kimi goal-mode semantics, converged)",
+  "repl.goal.none": "[goal] no session goal set — usage: /goal <objective>",
+  "repl.goal.status": "[goal] current: {value}",
+  "repl.goal.set": "[goal] set — objective injected into the session; the model sees it next turn",
+  "repl.goal.injected": "<session-goal>\n{value}\n</session-goal>",
+  "repl.goal.cleared": "[goal] cleared — cleared notice injected into the session",
+  "repl.goal.clearedInjected": "<session-goal cleared=\"true\" />",
+  "repl.goal.refined": "[goal] refined — new objective injected into the session:\n{value}",
+  "repl.goal.refinePrompt": "Rewrite the following session goal as a concise, executable objective (clear deliverable, explicit constraints, verifiable done-condition). Output ONLY the rewritten objective text, no preamble:\n\n{value}",
+  "repl.goal.refused": "[goal] refine refused: {value}",
+  "repl.goal.unexpected": "[goal] unexpected launch status: {value}",
+  "repl.goal.err.noGoal": "[goal] no session goal to refine — set one first: /goal <objective>",
+  "repl.goal.err.emptyRefine": "[goal] refine produced an empty objective — refusing to clear the goal silently",
+  "repl.goal.err.subcommandArgs": "[goal] /{sub} takes no arguments — if your objective starts with \"{sub}\", escape it with {hint}: /goal {hint} <objective>",
 });
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
@@ -484,6 +500,22 @@ Object.assign(ZH_CN, {
   "repl.export.emptySession": "[export] 会话为空：无可导出内容",
   "repl.export.exists": "[export] 目标已存在，拒绝覆盖：{value}",
   "repl.export.wrote": "[export] 已写入 {n} 条消息至 {target}",
+  // —— M7-WP-01：/goal（Kimi goal mode 语义束收敛 [自定]；注入面=<session-goal> XML 块，repl.subtask.injected 先例形）——
+  "cmd.goal.usage": "[<目标 | status | refine | clear>]",
+  "cmd.goal.desc": "设定、查看、细化或清除会话目标（目标以 user turn 注入会话，下一轮对模型可见——Kimi goal mode 语义收敛）",
+  "repl.goal.none": "[goal] 尚未设定会话目标——用法：/goal <目标>",
+  "repl.goal.status": "[goal] 当前目标：{value}",
+  "repl.goal.set": "[goal] 已设定——目标已注入会话，下一轮对模型可见",
+  "repl.goal.injected": "<session-goal>\n{value}\n</session-goal>",
+  "repl.goal.cleared": "[goal] 已清除——清除通知已注入会话",
+  "repl.goal.clearedInjected": "<session-goal cleared=\"true\" />",
+  "repl.goal.refined": "[goal] 已细化——新目标已注入会话：\n{value}",
+  "repl.goal.refinePrompt": "请把下面这条会话目标改写为简洁、可执行的目标描述（明确的交付物、清晰的约束、可验证的完成条件）。只输出改写后的目标文本，不要任何前言：\n\n{value}",
+  "repl.goal.refused": "[goal] 细化被拒：{value}",
+  "repl.goal.unexpected": "[goal] 非预期启动状态：{value}",
+  "repl.goal.err.noGoal": "[goal] 尚无会话目标可细化——请先设定：/goal <目标>",
+  "repl.goal.err.emptyRefine": "[goal] 细化产出为空——拒绝静默清空目标",
+  "repl.goal.err.subcommandArgs": "[goal] /{sub} 不接受参数——若你的目标以「{sub}」开头，请用 {hint} 转义：/goal {hint} <目标>",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };

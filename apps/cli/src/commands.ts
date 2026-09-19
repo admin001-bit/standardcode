@@ -1,5 +1,7 @@
 // M1 五命令（v2.8 §8.2 M1 最小集）+ M2 增量（§8.2 M2 分期，B-03 只注册本里程碑命令）：
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
+// M7-WP-01（§8.2 M7 分期）增 /goal（会话目标：设定/查看/清除/refine 细化——Kimi goal mode 语义束收敛 [自定]，
+// 锚=A 级 KimiCode的产品细节.md 行 334-364；[CC] 无 /goal。正式面注册：CLI_COMMANDS 30→31，计数断言同步 +1 口径）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import type { TokenUsage } from "@standardcode/providers";
 import { sessionDiff, redactSecrets, t } from "@standardcode/platform";
@@ -206,6 +208,9 @@ export interface CommandContext {
   fork(args: string): Promise<{ text: string }>;
   /** M6-WP-10 /export：导出当前会话转录为 Markdown（落点 <cwd>/export-<sessionId>.md；已存在=拒绝点名）。 */
   exportSession(args: string): Promise<{ text: string }>;
+  /** M7-WP-01 /goal：会话目标（<objective> 设定｜无参或 status 查看｜refine 细化=spawn 改写｜clear 清除；-- 转义；
+   *  设定/清除/refine 均以 user turn 注入会话=下一轮 prompt 模型可见；目标仅会话内存态不落盘 [自定]）。 */
+  goal(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 
@@ -662,6 +667,22 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
       // 无子命令无参数（DoD① 形状 [自定]：检查/提示形状无一手锚，卡参考资料栏预登记）。
       if (args.trim() !== "") throw new Error(ctx.t("cmd.update.err.args"));
       const r = await ctx.updateNow();
+      ctx.write(r.text);
+    },
+  },
+  // —— M7-WP-01：M7 分期首件（§8.2 M7 增 /goal；Kimi goal mode 语义束收敛 [自定]——
+  // 不做自动续跑/pause/resume/replace/next/TUI 管理面（卡边界"不做目标自动追踪"）；
+  // 子命令集收敛为 status（查看）/refine（细化=spawn 改写）/clear（清除；Kimi 用 cancel，取 clear 与 /plan clear 同形 [自定]））——
+  {
+    name: "goal",
+    get usage() {
+      return t("cmd.goal.usage");
+    },
+    get description() {
+      return t("cmd.goal.desc");
+    },
+    async execute(args, ctx) {
+      const r = await ctx.goal(args);
       ctx.write(r.text);
     },
   },

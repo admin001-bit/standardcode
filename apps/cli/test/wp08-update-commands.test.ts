@@ -124,9 +124,9 @@ describe("DoD②③④ startAutoUpdateCheck（启动后台非阻塞检查）", (
 });
 
 describe("DoD⑤ 命令清单 30 适配", () => {
-  it("/update=第 30 件注册（§8.2 M4 五件全；Tab 候选含之——双义面钉在 wp10/tab-complete 测试）", () => {
+  it("/update=M4 末件注册（§8.2 M4 五件全；M7-WP-01 /goal 30→31，2026-09-19；Tab 候选含之——双义面钉在 wp10/tab-complete 测试）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(30);
-    expect(names[names.length - 1]).toBe("update");
+    expect(names).toHaveLength(31);
+    expect(names[names.length - 1]).toBe("goal"); // M7-WP-01 /goal=第 31 件（尾项随清单递增，2026-09-19）
   });
 });

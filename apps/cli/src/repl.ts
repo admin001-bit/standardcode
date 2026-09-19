@@ -149,6 +149,9 @@ async function drainSessionAssets(deps: ReplDeps): Promise<void> {
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
   const s = deps.session;
+  // M7-WP-01：会话目标状态（/goal）——ctx 生命周期=会话生命周期；/new 经 newSession 清除；仅会话内存态不落盘 [自定]
+  // （历史可见性由注入的 user turn 落转录承载，resume 后目标文本在消息历史中仍可见）
+  let sessionGoal: string | undefined;
   return {    // WP-01：现行注册表（门控后；/help 同源）
     commands: () => deps.commands ?? CLI_COMMANDS,
     catalog: () => s.catalog,
@@ -193,6 +196,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— WP-10 会话命令（CTX-101 交接终点/UI-030）——
     newSession: () => {
       // 旧 transcript 完好（append-only 不动）；锁随旧会话释放；新 sessionId 新 writer 新锁
+      sessionGoal = undefined; // M7-WP-01：新会话不带旧目标（目标=会话内存态 [自定]）
       return switchSession(deps);
     },
     resumeSession: async () => {
@@ -693,6 +697,86 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const md = renderSessionMarkdown({ sessionId: assets.sessionId, exportedAt: new Date().toISOString(), messages: s.messages });
       await writeFile(target, md, { encoding: "utf8", flag: "wx" }); // wx=存在即失败（TOCTOU 双保险，B-12 fail-closed）
       return { text: s.i18n.t("repl.export.wrote", { n: s.messages.length, target }) };
+    },
+    // —— M7-WP-01：/goal（Kimi goal mode 语义束收敛 [自定]；锚=KimiCode的产品细节.md 行 334-364——
+    // status 显示收敛为纯目标文本（Kimi 的已用时间/轮次/token 数=自动续跑面，本卡边界不做）；
+    // 子命令词判定先剥 `-- ` 转义（Kimi 行 352 同构）；带参子命令=拒绝点名 fail-closed（Kimi 未定义行为，取严 [自定]）；
+    // 设定/清除/refine 结果均 user turn 注入（subtask.injected 先例形）=下一轮 prompt 模型可见（DoD③）；
+    // refine 走 spawnSubagentTask 同一入口（ORC-022 校验序列复用，fork/subtask 同族），首轮守卫=subtask 同构 [自定]）——
+    goal: async (args) => {
+      const s = deps.session;
+      const raw = args.trim();
+      const escaped = raw === "--" || raw.startsWith("-- "); // Kimi 行 352 `--` 转义同构：转义形整段为目标文本，跳过子命令判定
+      const objective = escaped ? raw.slice(raw === "--" ? 2 : 3).trim() : raw;
+      if (escaped) {
+        if (objective === "") {
+          return { text: sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: sessionGoal }) };
+        }
+        sessionGoal = objective;
+        const injectedEsc = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: sessionGoal }) }] };
+        s.messages.push(injectedEsc);
+        transcriptAppend(deps, { kind: "user_message", message: injectedEsc });
+        return { text: s.i18n.t("repl.goal.set", { value: sessionGoal }) };
+      }
+      const words = objective === "" ? [] : objective.split(/\s+/);
+      const first = words.length > 0 ? words[0]!.toLowerCase() : "";
+      const extraArgs = words.length > 1;
+      if (first === "status" || objective === "") {
+        if (first === "status" && extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "status", hint: "--" }));
+        return { text: sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: sessionGoal }) };
+      }
+      if (first === "clear") {
+        if (extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "clear", hint: "--" }));
+        if (sessionGoal === undefined) return { text: s.i18n.t("repl.goal.none") };
+        sessionGoal = undefined;
+        const cleared = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.clearedInjected") }] };
+        s.messages.push(cleared);
+        transcriptAppend(deps, { kind: "user_message", message: cleared });
+        return { text: s.i18n.t("repl.goal.cleared") };
+      }
+      if (first === "refine") {
+        if (extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "refine", hint: "--" }));
+        if (sessionGoal === undefined) throw new Error(s.i18n.t("repl.goal.err.noGoal"));
+        if (s.messages.length === 0) throw new Error(s.i18n.t("repl.subtask.guard")); // spawn 面首轮守卫（subtask 同构 [自定]）
+        const spawn = s.agents.prepareSpawn(undefined);
+        const launch = await spawnSubagentTask(
+          { prompt: s.i18n.t("repl.goal.refinePrompt", { value: sessionGoal }), description: "goal-refine", runInBackground: false },
+          spawn.ctx,
+          { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
+          {
+            registry: s.taskRegistry,
+            env: {}, // env 空=同步恒同步（subtask 同形）
+            onStart: (info) => {
+              s.hooks.fire("SubagentStart", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}) });
+            },
+            onSettled: (info) => {
+              s.hooks.fire("SubagentStop", { agentType: info.agentType }, { agent_type: info.agentType, ...(info.agentId ? { agent_id: info.agentId } : {}), outcome: info.ok ? "success" : "failure" });
+            },
+          },
+        );
+        if (launch.status === "refused") {
+          s.telemetry.subagentLaunch({ outcome: "refused", refusedCode: launch.code });
+          return { text: s.i18n.t("repl.goal.refused", { value: launch.message }) };
+        }
+        s.telemetry.subagentLaunch({ outcome: "launched", taskId: launch.taskId, agentId: launch.agentId });
+        if (launch.status !== "completed") return { text: s.i18n.t("repl.goal.unexpected", { value: launch.status }) };
+        const refined = launch.result.content.trim();
+        // harness 对空输出回落占位文案（packages/harness/src/subagent.ts:447）——refine 判空须含此形，
+        // 防占位文案污染目标 [自定]；harness 文案若变更，wp01 测试即红=同步提示（判别力）。
+        const EMPTY_SUBAGENT_OUTPUT = "(Subagent completed but returned no output.)";
+        if (refined === "" || refined === EMPTY_SUBAGENT_OUTPUT) throw new Error(s.i18n.t("repl.goal.err.emptyRefine"));
+        sessionGoal = refined;
+        const injected = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: refined }) }] };
+        s.messages.push(injected);
+        transcriptAppend(deps, { kind: "user_message", message: injected });
+        return { text: s.i18n.t("repl.goal.refined", { value: refined }) };
+      }
+      // 设定（raw 以 `-- ` 开头=目标以子命令词开头的转义形；无 -- 时首词恰为子命令词已在上分支按子命令处理）
+      sessionGoal = objective;
+      const injected = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: sessionGoal }) }] };
+      s.messages.push(injected);
+      transcriptAppend(deps, { kind: "user_message", message: injected });
+      return { text: s.i18n.t("repl.goal.set", { value: sessionGoal }) };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

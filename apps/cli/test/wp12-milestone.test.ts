@@ -19,6 +19,8 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
+/** §8.2 行 365 M7 分期（BLK-06=① 推后四件走实验门；正式面首件 /goal=M7-WP-01，2026-09-19）。 */
+const M7 = ["goal"];
 /** §8.2 行 365 M6 分期七命令（BLK-06=①：M6 只落 workflows/fork/export 三件，余四件推后 M7）。 */
 const M6_COMMAND_NAMES = ["workflows", "batch", "loop", "btw", "branch", "fork", "export"];
 /** M6 新增工具面（ORC-050 默认关=工具零注册；B-03 不提前实现）。 */
@@ -27,10 +29,10 @@ const M6_TOOL_NAMES = ["SendMessage", "Workflow"];
 const sorted = (xs: readonly string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
-describe("WP-12 DoD④ 收口断言集：命令全集 30 零增量+发布面负查+M6 新增面零注册", () => {
-  it("命令全集仍=30 件且集合 ≡ §8.2 M1∪M2∪M3∪M4（M6 零新增）", () => {
-    expect(names).toHaveLength(30);
-    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4]));
+describe("WP-12 DoD④ 收口断言集：命令全集零增量+发布面负查+M6 新增面零注册", () => {
+  it("命令全集=31 件【2026-09-19：M7-WP-01 注册 /goal 30→31，/goal=§8.2 M7 分期首件】且集合 ≡ §8.2 M1∪M2∪M3∪M4∪M7", () => {
+    expect(names).toHaveLength(31);
+    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
   });
 
   it("postinstall 零提权负查：apps/cli/package.json 无 pre/install/post 生命周期脚本（ADR-0044）", () => {

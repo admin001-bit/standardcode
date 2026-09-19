@@ -12,16 +12,18 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
+/** M7 正式面首件（M7-WP-01 /goal，2026-09-19 注册）。 */
+const M7 = ["goal"];
 /** M5 新增面（旗标/子命令/M7 分期命令）=不得进斜杠集合。 */
 const M5_NOT_SLASH = ["sdb", "uninstall", "sandbox"];
 
 const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
-describe("WP-10 DoD⑤ 命令全集 30 零增量+发布面负查", () => {
-  it("命令全集仍=30 件且集合 ≡ §8.2 M1∪M2∪M3∪M4（M5 零新增）", () => {
-    expect(names).toHaveLength(30);
-    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4]));
+describe("WP-10 DoD⑤ 命令全集零增量+发布面负查", () => {
+  it("命令全集=31 件【2026-09-19：M7-WP-01 注册 /goal 30→31】且集合 ≡ §8.2 M1∪M2∪M3∪M4∪M7", () => {
+    expect(names).toHaveLength(31);
+    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
   });
 
   it("postinstall 零提权负查：apps/cli/package.json 无 pre/install/post 生命周期脚本（ADR-0044）", () => {

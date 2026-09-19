@@ -14,22 +14,24 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
-const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "goal", "theme", "keybindings", "release-notes", "sandbox"];
+/** M7 正式面首件（M7-WP-01 /goal，2026-09-19 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
+const M7 = ["goal"];
+const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "theme", "keybindings", "release-notes", "sandbox"];
 
 const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
-describe("命令全集 × §8.2 三分期集合相等（WP-12 DoD③）", () => {
-  it("注册表名集合 = M1∪M2∪M3∪M4 分期并集（30 件，BLK-01=①含 /plugin）", () => {
-    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4]));
-    expect(names).toHaveLength(30);
+describe("命令全集 × §8.2 分期集合相等（WP-12 DoD③）", () => {
+  it("注册表名集合 = M1∪M2∪M3∪M4∪M7 分期并集（31 件【2026-09-19：M7-WP-01 注册 /goal 30→31】）", () => {
+    expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
+    expect(names).toHaveLength(31);
   });
 
   it("M4 五件逐名在位（/mcp /plugin /skills /memory /update）", () => {
     for (const cmd of M4) expect(names, `M4 缺 /${cmd}`).toContain(cmd);
   });
 
-  it("M6/M7 十二件全部未注册（B-03：未到期分期不提前实现）", () => {
+  it("M6 七件+M7 余十一件全部未注册（B-03：未到期分期不提前实现；实验面件走实验门不进基表）", () => {
     for (const cmd of M6_M7) expect(names, `越期注册 /${cmd}`).not.toContain(cmd);
   });
 
