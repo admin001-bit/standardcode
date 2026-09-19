@@ -112,66 +112,71 @@ export function createWorkflowRunner(options: WorkflowRunnerOptions): WorkflowRu
       const tracker = createWorkflowProgressTracker({ name: meta.name, runId, phases: meta.phases });
       // ⑤ 注册看板（/workflows 渲染面）
       board.register(runId, tracker);
-      // ⑨ 遥测桥（缺位=不注入=零事件，接缝㉑）
-      const telemetry = options.forwardTelemetry ? createWorkflowTelemetryBridge({ forward: options.forwardTelemetry }) : undefined;
-      // ⑩ budget（total/spent 两面；spent 读数由装配层注入）
-      const budget = makeWorkflowBudget(options.budgetTotal ?? null, options.spent ?? (() => 0));
-      // ② orchestrator（进度回调 + 遥测 + budget）
-      const orchestration = createWorkflowOrchestrator({
-        provider: request.provider,
-        model: request.model,
-        availableTypes: request.availableTypes ?? [],
-        budget,
-        ...(request.tools !== undefined ? { tools: request.tools } : {}),
-        ...(request.definitionsOf !== undefined ? { definitionsOf: request.definitionsOf } : {}),
-        ...(request.permissionBroker !== undefined ? { permissionBroker: request.permissionBroker } : {}),
-        ...(request.depth !== undefined ? { depth: request.depth } : {}),
-        ...(request.deniedAgentTypes !== undefined ? { deniedAgentTypes: request.deniedAgentTypes } : {}),
-        ...(request.pendingRequiredMcp !== undefined ? { pendingRequiredMcp: request.pendingRequiredMcp } : {}),
-        onPhase: (title) => tracker.phase(title),
-        onLog: (message) => tracker.log(message),
-        ...(telemetry ? { onTelemetry: telemetry } : {}),
-      });
-      // ③ journal session（内部 withWorkflowJournal；runsDir 单源入参）+ 回放进度
-      const journal = await createWorkflowJournalSession({
-        orchestration,
-        runsDir: options.runsDir,
-        runId,
-        ...(request.resumeFromRunId ? { resumeFromRunId: request.resumeFromRunId } : {}),
-        ...(request.scriptPath !== undefined ? { scriptPath: request.scriptPath } : {}),
-        onReplay: (mark) => tracker.agentProgress(mark),
-        ...(telemetry ? { onTelemetry: telemetry } : {}),
-      });
-      // ⑥ 脚本求值（journaled hooks 已含 resume 回放 + 记录）
-      let status: Exclude<WorkflowCompletionStatus, "interrupted"> = "completed";
-      let result: unknown;
-      let error: unknown;
+      // V-5（V 核验低危）：register 之后任何构造/执行路径抛错都必须回收看板——否则进程级单例 trackers 泄漏。
+      // 故 ⑨⑩②③⑥ 与终态通知整体纳入 try，finally 无条件 unregister（unregister 幂等，V 已核：未注册 id 安全）。
       try {
-        result = await runWorkflowScript({
-          script: request.script,
-          hooks: journal.hooks,
+        // ⑨ 遥测桥（缺位=不注入=零事件，接缝㉑）
+        const telemetry = options.forwardTelemetry ? createWorkflowTelemetryBridge({ forward: options.forwardTelemetry }) : undefined;
+        // ⑩ budget（total/spent 两面；spent 读数由装配层注入）
+        const budget = makeWorkflowBudget(options.budgetTotal ?? null, options.spent ?? (() => 0));
+        // ② orchestrator（进度回调 + 遥测 + budget）
+        const orchestration = createWorkflowOrchestrator({
+          provider: request.provider,
+          model: request.model,
+          availableTypes: request.availableTypes ?? [],
           budget,
-          ...(request.args !== undefined ? { args: request.args } : {}),
+          ...(request.tools !== undefined ? { tools: request.tools } : {}),
+          ...(request.definitionsOf !== undefined ? { definitionsOf: request.definitionsOf } : {}),
+          ...(request.permissionBroker !== undefined ? { permissionBroker: request.permissionBroker } : {}),
+          ...(request.depth !== undefined ? { depth: request.depth } : {}),
+          ...(request.deniedAgentTypes !== undefined ? { deniedAgentTypes: request.deniedAgentTypes } : {}),
+          ...(request.pendingRequiredMcp !== undefined ? { pendingRequiredMcp: request.pendingRequiredMcp } : {}),
+          onPhase: (title) => tracker.phase(title),
+          onLog: (message) => tracker.log(message),
+          ...(telemetry ? { onTelemetry: telemetry } : {}),
         });
-      } catch (err) {
-        status = "failed";
-        error = err;
+        // ③ journal session（内部 withWorkflowJournal；runsDir 单源入参）+ 回放进度
+        const journal = await createWorkflowJournalSession({
+          orchestration,
+          runsDir: options.runsDir,
+          runId,
+          ...(request.resumeFromRunId ? { resumeFromRunId: request.resumeFromRunId } : {}),
+          ...(request.scriptPath !== undefined ? { scriptPath: request.scriptPath } : {}),
+          onReplay: (mark) => tracker.agentProgress(mark),
+          ...(telemetry ? { onTelemetry: telemetry } : {}),
+        });
+        // ⑥ 脚本求值（journaled hooks 已含 resume 回放 + 记录）
+        let status: Exclude<WorkflowCompletionStatus, "interrupted"> = "completed";
+        let result: unknown;
+        let error: unknown;
+        try {
+          result = await runWorkflowScript({
+            script: request.script,
+            hooks: journal.hooks,
+            budget,
+            ...(request.args !== undefined ? { args: request.args } : {}),
+          });
+        } catch (err) {
+          status = "failed";
+          error = err;
+        }
+        // journal 落盘（保留 journal=可续跑；清理面留给显式 cleanupWorkflowRun 调用方）
+        await journal.finish().catch(() => {});
+        const resultPreview = status === "completed" ? previewWorkflowResult(result) : "";
+        // —— 终态分支（④通知；⑬ 看板回收取在 finally，正常与异常路径恒配对 register）——
+        board.queue.push({ name: meta.name, runId, status, resultPreview });
+        return {
+          runId,
+          name: meta.name,
+          status,
+          result,
+          resultPreview,
+          replays: journal.replays.length,
+          ...(status === "failed" ? { error } : {}),
+        };
+      } finally {
+        board.unregister(runId); // ⑬ 生命周期：异常/早抛路径同样回收（V-5 修复）
       }
-      // journal 落盘（保留 journal=可续跑；清理面留给显式 cleanupWorkflowRun 调用方）
-      await journal.finish().catch(() => {});
-      const resultPreview = status === "completed" ? previewWorkflowResult(result) : "";
-      // —— 终态分支（④通知 + ⑬看板回收配对 register，防进程级单例泄漏）——
-      board.queue.push({ name: meta.name, runId, status, resultPreview });
-      board.unregister(runId);
-      return {
-        runId,
-        name: meta.name,
-        status,
-        result,
-        resultPreview,
-        replays: journal.replays.length,
-        ...(status === "failed" ? { error } : {}),
-      };
     },
   };
 }
