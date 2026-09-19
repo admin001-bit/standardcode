@@ -78,3 +78,38 @@
 - 锚点：v2.8 §11 SEC-030 行 457/S-10 行 452；实现 packages/platform/src/session-store.ts:29（redactSecrets 单源）+packages/platform/src/telemetry.ts:14（自 session-store 导入）/199-203（sanitizeProps 逐值调用）。
 - 测试：packages/platform/test/telemetry.test.ts:127/:128（事件体字符串值经 redactSecrets，sk- 形状→SECRET_PLACEHOLDER）/packages/platform/test/telemetry.test.ts:134（结构证据：telemetry.ts 自 session-store.ts 导入=单源非复制）+packages/platform/test/session-store.test.ts:58（转录侧形状白名单脱敏）+evals/benchmark/tasks.ts b23/b24（recorded 族同面对位：疑似密钥告警+redactSecrets 幂等 / 遥测门序+事件体脱敏）。
 - 未解决：无。
+
+## 接缝⑰ workflow vm 沙箱 × resume 缓存（2026-09-19，WP-12 随 M6-1 板补登）
+
+- 定义：vm 沙箱内禁 `Date.now()`/`Math.random()`/无参 `new Date()`（context 内守卫 prelude，`configurable:false` 防 delete 回落）不是独立洁癖——journal resume 的 key 派生（`wfkey-`+sha256(规范 JSON([prompt,opts])) 前 16 hex）以"同输入必同 key"为前提，脚本可注入时间/随机源即键不稳定、跨 run 必不命中（续跑重复消耗）。判据双向：注入计数器/随机源→假命中红；生产键掺 `Date.now()`→命中类断言全红。
+- 锚点：v2.8 ORC-023/024（行 295「vm 沙箱（`__proto__:null` + 禁 `Date.now/Math.random`）+ journal 续跑」同条并列）+§12.5 接缝⑰；A 级 workflow 报告 §2.3（L171026 禁项理由=break resume）；实现 packages/capabilities/src/workflow/sandbox.ts:59/:62/:132（守卫文案与 prelude）+workflow/journal.ts:255-261（defaultWorkflowAgentKey）/:337（keyDerivation 注入位=接缝⑰ 变异面）。
+- 测试：packages/capabilities/test/wp04-workflow-journal.test.ts:367（DoD⑤ 接缝⑰：注入时间/随机源 → resume 缓存必不命中，双向）+wp02 沙箱套件三禁用例（packages/capabilities/test/wp02-workflow-sandbox.test.ts）。
+- 未解决：无（WP-04 V 核销双向确证）。
+
+## 接缝⑱ workflow budget × 主循环 token 池（2026-09-19，WP-12 随 M6-1 板补登）
+
+- 定义：workflow token budget 硬顶与主循环同轴（共享 token 池）；内核硬顶语义=只止新发、在途跑完保留结果（`WorkflowBudgetError` 文案同构 A 级 §6）；`total=null → remaining()=Infinity`。记账单源由宿主注入（`spent()` 注入面），内核不累计子 agent token——共享池的并入点在装配层（未接线，M6 统一接线义务）。
+- 锚点：v2.8 ORC-023/024（行 295 budget 硬顶）+§12.5 接缝⑱；A 级 workflow 报告 §6（L168064-168076、L169801-169806）；实现 packages/capabilities/src/workflow/kernel.ts:70（WorkflowBudgetError）/:322-331（超顶判定只止新发）。
+- 测试：packages/capabilities/test/wp03-workflow-kernel.test.ts:176/:187（超顶零新 spawn+在途保留）+apps/cli/test/wp11-workflow-telemetry.test.ts:84/:85（真内核 budget 硬顶→桥→facade sink 实收）。
+- 未解决：`spent()` 生产装配位（M6 统一接线义务，WP-03 V 存疑③同源）。
+
+## 接缝⑲ Teams 消息泵 × 任务注册表 × subagent 生命周期（2026-09-19，WP-12 随 M6-1 板补登）
+
+- 定义：消息工具负责通知、任务工具负责状态——看板全变更零 mailbox/inbox 投递、收消息全链任务字段零改动（双向互不承载）；状态通知=进程内 `updated` 事件≠消息；停止 worker 按 agentId 续聊=从转录恢复（SendMessage 投递进 inbox＋续聊种子读 per-agentId 转录，六阶段 fail-closed 逐一点名）。
+- 锚点：v2.8 ORC-040~042（行 296）+§12.5 接缝⑲；A 级 teams 报告 §8（「a send resumes it from its transcript」实锚 `_440.js` L208382）；实现 packages/capabilities/src/teams/task-board.ts+teams/worker-resume.ts+teams/events.ts。
+- 测试：packages/capabilities/test/wp09-teams-task-board.test.ts:208（接缝⑲ 双向举证）/:307（写入 emits updated=事件≠消息）+packages/capabilities/test/wp09-worker-resume.test.ts:296（续聊不改任务状态）。
+- 未解决：per-agentId 转录生产者与 loop 灌回（M6 统一接线义务，WP-09 F1/F2）。
+
+## 接缝⑳ SendMessage 载体 × transcript 存储（2026-09-19，WP-12 随 M6-1 板补登）
+
+- 定义：跨 teammate/跨会话 SendMessage 载体=本地 transcript 存储目录基座上的文件 mailbox（`<teamsDir>/<净化 team>/<净化成员>.inbox.json`，顶层数组+schema 校验、非法条目丢弃并告警禁静默）+事件总线（in-process 泵/回灌），与 ORC-041 同协议；teamsDir 路径单源在 platform（`transcripts.ts` 同 `encodeProjectPath` 基座，`workflowsDir` 先例）——capabilities 零路径编码复制。
+- 锚点：v2.8 Q-4（行 578「跨会话 SendMessage 载体=本地 transcript 存储+事件总线，与 ORC-041 同协议」）+§12.5 接缝⑳；A 级 teams 报告 §5（TeammateMailbox L55647-55680）；实现 packages/platform/src/transcripts.ts:59（teamsDir）+packages/capabilities/src/teams/mailbox.ts。
+- 测试：packages/capabilities/test/wp07-teams-mailbox.test.ts:95（append 懒 mkdir+读改写往返=跨实例持久化语义）/:129（teammateInboxPath 组合形状）+apps/cli/test/wp07-teams-session.test.ts:61（`to:"main"` 恒路由主对话 once-only）。
+- 未解决：无（mailbox 跨进程并发写与 WP-04 同族留白，登记）。
+
+## 接缝㉑ 实验特性位 × 命令注册 × 遥测事件（2026-09-19，WP-12 随 M6-1 板补登）
+
+- 定义：flag 默认关=三层零产出——命令不注册（基表逐字等于 `CLI_COMMANDS` 恰 30；`workflows`/`fork`/`export` 门内注册）、工具不注册（默认六件无 SendMessage/Workflow）、遥测零事件（双层：遥测门关=emit 纯布尔即返零构造零写盘；flag 关=桥接不注入=onTelemetry 缺位零事件）；非法值 fail-closed 不猜、未知名/未知键告警不静默。
+- 锚点：v2.8 ORC-050（行 298）+§8.2 行 365+§12.5 接缝㉑+ENG-090 行 433；实现 packages/platform/src/experimental.ts:28（EXPERIMENTAL_FLAGS）/:75（resolveExperimental）+apps/cli/src/experimental-gate.ts（命令/工具注册门）+packages/capabilities/src/workflow/telemetry-bridge.ts（onTelemetry 注入件）。
+- 测试：apps/cli/test/wp12-milestone.test.ts（收口断言集：基表 30 零增量+七件候选零命中+工具面六件+门候选守恒 7 件）+apps/cli/test/wp11-workflow-telemetry.test.ts:129/:130/:149（接缝㉑ 双层=门关 emit 即返/flag 关桥接不注入）+wp01-experimental.test.ts（门序/告警/零注册）。
+- 未解决：无（桥接生产装配位=M6 统一接线义务，WP-11 F1）。
