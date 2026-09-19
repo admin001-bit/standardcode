@@ -75,6 +75,11 @@ export interface TelemetryEnvelope {
 /** sink 注入面（卡边界：真实上报端点无产品服务——本地聚合/文件桩；服务对接=规格外不做）。 */
 export interface TelemetrySink {
   write(events: readonly TelemetryEnvelope[]): void | Promise<void>;
+  /**
+   * 可选冲刷（M7-WP-05：OTel 导出 sink 需 forceFlush 才能确保 span 出网；文件桩无此需求故可选）。
+   * 由 facade.flush() 驱动（有则调、无则跳过），保持既有 sink 实现零改动=纯追加。
+   */
+  flush?(): Promise<void>;
 }
 
 // —— opt-in 门（SEC-050：默认关、opt-in、可一键关；键位 [自定] 走 ADR-0030 家族：env 逃逸舱 > settings > 默认关，
@@ -234,6 +239,16 @@ export function createTelemetryFacade(opts: CreateTelemetryFacadeOptions = {}): 
         }
         if (pending === p) pending = null; // 写串行化下的简单排空（新写会在循环中重取）
         else break;
+      }
+      // M7-WP-05：在途 write 排空后驱动 sink 自身冲刷（OTel forceFlush）；文件桩无 flush=跳过。
+      // 关态 sink 未构造（零构造口径）→ 此处无 sink 可调；冲刷失败吞没（遥测绝不致会话失败）。
+      const s = sink;
+      if (s?.flush !== undefined) {
+        try {
+          await s.flush();
+        } catch {
+          /* 吞没 */
+        }
       }
     },
   };
