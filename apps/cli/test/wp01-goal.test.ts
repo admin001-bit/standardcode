@@ -178,6 +178,26 @@ describe("refine：spawn 改写（DoD②③『细化』面）", () => {
   // 实现保留该守卫=防御性（subtask 同构），无判别用例（登记于结果页偏差）。
 });
 
+describe("判别力（V 补）：N5/N6 缺口封闭（fail-closed 分支可达性）", () => {
+  it("C1（N5）：已有 goal 但 messages 被清空 → 首轮守卫 repl.subtask.guard 触发（subtask 同构防御分支可达）", async () => {
+    const s = makeSession([]);
+    const ctx = ctxOf(s);
+    await ctx.goal("fix the flaky integration test"); // 设定目标（注入 user turn，正常态守卫不可达）
+    expect(s.messages.length).toBeGreaterThan(0); // 前置不变量：设定后必有 user turn
+    s.messages.length = 0; // 白盒构造「首轮守卫」可达态（绕过正常设定注入）
+    await expect(ctx.goal("refine")).rejects.toThrow(/Cannot start a subtask/);
+    // 特征词与 noGoal / emptyRefine 文案不重叠（判别力隔离）——见 i18n.ts:199
+  });
+  it("C2（N6）：已有 goal 时 refine 带参 → 点名拒绝 subcommandArgs（extraArgs 分支，noGoal 不可达）", async () => {
+    const s = makeSession([]);
+    const ctx = ctxOf(s);
+    await ctx.goal("ship the release notes"); // 设定目标 → noGoal 分支不可能命中
+    await expect(ctx.goal("refine extra")).rejects.toThrow(/takes no arguments/);
+    // 断言落在 repl.goal.err.subcommandArgs（i18n.ts:347），与 noGoal 文案隔离
+    expect(s.messages).toHaveLength(1); // 仅设定注入；refine 带参被拒未注入
+  });
+});
+
 /** 取 refine 调用到达 provider 的最近请求（spawn 面 prompt 实证辅助）。 */
 function scriptedLastRequest(s: Session): LLMRequest | undefined {
   const p = s.provider as ProviderAdapter & { requests?: LLMRequest[] };
