@@ -15,7 +15,17 @@ import { redactSecrets } from "./session-store.ts";
 
 // —— 事件契约（行 433 原文枚举：turn_end（terminal_reason/turn_count/duration_ms）、query_error、
 // tool_use_cancelled、auto_compact_circuit_breaker、max_tokens_reached、model_fallback_triggered、
-// subagent_launch（outcome 枚举）；workflow/teams 事件 M6 不入）——
+// subagent_launch（outcome 枚举）；M6-WP-11：workflow/teams 事件随 M6 加入（ENG-090 行 433 同句）——
+// workflow 扩列 [自定]：[CC] `tengu_workflow_*` 八枚（A 级 claude-code-workflow.md §10 行 428-441 锚点：
+// usage_warning_accepted L56800 / agent_cap_exceeded L168061 / budget_cap_exceeded L168070 /
+// journal_started_hit_respawn L168314 / completed L170688 / phase_completed L170728 / launched L172994 /
+// keyword L256690）按 ADR-0007 前缀族映射为 `sc_workflow_*` 同族八名（[CC] 名只口径注不抄名）。
+// 云端/远程 workflow 的 `workflow_launch_*` 族=非目标（B-03，A 级 §10 注 BLK 同族）。
+// teams 扩列 [自定]：不新增独立事件名——[CC] 五枚 outcome 事件挂 subagent_launch 下（A 级 agent-teams.md
+// §10 行 348-356：missing_params L176967 / no_team_name L176974、L177122 / iterm_cancelled L176992 /
+// tmux_window_failed L177150 / swarm_sandbox_* L56682），本仓映射=subagentLaunch 的 refusedCode 语义扩位
+// （teammate_missing_params / teammate_no_team_name 两枚移植；iterm_cancelled / tmux_window_failed /
+// swarm_sandbox_* 三枚 [CC]-only 不移植——BLK-07=① in-process 无 tmux/iterm 面、无 swarm 沙箱面，显式登记非静默吞）。——
 
 export const TELEMETRY_EVENT_PREFIX = "sc_";
 
@@ -26,7 +36,28 @@ export type TelemetryEventName =
   | "sc_auto_compact_circuit_breaker"
   | "sc_max_tokens_reached"
   | "sc_model_fallback_triggered"
-  | "sc_subagent_launch";
+  | "sc_subagent_launch"
+  // —— M6-WP-11 workflow 扩列（八枚，映射源见上注；前三枚有真实 callback 发射面=kernel/journal onTelemetry
+  // 经 telemetry-bridge 映射；后五枚=契约+API 面，产生点随 workflow runner 接线落地，M5 model_fallback 先例）——
+  | "sc_workflow_agent_cap_exceeded"
+  | "sc_workflow_budget_cap_exceeded"
+  | "sc_workflow_journal_started_hit_respawn"
+  | "sc_workflow_launched"
+  | "sc_workflow_completed"
+  | "sc_workflow_phase_completed"
+  | "sc_workflow_usage_warning_accepted"
+  | "sc_workflow_keyword";
+
+/** workflow 扩列八名的子集面（M6-WP-11；facade.workflowEvent 与桥接 forward 的名称域）。 */
+export type ScWorkflowTelemetryEventName = Extract<TelemetryEventName, `sc_workflow_${string}`>;
+
+// —— M6-WP-11 teams 映射：subagentLaunch.refusedCode 语义枚举扩位（[CC] 五枚 → 两枚移植；[CC]-only 三枚
+// 不移植=BLK-07 显式登记，见文件头注）。产生点=roster 校验拒绝点（validateTeamName/spawnNameGuard 拒绝
+// 随 teammate 生产 spawn 面接线；当前无生产构造点=未接线 F 项，M5 model_fallback_triggered 先例同形）。 ——
+/** teammate spawn 参数缺位/非法（[CC] `subagent_teammate_missing_params` L176967 的 refusedCode 扩位）。 */
+export const SUBAGENT_REFUSED_CODE_TEAMMATE_MISSING_PARAMS = "teammate_missing_params";
+/** team_name 缺位/非法（[CC] `subagent_teammate_no_team_name` L176974 的 refusedCode 扩位）。 */
+export const SUBAGENT_REFUSED_CODE_TEAMMATE_NO_TEAM_NAME = "teammate_no_team_name";
 
 /** 属性原语闸（kimi types.ts 同构）：遥测属性只收原语，拒绝嵌套对象入事件体。 */
 export type TelemetryPrimitive = string | number | boolean;
@@ -90,8 +121,18 @@ export interface TelemetryFacade {
   /** model_fallback_triggered（契约+API 面：本仓无 model fallback 机制——B-03 不提前实现，
    * 产生点接线待机制落地（登记于结果页偏差）；参数 [自定] {from/to/reason}）。 */
   modelFallbackTriggered(p?: { from?: string; to?: string; reason?: string }): void;
-  /** subagent_launch（outcome 枚举 [自定] {"launched","refused"}；refused 附 code）。 */
+  /** subagent_launch（outcome 枚举 [自定] {"launched","refused"}；refused 附 code——M6-WP-11 语义扩位
+   * teammate_missing_params / teammate_no_team_name（SUBAGENT_REFUSED_CODE_* 常量），[CC]-only 三枚不移植见头注）。 */
   subagentLaunch(p: { outcome: "launched" | "refused"; taskId?: string; agentId?: string; agentType?: string; refusedCode?: string }): void;
+  /**
+   * workflow 事件族发射面（M6-WP-11 扩列八枚的统一语义方法 [自定]）：
+   * 名称域=ScWorkflowTelemetryEventName（扩列八名逐字枚举，编译期封闭）；属性经 sanitizeProps（SEC-030 单源，
+   * 与七事件同一 emit 通路——门序/关态零构造/写错吞没语义零差异）。family 级单方法而非八枚独立方法的理由：
+   * telemetry-bridge 的 forward 面需要按名参数化发射，独立方法将迫使桥接维护第二份名称→方法映射（禁复制）。
+   * 产生点：kernel/journal 的 onTelemetry 回调经 createWorkflowTelemetryBridge 映射后接本方法（前三枚有真实
+   * callback 发射面）；后五枚=契约+API 面（M5 model_fallback_triggered 先例），随 workflow runner 接线落地。
+   */
+  workflowEvent(event: ScWorkflowTelemetryEventName, properties?: TelemetryProps): void;
   /** 供测试/退出面等待在途写盘（文件桩）；无在途写即即返。 */
   flush(): Promise<void>;
 }
@@ -179,6 +220,9 @@ export function createTelemetryFacade(opts: CreateTelemetryFacadeOptions = {}): 
         ...(p.agentType !== undefined ? { agentType: p.agentType } : {}),
         ...(p.refusedCode !== undefined ? { refusedCode: p.refusedCode } : {}),
       });
+    },
+    workflowEvent(event, properties) {
+      emit(event, properties ?? {});
     },
     async flush() {
       while (pending !== null) {
