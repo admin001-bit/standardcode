@@ -117,6 +117,39 @@ describe("endpoint 配置键与解析序（ADR-0030 家族：env > settings > �
   });
 });
 
+describe("span resource：service.name（缺省形 + 非缺省形，判别力补丁）", () => {
+  // 前版对 service.name 零断言 → 插针把 resource 写死仍全绿（V 报针⑥ 0 红，main 复现后补本组）。
+  it("缺省：service.name=standardcode（OTel 语义属性，后端按此分组）", async () => {
+    const exporter = new InMemorySpanExporter();
+    const sink = (await createOtelSink({ endpoint: "http://127.0.0.1:4318/v1/traces", exporter })) as TelemetrySink & { shutdown(): Promise<void> };
+    try {
+      const facade = createTelemetryFacade({ sessionId: "s-r1", env: { STANDARD_CODE_TELEMETRY: "1" }, sink });
+      facade.toolUseCancelled();
+      await facade.flush();
+      const spans = spansOf(exporter);
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.resource.attributes["service.name"]).toBe("standardcode");
+    } finally {
+      await sink.shutdown();
+    }
+  });
+
+  it("非缺省形：显式 serviceName 生效（缺省回落分支须测非缺省形）", async () => {
+    const exporter = new InMemorySpanExporter();
+    const sink = (await createOtelSink({ endpoint: "http://127.0.0.1:4318/v1/traces", exporter, serviceName: "custom-svc" })) as TelemetrySink & { shutdown(): Promise<void> };
+    try {
+      const facade = createTelemetryFacade({ sessionId: "s-r2", env: { STANDARD_CODE_TELEMETRY: "1" }, sink });
+      facade.toolUseCancelled();
+      await facade.flush();
+      const spans = spansOf(exporter);
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.resource.attributes["service.name"]).toBe("custom-svc");
+    } finally {
+      await sink.shutdown();
+    }
+  });
+});
+
 describe("DoD④ SDK 依赖锁版本登记（精确版本，无 ^/~ 漂移）", () => {
   // 完整枚举纪律：断言**全部** @opentelemetry/* 直接依赖（集合相等=新增/删改/降级为区间 一律可判别）。
   // 前版只逐项断言三包，第 4 包 resources 改 ^ 仍绿（V 报 W-3 判别力缺口，main 复现后补本断言）。
