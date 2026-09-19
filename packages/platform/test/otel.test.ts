@@ -118,15 +118,21 @@ describe("endpoint 配置键与解析序（ADR-0030 家族：env > settings > �
 });
 
 describe("DoD④ SDK 依赖锁版本登记（精确版本，无 ^/~ 漂移）", () => {
-  it("packages/platform/package.json 三依赖为精确版本", () => {
+  // 完整枚举纪律：断言**全部** @opentelemetry/* 直接依赖（集合相等=新增/删改/降级为区间 一律可判别）。
+  // 前版只逐项断言三包，第 4 包 resources 改 ^ 仍绿（V 报 W-3 判别力缺口，main 复现后补本断言）。
+  it("packages/platform/package.json 的 @opentelemetry/* 依赖集合精确锁版本（全集+无区间前缀）", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as Record<string, Record<string, string>>;
     const deps = pkg["dependencies"] ?? {};
-    expect(deps["@opentelemetry/api"]).toBe("1.9.1");
-    expect(deps["@opentelemetry/sdk-trace-base"]).toBe("2.11.0");
-    expect(deps["@opentelemetry/exporter-trace-otlp-http"]).toBe("0.222.0");
-    // 精确版本=不含区间前缀（锁版本口径）
-    for (const v of [deps["@opentelemetry/api"], deps["@opentelemetry/sdk-trace-base"], deps["@opentelemetry/exporter-trace-otlp-http"]]) {
-      expect(v).not.toMatch(/^[\^~]/);
+    const otelDeps = Object.fromEntries(Object.entries(deps).filter(([k]) => k.startsWith("@opentelemetry/")));
+    expect(otelDeps).toEqual({
+      "@opentelemetry/api": "1.9.1",
+      "@opentelemetry/resources": "2.11.0",
+      "@opentelemetry/sdk-trace-base": "2.11.0",
+      "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
+    });
+    // 精确版本=不含区间前缀（锁版本口径，逐项）
+    for (const [name, v] of Object.entries(otelDeps)) {
+      expect(`${name}@${v}`).not.toMatch(/@[\^~]/);
     }
   });
 });
