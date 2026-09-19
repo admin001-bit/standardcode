@@ -429,10 +429,13 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         });
       const combo = (current: string): string => s.i18n.t("repl.effort.combo", { model: s.model, level: current });
       // env 逃逸舱覆盖：local 档位写了但被 env 抢占 → 点名告知实际生效值（防静默误导）
-      const envOverride = (current: string): string => {
+      const envOverride = (): string => {
         const raw = s.env.STANDARD_CODE_THINKING;
         if (raw === undefined || raw === "") return "";
-        return "\n" + s.i18n.t("repl.effort.envOverride", { value: raw, level: current, effective: effortLabel(resolveThinking(undefined, s.env, s.settings)) });
+        // {level}=真实 local 档位（**只看 settings**，env 传空对象）；effective=env 优先后的实际解析值。
+        // 修复 V-1：查看支的 current 是 env 派生档，若填进 {level} 会输出「local level high … effective=high」自相矛盾。
+        const local = effortLabel(resolveThinking(undefined, {}, s.settings));
+        return "\n" + s.i18n.t("repl.effort.envOverride", { value: raw, level: local, effective: effortLabel(resolveThinking(undefined, s.env, s.settings)) });
       };
       if (args === "") {
         const label = effortLabel(s.thinking);
@@ -443,7 +446,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
             levelsBlock(label) +
             "\n" +
             combo(label) +
-            envOverride(label),
+            envOverride(),
         };
       }
       if (!(EFFORT_LEVELS as readonly string[]).includes(args)) {
@@ -460,7 +463,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           levelsBlock(level) +
           "\n" +
           combo(level) +
-          envOverride(level),
+          envOverride(),
       };
     },
     init: async () => {

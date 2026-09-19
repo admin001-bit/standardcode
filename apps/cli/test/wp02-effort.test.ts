@@ -148,6 +148,19 @@ describe("细化面③：生效面如实报告（env 逃逸舱优先于 settings
     }
   });
 
+  it("{level} 槽必须报真实 local 档位（非 env 派生档）——查看支不得自相矛盾", async () => {
+    // 复现 V-1：local=low（settings）、env=adaptive → 实际生效 high；覆盖行的 {level} 应是 low 而非 high
+    const { ctx, cleanup } = fixture({ STANDARD_CODE_THINKING: "adaptive" });
+    try {
+      await ctx.effort("low");
+      const shown = (await ctx.effort("")).text;
+      expect(shown).toContain("local level low"); // 真实 local 档位（V-1 前=high → 与 effective=high 自相矛盾）
+      expect(shown).toContain("effective=high");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("无 env 覆盖时不出覆盖行（缺省形可判别）", async () => {
     const { ctx, cleanup } = fixture();
     try {
