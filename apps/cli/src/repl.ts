@@ -894,20 +894,14 @@ async function exitRepl(deps: ReplDeps): Promise<void> {
   deps.io.close();
 }
 
-async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
-  const s = deps.session;
-  // M5-WP-06：遥测 turn 界门刷新（SEC-050 一键关：env STANDARD_CODE_TELEMETRY 每 turn 重读=翻回即时生效；
-  // settings telemetry.enabled 随 session.settings/装配与 /reload 解析=次会话或 reload 生效口径 [自定]）。
-  s.telemetry.refreshGate({ env: process.env, settingsEnabled: settingsValue<boolean>(s.settings, TELEMETRY_SETTINGS_KEY) });
-  const turnStartedAt = performance.now(); // turn_end duration_ms 墙钟（WP-06）
-  // M4-WP04：UserPromptSubmit 门（exit2/decision:block → 提示词不进轮次，blockingError 告知用户）
-  if (s.hooks) {
-    const up = await s.hooks.gate("UserPromptSubmit", undefined, { prompt: text }).catch(() => null);
-    if (up?.blockingError) {
-      deps.io.write(`${deps.session.i18n.t("repl.hooks.promptBlocked", { value: up.blockingError })}\n`);
-      return;
-    }
-  }
+/**
+ * M7-WP-13⑫：会话待投递通知 drain（三段 isomorphic，原 `runPromptTurn` 内联段抽公共）。
+ * 唯一 drain 宿主原为 `runPromptTurn`（仅 REPL 可达），非 REPL 入口（headless/evals）无 drain——
+ * 本函数导出后两类调用方复用同一实现（单源；非 REPL 的接入点属产品语义决策，见 .work/wp13-x-a.md §B⑦/⑫）。
+ * 顺序与语义逐字同内联版：MCP（<system-reminder>）→ workflow（<task-notification>）→ teammate→main；
+ * 每条作 user turn 回灌主循环并触发 Notification 钩子（M4-WP04 触发面）。
+ */
+export function drainSessionNotes(s: Session): void {
   // WP-02（M4）：MCP 后台终态通知注入（turn 首前插 <system-reminder>，SEC-010 载体同构；isMeta 注入不入转录=transcripts.ts:113 口径）
   for (const note of s.drainMcpNotifications()) {
     s.messages.push({ role: "user", content: [{ type: "text", text: `<system-reminder>${note}</system-reminder>` }] });
@@ -927,6 +921,27 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
     s.messages.push({ role: "user", content: [{ type: "text", text: note }] });
     s.hooks.fire("Notification", undefined, { message: note });
   }
+}
+
+async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
+  const s = deps.session;
+  // M5-WP-06：遥测 turn 界门刷新（SEC-050 一键关：env STANDARD_CODE_TELEMETRY 每 turn 重读=翻回即时生效；
+  // settings telemetry.enabled 随 session.settings/装配与 /reload 解析=次会话或 reload 生效口径 [自定]）。
+  s.telemetry.refreshGate({ env: process.env, settingsEnabled: settingsValue<boolean>(s.settings, TELEMETRY_SETTINGS_KEY) });
+  const turnStartedAt = performance.now(); // turn_end duration_ms 墙钟（WP-06）
+  // M4-WP04：UserPromptSubmit 门（exit2/decision:block → 提示词不进轮次，blockingError 告知用户）
+  if (s.hooks) {
+    const up = await s.hooks.gate("UserPromptSubmit", undefined, { prompt: text }).catch(() => null);
+    if (up?.blockingError) {
+      deps.io.write(`${deps.session.i18n.t("repl.hooks.promptBlocked", { value: up.blockingError })}\n`);
+      return;
+    }
+  }
+  // WP-13⑫：三段 isomorphic drain 抽为公共函数（`drainSessionNotes`）——REPL 与非 REPL（headless/evals）调用方复用。
+  // 语义零变化：MCP 后台终态通知（<system-reminder>，SEC-010 载体同构；isMeta 注入不入转录=transcripts.ts:113 口径）
+  // → workflow 完成通知（<task-notification>，M6-WP-05 DoD③）→ teammate→main 投递（M6-WP-07 DoD④），逐一作为
+  // user turn 回灌主循环并触发 Notification 钩子。
+  drainSessionNotes(s);
   // M4-WP05：skills 清单增量注入（meta user 消息追加，CTX-005 不动既有前缀字节；DoD③⑧）
   const listing = s.skills.listing();
   if (listing !== null) {

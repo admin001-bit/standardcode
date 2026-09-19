@@ -222,7 +222,9 @@ export function createWorkflowProgressTracker(options: WorkflowProgressTrackerOp
     runId,
     phases: [...phaseByTitle.values()]
       .sort((a, b) => a.index - b.index)
-      .map((p) => ({ ...p, logs: [...p.logs], agents: [...p.agents] })),
+      // WP-13 缺陷修（M6-1-results.md 行 187 观察 O1）：agents 元素原先共享引用（浅拷），篡改返回值会
+      // 污染 tracker 内部状态；改为逐元素拷贝，与 logs 同口径（"改返回值不改内部"）。
+      .map((p) => ({ ...p, logs: [...p.logs], agents: p.agents.map((a) => ({ ...a })) })),
   });
 
   return { phase, log, agentProgress, subscribe, snapshot };

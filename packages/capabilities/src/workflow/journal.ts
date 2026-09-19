@@ -125,6 +125,43 @@ export function emptyWorkflowJournalState(): WorkflowJournalState {
   return { started: new Map(), failed: new Set(), results: new Map() };
 }
 
+// ─── WP-13 缺陷修（M6-1-results.md 行 163 观察 O1）：**先按 type 字符串归入 failed 集，再谈字段合法性** ───
+//
+// 原缺陷：`isWorkflowJournalRecord` 要求 `type/key/agentId` 齐全，故被截断（中断时的半截写）或字段不全的
+// `failed` 行被**静默丢弃** → `isReplayableWorkflowKey` 的 `!failed` 门失守 → 回放同键的**陈旧 result**。
+// 修法＝失败门 fail-closed：type 字符串属 `failed` 族者（含未知变体如 `failed!`、含 JSON 非法但 type/key
+// 可抢救的截断行）一律归入 failed 集；`started`/`result` 仍要求精确 type 且字段齐备（缓存语义不变）。
+
+/** type 字符串是否属 failed 族（`failed` 及其未知前缀变体）。 */
+function isFailedRecordType(type: unknown): boolean {
+  return typeof type === "string" && type.startsWith("failed");
+}
+
+function recordField(value: unknown, field: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return (value as Record<string, unknown>)[field];
+}
+
+const TRUNCATED_TYPE_RE = /^\{\s*"type"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+const TRUNCATED_KEY_RE = /"key"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+
+/**
+ * 截断行（`JSON.parse` 失败）的 type/key 抢救：`JSON.stringify(record)` 的字段序恒为 `{type,key,agentId…}`，
+ * 故中断写入的半截行仍能读出前置的 type/key 两字段；key 经 JSON 反转义（含转义符的键不失真）。
+ */
+function salvageTruncatedFailedKey(trimmed: string): string | null {
+  const typeMatch = TRUNCATED_TYPE_RE.exec(trimmed);
+  if (!typeMatch || !isFailedRecordType(typeMatch[1])) return null;
+  const keyMatch = TRUNCATED_KEY_RE.exec(trimmed);
+  if (!keyMatch) return null;
+  try {
+    const key: unknown = JSON.parse(`"${keyMatch[1]}"`);
+    return typeof key === "string" ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 解析 jsonl 文本为 resume 状态。[自定]④：坏行/未知 type **跳过而非抛错**——末行可能是中断时的半截写；
  * 抛错会让 resume 退化为崩溃（DoD⑥ 要求正常重跑）。
@@ -138,6 +175,15 @@ export function parseWorkflowJournal(text: string): WorkflowJournalState {
     try {
       parsed = JSON.parse(trimmed);
     } catch {
+      // 半截 failed 行：JSON 非法仍按 type/key 字符串归入 failed 集（失败门 fail-closed）。
+      const salvagedKey = salvageTruncatedFailedKey(trimmed);
+      if (salvagedKey !== null) state.failed.add(salvagedKey);
+      continue;
+    }
+    if (isFailedRecordType(recordField(parsed, "type"))) {
+      // failed 族：只要求 key 可归属；不要求 agentId 齐备（字段不全一样是"该键失败过"的证据）。
+      const failedKey = recordField(parsed, "key");
+      if (typeof failedKey === "string") state.failed.add(failedKey);
       continue;
     }
     if (!isWorkflowJournalRecord(parsed)) continue;
@@ -453,9 +499,14 @@ export async function cleanupWorkflowRun(
 
 // ───────────────────────── 恢复配方（DoD③） ─────────────────────────
 
-/** 单引号字符串字面量转义（[CC] `F()` 未逐字定位→[自定]⑨：`\` → `\\`、`'` → `\'`）。 */
+/** 单引号字符串字面量转义（[CC] `F()` 未逐字定位→[自定]⑨：`\` → `\\`、`'` → `\'`；WP-13 缺陷修补 `\n`/`\r`
+ *  转义——裸换行/回车会让配方**不是合法 JS 字面量**（M6-1-results.md 行 163 观察 O2 实测 PARSE-FAIL））。 */
 export function escapeWorkflowResumeArg(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/'/g, "\\'");
 }
 
 /**

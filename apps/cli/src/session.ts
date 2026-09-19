@@ -6,15 +6,16 @@
 // maxOutputTokens.upper 缺证取=default，thinking/input 能力位 [自定]。
 import { AnthropicAdapter, OpenAIChatAdapter, ResponsesAdapter, parseWireApi, type AnthropicModelEntry, type LLMMessage, type OpenAIModelEntry, type ProviderAdapter, type ProviderOptions } from "@standardcode/providers";
 import { UsageMeter } from "@standardcode/context";
-import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, createSendMessageTool, createRosterSendMessagePort, createTeamRoster, createWorkerResume, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, appendMailbox, teammateInboxPath, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, TEAMMATE_DEFAULT_LEAD_NAME, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SkillUsageRecord, type StandardTool, type TeamRoster, type WorkerResumePort } from "@standardcode/capabilities";
+import { buildMcpToolsForConnection, connectAll, createHookEngine, createSkillTool, createStandardTools, createSendMessageTool, createRosterSendMessagePort, createSharedTaskBoard, createTeamRoster, createWorkerResume, expandSkillBody, gateMcpServerDocs, loadHookConfigs, loadMcpServerConfigs, loadSkills, loadSkillsFromDir, parseTransportType, appendMailbox, teammateInboxPath, SKILL_ALREADY_LOADED_NOTE, SKILL_LISTING_HEADER, buildSkillListing, createSandboxHandle, TEAMMATE_DEFAULT_LEAD_NAME, type HookEngine, type HookEventName, type HookEventOutcome, type HookSourceName, type LoadedSkill, type McpApprovalState, type McpConnection, type McpServerEntry, type McpSourceName, type SandboxHandle, type SandboxTier, type SharedTaskBoard, type SkillUsageRecord, type StandardTool, type TeamRoster, type WorkerResumePort } from "@standardcode/capabilities";
 import { createPermissionBroker, createTaskRegistry, parseAgentMarkdown, type PermissionBroker, type Ruleset, type SubagentDefinition, type TaskRegistry, type ToolHooks } from "@standardcode/harness";
 import { createAgentRegistry, gateProjectAgentDefinitions, type AgentRegistry, type SpawnValidationContext } from "@standardcode/harness";
-import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, createTelemetryFacade, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, resumeFrom, teamsDir, transcriptsDir, TELEMETRY_SETTINGS_KEY, type ExperimentalGate, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle, type TelemetryFacade, type TelemetrySink } from "@standardcode/platform";
+import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKeychainAdapter, createTelemetryFacade, loadInstalledPlugins, loadProjectAgentDefinitions, loadSettings, managedSettingsPath, readAgentTrust, recordAgentTrust, resolveLang, settingsValue, keychainAccountFor, resumeFrom, teamsDir, transcriptsDir, workflowsDir, TELEMETRY_SETTINGS_KEY, type ExperimentalGate, type InstalledPluginView, type KeychainAdapter, type PluginRecord, type I18n, type LoadedSettings, type SettingsEnvHandle, type TelemetryFacade, type TelemetrySink } from "@standardcode/platform";
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { createWorkflowRunner, type WorkflowRunner } from "./workflow-runner.ts";
 
 /** EXE-001 循环切换序与四模式枚举的唯一权威在 harness permission-broker（WP-08）。 */
 export { PERMISSION_MODES as PERMISSION_CYCLE } from "@standardcode/harness";
@@ -179,8 +180,12 @@ export interface Session {
   drainTeammateMessages(): string[];
   /** M6-WP-07：团队注册表（teams flag 活跃时在位；成员注册/通讯录/后续运行器消费面）。 */
   teamRoster?: TeamRoster;
+  /** M6-WP-09（WP-13⑪ 接线）：共享任务看板（teams flag 活跃时在位；registry+roster 双入参已就位）。 */
+  sharedTaskBoard?: SharedTaskBoard;
   /** M6-WP-09：停止 worker 续聊面（teams flag 活跃且 transcription 基座可在时装配；DoD③ 的装配落点）。 */
   workerResume?: WorkerResumePort;
+  /** M7-WP-13（①④⑨⑩⑬）：workflow 真实 runner（workflow flag 活跃时在位；runsDir/遥测/预算三注入面已接线）。 */
+  workflowRunner?: WorkflowRunner;
   /** M5-WP-06：遥测门面（ENG-090 七事件+SEC-050 默认关；sink 可注入，关态零构造；门刷新=repl turn 界）。 */
   telemetry: TelemetryFacade;
   /** WP-11 /provider 切换（重建 provider；下一 turn 生效）。 */
@@ -813,6 +818,10 @@ export function createSession(init: SessionInit = {}): Session {
     });
     session.tools.push(createSendMessageTool({ port, selfName: TEAMMATE_DEFAULT_LEAD_NAME })); // self-target 预检=lead 自发被拒
     session.teamRoster = roster;
+    // —— M7-WP-13⑪：共享任务看板消费点（caps teams/task-board.ts:106 单源）——
+    // 双入参就在本作用域：registry=session.taskRegistry（:493 已建）、roster=上方 :799。actor 侧 fail-closed（assertActor）
+    // 由调用方（/tasks 或 TaskList 族工具）传入身份；lead 名 "team-lead" 恒在 roster.addressable()（roster.ts:153-157 实证）。
+    session.sharedTaskBoard = createSharedTaskBoard({ registry: session.taskRegistry, roster });
     session.drainTeammateMessages = () => mainInbox.splice(0, mainInbox.length);
     // —— M6-WP-09：停止 worker 续聊装配（接缝⑲；flag 默认关=零构造零触盘，DoD⑤ 同口径）——
     // 转录基座同上 home 覆写口径；worker 转录表命名=`<transcriptsDir>/<agentId>.jsonl`（[自定]②：本仓转录为
@@ -828,6 +837,25 @@ export function createSession(init: SessionInit = {}): Session {
       selfName: TEAMMATE_DEFAULT_LEAD_NAME,
       transcriptPathFor: (agentId) => path.join(transcriptsRoot, `${agentId}.jsonl`),
       resumeTranscript: resumeFrom,
+    });
+  }
+  // —— M7-WP-13（①④⑨⑩⑬）：Workflow runner 装配（门形制与上方 teams 段逐条同构：flag 不活跃=零构造零触盘）——
+  // ① runsDir：镜像 :796-798 teamsRoot 三元注入形，取 platform `workflowsDir`（transcripts.ts:53 单源，同 enc 基座）；
+  //    纯路径函数不触盘（wp07「零触盘」断言在 workflow flag 单开态同样成立——见 test/wp07-teams-session.test.ts:44）。
+  // ④ runner 本体：装配五步在 apps/cli/src/workflow-runner.ts（independent 模块；board 沿用 workflowBoard 进程级单例）。
+  // ⑨ 遥测：桥接 forward 指向会话 facade `workflowEvent`（platform 层 sanitizeProps 单源脱敏）。
+  // ⑩ budget：spent 读数=session.meter 快照的输出 token 累计（`makeWorkflowBudget(total, spent)` 由 runner 构造）。
+  //    权威计数源存疑已登记：subagent 是否计入 session.meter 未证实——见 .work/wp13-x-a.md §B2；换源=改本行一处。
+  //    会话态 budgetTotal 缺省 null（=无预算；仓内无 workflow 预算键位规格，登记待裁）。
+  const workflowGateActive = init.experimental?.enabled === true && init.experimental.flags.includes("workflow");
+  if (workflowGateActive) {
+    const runsDir = init.home !== undefined
+      ? workflowsDir(agentsProjectRoot, path.join(init.home, ".standardcode"))
+      : workflowsDir(agentsProjectRoot);
+    session.workflowRunner = createWorkflowRunner({
+      runsDir,
+      forwardTelemetry: (event, props) => session.telemetry.workflowEvent(event, props),
+      spent: () => session.meter.snapshot().outputTokens,
     });
   }
   session.mcpServers = () => {

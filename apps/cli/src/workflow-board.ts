@@ -6,8 +6,10 @@
 //     drainMcpNotifications → Notification 钩子路径，把 <task-notification> 作为 user turn 注入主循环（DoD③）。
 //
 // 形态 [自定]（登记供 V）：以进程级单例承载（CLI 单会话进程，与 session 同生命周期）；不触碰 /tasks 与后台 subagent
-// 任务族（packages/harness 的 task-registry/task-control），故既有后台任务面零回归。真实 runner（WP-07+）在派生
-// workflow 时 workflowBoard.register(runId, tracker) 并 queue.push(完成通知)；本卡只提供容器 + 命令 + 注入点。
+// 任务族（packages/harness 的 task-registry/task-control），故既有后台任务面零回归。真实 runner（M7-WP-13④ 已落：
+// apps/cli/src/workflow-runner.ts）在派生 workflow 时 workflowBoard.register(runId, tracker) 并 queue.push(完成通知)；
+// 终态分支配对 unregister(runId)（⑬ 生命周期，防单例 trackers 泄漏——register/unregister 恒等配对）。
+// 本卡只提供容器 + 命令 + 注入点。
 
 import {
   createWorkflowProgressTracker,
