@@ -50,6 +50,17 @@ export const EFFORT_TO_THINKING: Readonly<Record<EffortLevel, string>> = {
   medium: "budget:8000",
   high: "adaptive",
 };
+// —— M7-WP-02 细化：档位语义表（**枚举与持久化键位不变**=卡边界——off|low|medium|high→model.thinking 沿用 M3；
+// 不引入 auto 第五档〔§8.3 行 378 权限 auto 档类比，本卡不扩档〕）。
+// 锚：A 级 `evidence/claude-src-extracted/README-5qy3v70q.md:65`「Combine with the `effort` parameter for cost-quality control」
+// （[CC] effort 与 thinking 为两个独立参数、联合控成本/质量）；`README-g0yxr3x9.md:262` 档位集 low|medium|high|xhigh|max
+// （本仓四档为 M3 既有枚举，不向 xhigh/max 扩档 [自定]）。thinking 值单源取 EFFORT_TO_THINKING（防漂移）。——
+export const EFFORT_SEMANTICS: Readonly<Record<EffortLevel, { thinking: string; descKey: string }>> = {
+  off: { thinking: EFFORT_TO_THINKING.off, descKey: "cmd.effort.sem.off" },
+  low: { thinking: EFFORT_TO_THINKING.low, descKey: "cmd.effort.sem.low" },
+  medium: { thinking: EFFORT_TO_THINKING.medium, descKey: "cmd.effort.sem.medium" },
+  high: { thinking: EFFORT_TO_THINKING.high, descKey: "cmd.effort.sem.high" },
+};
 
 /** 档位显示（ThinkingSetting → 档位名；非标准 budget 值显示原样）。 */
 export function effortLabel(thinking: { type: "adaptive" } | { type: "budget"; budgetTokens: number } | undefined): string {

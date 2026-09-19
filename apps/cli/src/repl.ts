@@ -14,7 +14,7 @@ import { CLI_VERSION } from "./version.ts";
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
-import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, splitSubtaskType, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
+import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_SEMANTICS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, splitSubtaskType, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
@@ -418,11 +418,32 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         text: s.i18n.t("repl.subtask.completed", { type: launch.result.agentType, tokens: launch.result.totalTokens, uses: launch.result.totalToolUseCount }) + "\n" + launch.result.content,
       };
     },
+    // —— M7-WP-02 细化：档位枚举与持久化键位不变（off|low|medium|high→model.thinking），细化三面——
+    // ①档位语义表（每档 thinking 值+语义说明，当前档标 *）②model×effort 组合面（切换模型后档位保持=local 层持久）
+    // ③生效面如实报告（env 逃逸舱 STANDARD_CODE_THINKING 优先于 settings，resolveThinking 序不变=MDL-010~013）—
     effort: async (args) => {
       const s = deps.session;
+      const levelsBlock = (current: string): string =>
+        s.i18n.t("repl.effort.levels", {
+          levels: EFFORT_LEVELS.map((lv) => `  ${lv === current ? "*" : " "} ${lv}  ${EFFORT_SEMANTICS[lv].thinking}  ${s.i18n.t(EFFORT_SEMANTICS[lv].descKey)}`).join("\n"),
+        });
+      const combo = (current: string): string => s.i18n.t("repl.effort.combo", { model: s.model, level: current });
+      // env 逃逸舱覆盖：local 档位写了但被 env 抢占 → 点名告知实际生效值（防静默误导）
+      const envOverride = (current: string): string => {
+        const raw = s.env.STANDARD_CODE_THINKING;
+        if (raw === undefined || raw === "") return "";
+        return "\n" + s.i18n.t("repl.effort.envOverride", { value: raw, level: current, effective: effortLabel(resolveThinking(undefined, s.env, s.settings)) });
+      };
       if (args === "") {
+        const label = effortLabel(s.thinking);
         return {
-          text: s.i18n.t("repl.effort.current", { label: effortLabel(s.thinking), levels: EFFORT_LEVELS.join("|") }),
+          text:
+            s.i18n.t("repl.effort.current", { label, levels: EFFORT_LEVELS.join("|") }) +
+            "\n" +
+            levelsBlock(label) +
+            "\n" +
+            combo(label) +
+            envOverride(label),
         };
       }
       if (!(EFFORT_LEVELS as readonly string[]).includes(args)) {
@@ -432,7 +453,15 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       setLocalSetting(s.cwd, "model.thinking", EFFORT_TO_THINKING[level]);
       s.reload(); // settings 重载（local 层并入）
       s.thinking = resolveThinking(undefined, s.env, s.settings); // 下一 turn 生效（env 逃逸舱优先序不变）
-      return { text: s.i18n.t("repl.effort.set", { value: level, thinking: EFFORT_TO_THINKING[level] }) };
+      return {
+        text:
+          s.i18n.t("repl.effort.set", { value: level, thinking: EFFORT_TO_THINKING[level] }) +
+          "\n" +
+          levelsBlock(level) +
+          "\n" +
+          combo(level) +
+          envOverride(level),
+      };
     },
     init: async () => {
       const s = deps.session;
