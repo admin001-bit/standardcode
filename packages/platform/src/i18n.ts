@@ -383,6 +383,16 @@ Object.assign(EN, {
   "repl.sandbox.err.tier": "invalid sandbox tier: {value} (expected one of: read-only, workspace-write, danger-full-access)",
   "repl.sandbox.err.backend": "[sandbox] backend unavailable ({value}) — refusing to enable: persisting it would break the next startup; install the standardcode-sandbox binary first",
   "repl.sandbox.err.args": "unknown /sandbox argument: {value} (expected: on | off | tier <name>)",
+  // —— M7-WP-08：/release-notes（只读展示当前版本+变更记录；§8.2 M7 增 /release-notes；数据源=仓根 CHANGELOG.md〔[自定] ADR-0048〕）——
+  "cmd.release-notes.usage": "[<version>]",
+  "cmd.release-notes.desc": "view the current version and changes since the previous release (read-only; source: CHANGELOG.md at the project root)",
+  "repl.release-notes.current": "[release-notes] current version: {version}",
+  "repl.release-notes.section": "[release-notes] {version}:",
+  "repl.release-notes.empty": "[release-notes] {version}: (no entries recorded in CHANGELOG.md)",
+  "repl.release-notes.older": "[release-notes] earlier versions in {file}: {list}",
+  "repl.release-notes.missing": "[release-notes] no {file} at {path} — create one with '## <version>' sections and '- ' entries, then rerun /release-notes",
+  "repl.release-notes.unknown": "[release-notes] version not found in {file}: {value} (available: {list})",
+  "repl.release-notes.err.args": "unknown /release-notes argument: {value} (expected a single version, e.g. /release-notes 2.1.0)",
 });
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
@@ -582,6 +592,16 @@ Object.assign(ZH_CN, {
   "repl.sandbox.err.tier": "非法沙箱档位：{value}（应为其中之一：read-only, workspace-write, danger-full-access）",
   "repl.sandbox.err.backend": "[sandbox] 后端不可用（{value}）——拒绝启用：落盘会让下次启动失败；请先安装 standardcode-sandbox 二进制",
   "repl.sandbox.err.args": "未知的 /sandbox 参数：{value}（应为：on | off | tier <档位名>）",
+  // —— M7-WP-08：/release-notes（只读展示当前版本+变更记录；§8.2 M7 增 /release-notes；数据源=仓根 CHANGELOG.md〔[自定] ADR-0048〕）——
+  "cmd.release-notes.usage": "[<版本号>]",
+  "cmd.release-notes.desc": "查看当前版本与自上一版本以来的变更记录（只读；数据源=仓根 CHANGELOG.md）",
+  "repl.release-notes.current": "[release-notes] 当前版本：{version}",
+  "repl.release-notes.section": "[release-notes] {version}：",
+  "repl.release-notes.empty": "[release-notes] {version}：（CHANGELOG.md 未记录条目）",
+  "repl.release-notes.older": "[release-notes] {file} 中更早版本：{list}",
+  "repl.release-notes.missing": "[release-notes] {path} 无 {file}——请先创建含 '## <版本号>' 节与 '- ' 条目行的文件，再重试 /release-notes",
+  "repl.release-notes.unknown": "[release-notes] {file} 中未找到版本：{value}（可用：{list}）",
+  "repl.release-notes.err.args": "未知的 /release-notes 参数：{value}（应为单个版本号，如 /release-notes 2.1.0）",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };

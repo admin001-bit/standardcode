@@ -1,7 +1,7 @@
 // M6-WP-10：fork 型 subagent 与 /fork /export 两命令（DoD①②③④⑤）。
 // 判据自足：
-//   ① 门组合五态（DoD④ 判据面）：默认关=注册表逐字等于 CLI_COMMANDS 恰 34【M7-WP-06 /sandbox 33→34，2026-09-23】；workflow 开=35；fork 开=36（fork+export）；
-//      三 flag 全开=37；deferred 四件（branch/batch/loop/btw）任何门态零注册；CLI_COMMANDS 仍恰 34 且不含 fork/export/workflows
+//   ① 门组合五态（DoD④ 判据面）：默认关=注册表逐字等于 CLI_COMMANDS 恰 35【M7-WP-06 /sandbox 33→34、M7-WP-08 /release-notes 34→35，2026-09-23】；workflow 开=36；fork 开=37（fork+export）；
+//      三 flag 全开=38；deferred 四件（branch/batch/loop/btw）任何门态零注册；CLI_COMMANDS 仍恰 35 且不含 fork/export/workflows
 //      （M6 除名族逐名核对=M5 wp10-milestone 断言零改动的实证面）。
 //   ② fork 派生（DoD①）：走 spawnSubagentTask 同一入口=ORC-022 校验序列复用（refused 路=deny 规则实证）；
 //      fork 携带父转录（复合形 [自定]）+后台 async_launched（[CC] isAsync:!0）+空会话 fail-closed（[CC] prompt_missing 同构）。
@@ -77,24 +77,24 @@ const forkOpen = gateWith(["fork"]);
 const allOpen = gateWith(["workflow", "teams", "fork"]);
 
 describe("DoD④ 门组合五态（注册数 N 与断言一致=M6 除名族逐名核对）", () => {
-  it("默认关：注册表逐字（名字+顺序）等于 CLI_COMMANDS 且恰 34（含 M7 /goal /theme /keybindings /sandbox），fork/export/workflows 全缺席", () => {
+  it("默认关：注册表逐字（名字+顺序）等于 CLI_COMMANDS 且恰 35（含 M7 /goal /theme /keybindings /sandbox /release-notes），fork/export/workflows 全缺席", () => {
     const reg = gatedRegistry(closed);
     expect(reg.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(reg).toHaveLength(34);
+    expect(reg).toHaveLength(35);
     for (const n of ["fork", "export", "workflows"]) expect(reg.find((c) => c.name === n)).toBeUndefined();
   });
 
-  it("workflow 开=35（尾项 workflows）；fork 开=36（fork+export，无 workflows）；三 flag 全开=37", () => {
+  it("workflow 开=36（尾项 workflows）；fork 开=37（fork+export，无 workflows）；三 flag 全开=38", () => {
     const wf = gatedRegistry(workflowOpen);
-    expect(wf).toHaveLength(35);
+    expect(wf).toHaveLength(36);
     expect(wf.at(-1)!.name).toBe("workflows");
     const fk = gatedRegistry(forkOpen);
-    expect(fk).toHaveLength(36);
+    expect(fk).toHaveLength(37);
     const fkNames = fk.map((c) => c.name);
     expect(fkNames).toContain("fork");
     expect(fkNames).toContain("export");
     expect(fkNames).not.toContain("workflows");
-    expect(gatedRegistry(allOpen)).toHaveLength(37);
+    expect(gatedRegistry(allOpen)).toHaveLength(38);
   });
 
   it("deferred 四件（branch/batch/loop/btw）在任何门态都不注册（恒不放行）", () => {
@@ -106,8 +106,8 @@ describe("DoD④ 门组合五态（注册数 N 与断言一致=M6 除名族逐�
     }
   });
 
-  it("CLI_COMMANDS 守恒恰 34【M7-WP-06 /sandbox 33→34】且不含 M6 三件（除名族逐名核对=workflows/fork/export）；实现面恰三件", () => {
-    expect(CLI_COMMANDS).toHaveLength(34);
+  it("CLI_COMMANDS 守恒恰 35【M7-WP-06 /sandbox 33→34、M7-WP-08 /release-notes 34→35】且不含 M6 三件（除名族逐名核对=workflows/fork/export）；实现面恰三件", () => {
+    expect(CLI_COMMANDS).toHaveLength(35);
     for (const n of ["workflows", "fork", "export"]) expect(CLI_COMMANDS.map((c) => c.name)).not.toContain(n);
     expect(EXPERIMENTAL_FLAG_COMMANDS.fork).toEqual(["fork", "export"]);
     expect([...activeExperimentalCommandNames(forkOpen)].sort()).toEqual(["export", "fork"]);

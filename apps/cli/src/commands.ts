@@ -2,6 +2,8 @@
 // WP-09 增 /rewind /diff（EXE-030/040/041）；WP-05 增 /context；WP-07 增 /permission 扩展；WP-10 增 /new /resume /rename；WP-11 增余量七条（恰十八=§8.2 M2 全集）。
 // M7-WP-01（§8.2 M7 分期）增 /goal（会话目标：设定/查看/清除/refine 细化——Kimi goal mode 语义束收敛 [自定]，
 // 锚=A 级 KimiCode的产品细节.md 行 334-364；[CC] 无 /goal。正式面注册：CLI_COMMANDS 30→31，计数断言同步 +1 口径）。
+// M7-WP-08（§8.2 M7 分期）增 /release-notes（**只读**展示当前版本+变更记录；数据源约定 [自定]=仓根 CHANGELOG.md
+// 〔ADR-0048〕；不做版本升降级动作=更新走 /update 既有面。正式面注册：CLI_COMMANDS 34→35，计数断言同步 +1 口径）。
 import { PERMISSION_CYCLE, PERMISSION_LABEL, type PermissionMode } from "./session.ts";
 import type { TokenUsage } from "@standardcode/providers";
 import { sessionDiff, redactSecrets, t } from "@standardcode/platform";
@@ -231,6 +233,10 @@ export interface CommandContext {
    *  （当前会话保持、新会话生效，不重建 session/不触碰工具装配）；tier <name>=校验 SANDBOX_TIERS 后写 sandbox.tier；
    *  env STANDARD_CODE_SANDBOX 显式设定时明示"env 优先、settings 不生效"；后端二进制缺席=on 拒绝且不落盘（fail-closed）。 */
   sandbox(args: string): Promise<{ text: string }>;
+  /** M7-WP-08 /release-notes：**只读**展示当前版本（CLI_VERSION 单源）与变更记录；数据源约定 [自定]=
+   *  仓根 CHANGELOG.md（`## <version>` 节＋条目行；读法见 release-notes.ts／ADR-0048）；
+   *  带参=按版本号选节；文件缺省/版本未命中一律明报不静默；零写盘（不做版本升降级，更新走 /update）。 */
+  releaseNotes(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 
@@ -749,6 +755,23 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     },
     async execute(args, ctx) {
       const r = await ctx.sandbox(args);
+      ctx.write(r.text);
+    },
+  },
+  // —— M7-WP-08：M7 分期第五件（§8.2 M7 增 /release-notes；**只读**展示当前版本+变更记录——
+  // 数据源约定 [自定]＝仓根 CHANGELOG.md（`## <version>` 节＋条目行；ADR-0048）；带参=按版本号选节；
+  // 文件缺省/版本未命中一律明报不静默；不做版本升降级动作（更新走 /update 既有面）；禁止臆造历史条目。
+  // 命令清单第 35 件（30→31→32→33→34→35）——
+  {
+    name: "release-notes",
+    get usage() {
+      return t("cmd.release-notes.usage");
+    },
+    get description() {
+      return t("cmd.release-notes.desc");
+    },
+    async execute(args, ctx) {
+      const r = await ctx.releaseNotes(args);
       ctx.write(r.text);
     },
   },

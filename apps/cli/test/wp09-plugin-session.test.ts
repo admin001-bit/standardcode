@@ -232,9 +232,9 @@ describe("DoD⑤⑥：list/remove+命令清单 29→30 适配", () => {
     out = await runLines(s, ["/plugin list extra", "/exit"]);
     expect(out).toContain("unexpected argument");
   });
-  it("命令清单恰 34（DoD⑥ 断言随清单递增【M7-WP-06 /sandbox 33→34】）", () => {
+  it("命令清单恰 35（DoD⑥ 断言随清单递增【M7-WP-06 /sandbox 33→34、M7-WP-08 /release-notes 34→35】）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(34);
+    expect(names).toHaveLength(35);
     expect(names).toContain("plugin");
   });
 });

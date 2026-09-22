@@ -211,7 +211,7 @@ describe("repl 生命周期触发面（e2e：Session/Stop/PromptSubmit/Compact/S
     expect(text).toContain("sub-stop");
   }, 30_000);
 
-  it("命令清单恰 34【勘误链至 33；2026-09-23：M7-WP-04 /keybindings 32→33；M7-WP-06 /sandbox 33→34】", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(34);
+  it("命令清单恰 35【勘误链至 33；2026-09-23：M7-WP-04 /keybindings 32→33；M7-WP-06 /sandbox 33→34；M7-WP-08 /release-notes 34→35】", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(35);
   });
 });

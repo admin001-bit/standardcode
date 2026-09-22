@@ -39,6 +39,7 @@ import {
   type BindableAction,
 } from "./keybindings.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
+import { CHANGELOG_FILENAME, normalizeVersion, parseChangelog, selectSection } from "./release-notes.ts";
 
 export const SHELL_OUTPUT_TRUNCATE_CHARS = 30_000;
 
@@ -943,6 +944,37 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         return { text: s.i18n.t("repl.sandbox.tierSet", { value: name }) };
       }
       throw new Error(s.i18n.t("repl.sandbox.err.args", { value: raw }));
+    },
+    // —— M7-WP-08：/release-notes（只读展示当前版本+变更记录；§8.2 M7 增 /release-notes——
+    // 数据源约定 [自定]＝仓根 CHANGELOG.md（`## <version>` 节＋条目行；读法见 release-notes.ts／ADR-0048）；
+    // **只读**：仅 existsSync/readFile，任何分支都不写盘（DoD① 断言运行前后文件字节不变）；
+    // 文件缺省＝明报（输出约定说明：读哪个文件、如何维护），**不静默返回空**；
+    // 带参=按版本号选节（精确命中优先，其次唯一前缀命中），未命中＝明报不静默；
+    // 多 token 参数＝fail-closed 抛错；不做版本升降级动作（更新走 /update 既有面）=卡边界；
+    // 禁止臆造历史条目——输出即数据源既有文本（本仓确无 CHANGELOG.md 属"数据源缺省"面，明报）——
+    releaseNotes: async (args) => {
+      const s = deps.session;
+      const path = join(s.cwd, CHANGELOG_FILENAME);
+      const raw = args.trim();
+      if (/\s/.test(raw)) throw new Error(s.i18n.t("repl.release-notes.err.args", { value: raw }));
+      if (!existsSync(path)) {
+        return { text: s.i18n.t("repl.release-notes.missing", { file: CHANGELOG_FILENAME, path }) };
+      }
+      const sections = parseChangelog(await readFile(path, "utf8"));
+      const available = sections.map((x) => x.version).join(", ");
+      const target = raw === "" ? CLI_VERSION : raw;
+      const hit = selectSection(sections, target);
+      if (!hit) {
+        return { text: s.i18n.t("repl.release-notes.unknown", { file: CHANGELOG_FILENAME, value: target, list: available }) };
+      }
+      const head = raw === "" ? s.i18n.t("repl.release-notes.current", { version: CLI_VERSION }) : s.i18n.t("repl.release-notes.section", { version: hit.version });
+      const body = hit.entries.length > 0 ? hit.entries.join("\n") : s.i18n.t("repl.release-notes.empty", { version: hit.version });
+      let text = `${head}\n${body}`;
+      if (raw === "") {
+        const older = sections.filter((x) => normalizeVersion(x.version) !== normalizeVersion(hit.version)).map((x) => x.version);
+        if (older.length > 0) text += `\n${s.i18n.t("repl.release-notes.older", { file: CHANGELOG_FILENAME, list: older.join(", ") })}`;
+      }
+      return { text };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

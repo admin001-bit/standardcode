@@ -57,10 +57,10 @@ function sbCmd() {
 
 const OK_PROBE = () => "/opt/fake/standardcode-sandbox";
 
-describe("WP-06 注册面（CLI_COMMANDS 33→34，末位）", () => {
-  it("/sandbox 第 34 件且尾位；全集恰 34", () => {
-    expect(CLI_COMMANDS).toHaveLength(34);
-    expect(CLI_COMMANDS.at(-1)!.name).toBe("sandbox");
+describe("WP-06 注册面（CLI_COMMANDS 33→34；M7-WP-08 后 /release-notes=第 35 件）", () => {
+  it("/sandbox 第 34 件（现列于 /release-notes 之前）；全集恰 35", () => {
+    expect(CLI_COMMANDS).toHaveLength(35);
+    expect(CLI_COMMANDS.at(-2)!.name).toBe("sandbox");
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("sandbox");
     expect(sbCmd().usage).toBe("[on | off | tier <name>]");
   });

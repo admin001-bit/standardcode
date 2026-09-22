@@ -13,8 +13,8 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
-/** M7 正式面（M7-WP-01 /goal，2026-09-19；M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox，2026-09-23）。 */
-const M7 = ["goal", "theme", "keybindings", "sandbox"];
+/** M7 正式面（M7-WP-01 /goal，2026-09-19；M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox、M7-WP-08 /release-notes，2026-09-23）。 */
+const M7 = ["goal", "theme", "keybindings", "sandbox", "release-notes"];
 /** M5 新增面（旗标/子命令）=不得进斜杠集合（/sandbox 属 M7 到期待注册面，不在此列）。 */
 const M5_NOT_SLASH = ["sdb", "uninstall"];
 
@@ -22,8 +22,8 @@ const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
 describe("WP-10 DoD⑤ 命令全集零增量+发布面负查", () => {
-  it("命令全集=34 件【2026-09-19：M7-WP-01 注册 /goal 30→31；2026-09-23：M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox】且集合 ≡ §8.2 M1∪M2∪M3∪M4∪M7", () => {
-    expect(names).toHaveLength(34);
+  it("命令全集=35 件【2026-09-19：M7-WP-01 注册 /goal 30→31；2026-09-23：M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox、M7-WP-08 /release-notes】且集合 ≡ §8.2 M1∪M2∪M3∪M4∪M7", () => {
+    expect(names).toHaveLength(35);
     expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
   });
 
