@@ -126,7 +126,7 @@ describe("DoD②③④ startAutoUpdateCheck（启动后台非阻塞检查）", (
 describe("DoD⑤ 命令清单 30 适配", () => {
   it("/update=M4 末件注册（§8.2 M4 五件全；M7-WP-01 /goal 30→31，2026-09-19；Tab 候选含之——双义面钉在 wp10/tab-complete 测试）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(32);
-    expect(names[names.length - 1]).toBe("theme"); // M7-WP-03 /theme=第 32 件（尾项随清单递增，2026-09-23）
+    expect(names).toHaveLength(33);
+    expect(names[names.length - 1]).toBe("keybindings"); // M7-WP-04 /keybindings=第 33 件（尾项随清单递增，2026-09-23）
   });
 });

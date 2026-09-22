@@ -28,6 +28,15 @@ import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
 import { resolveTheme, setTheme, THEMES, themeFromSettings, type Theme } from "./theme.ts";
+import {
+  BINDABLE_ACTIONS,
+  keybindingsFromSettings,
+  normalizeSpec,
+  rebind,
+  setKeybindings,
+  settingsKeyFor,
+  type BindableAction,
+} from "./keybindings.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
 export const SHELL_OUTPUT_TRUNCATE_CHARS = 30_000;
@@ -833,6 +842,41 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       s.reload(); // 重载 settings（local 层并入）；下一 turn 渲染读取新主题
       setTheme(next); // 本会话即时生效（模块单源）
       return { text: s.i18n.t("repl.theme.switched", { value: next }) };
+    },
+    // —— M7-WP-04：/keybindings（键位表单源+持久化；§8.2 M7 增 /keybindings——
+    // 无参=列出「动作=键位」；`<action>`=查看该动作；`<action> <key>`=重绑定并写 ui.keybindings 到 local 层；
+    // 非法动作/非法键位/chord/键位冲突 = fail-closed 抛错（不静默回落缺省，且不落盘）；
+    // 重启恢复=下一 turn 由 settings 装配经 keybindingsFromSettings 解析（main.ts 键事件面同源消费）——
+    keybindings: async (args) => {
+      const s = deps.session;
+      const raw = args.trim();
+      const cur = keybindingsFromSettings(s.settings); // 非法设置 = fail-closed 抛错（不静默回落缺省）
+      setKeybindings(cur); // 本会话即时同步（进程内单源）
+      if (raw === "") {
+        const lines = BINDABLE_ACTIONS.map((a) => `  ${a} = ${normalizeSpec(cur[a])}`);
+        return { text: `${s.i18n.t("repl.keybindings.list")}\n${lines.join("\n")}` };
+      }
+      const words = raw.split(/\s+/);
+      const action = words[0]!;
+      if (!BINDABLE_ACTIONS.includes(action as BindableAction)) {
+        throw new Error(s.i18n.t("repl.keybindings.err.unknownAction", { value: action }));
+      }
+      if (words.length === 1) {
+        return { text: `${action} = ${normalizeSpec(cur[action as BindableAction])}` };
+      }
+      const specRaw = words.slice(1).join(" "); // chord 形（含空格）由 parseKeySpec 判定拒绝
+      let next: ReturnType<typeof rebind>;
+      try {
+        next = rebind(action, specRaw);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("conflict")) throw new Error(s.i18n.t("repl.keybindings.err.conflict", { value: specRaw }));
+        throw new Error(s.i18n.t("repl.keybindings.err.invalidKey", { value: specRaw }));
+      }
+      setLocalSetting(s.cwd, settingsKeyFor(action), normalizeSpec(next[action as BindableAction])); // 点路径落盘（与 ui.theme 同形）
+      s.reload(); // 重载 settings（local 层并入）
+      setKeybindings(keybindingsFromSettings(s.settings));
+      return { text: s.i18n.t("repl.keybindings.switched", { action, value: normalizeSpec(next[action as BindableAction]) }) };
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

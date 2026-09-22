@@ -85,7 +85,7 @@ describe("命令全集与 Tab 补全（UI-001）", () => {
     expect(CLI_COMMANDS.map((c) => c.name)).toEqual([
       "help", "clear", "exit", "model", "permission", "rewind", "context", "diff", "new", "resume", "rename",
       "compact", "config", "provider", "doctor", "cd", "add-dir", "reload",
-      "tasks", "background", "subtask", "effort", "init", "status", "usage", "mcp", "skills", "memory", "plugin", "update", "goal", "theme",
+      "tasks", "background", "subtask", "effort", "init", "status", "usage", "mcp", "skills", "memory", "plugin", "update", "goal", "theme", "keybindings",
     ]);
     expect(completeInput("/ta", CLI_COMMANDS).insert).toBe("/tasks ");
     expect(completeInput("/back", CLI_COMMANDS).insert).toBe("/background ");

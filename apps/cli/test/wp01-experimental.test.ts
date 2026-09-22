@@ -73,7 +73,7 @@ describe("WP-01 DoD① 默认关闭=零注册零回归", () => {
     const gate = resolveExperimental({ env: {}, settings: undefined });
     const registry = gatedRegistry(gate);
     expect(registry.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(registry).toHaveLength(32);
+    expect(registry).toHaveLength(33);
   });
 
   it("M6 七命令在真实注册表内零命中（B-03：四件 M7 未实现，三件门控未开启）", () => {

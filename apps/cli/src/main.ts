@@ -10,6 +10,8 @@ import { gateDangerTier, resolveSandboxSettings } from "./sandbox-config.ts";
 import type { SandboxTier } from "@standardcode/capabilities";
 // WP-08：版本号单一来源收敛入 version.ts（横幅与 /update/auto-check 的 registry 比对基准同源）。
 import { CLI_VERSION } from "./version.ts";
+// WP-04（接缝㉔）：键位表单源——本面只消费单源表，不再内联硬编码键位（缺省 shift+tab 见 keybindings.ts）。
+import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings } from "./keybindings.ts";
 
 /**
  * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
@@ -174,13 +176,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         },
       }
     : undefined;
-  // EXE-001 shift+tab 切换（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）
+  // EXE-001 权限循环键（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）。
+  // WP-04（接缝㉔）：键位改由单源表驱动（apps/cli/src/keybindings.ts，缺省 shift+tab，可经 /keybindings 重绑定）。
+  setKeybindings(keybindingsFromSettings(session.settings)); // 启动装配=重启恢复入口（非法设置 fail-closed）
   if (process.stdin.isTTY) {
     const { emitKeypressEvents } = await import("node:readline");
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
-    process.stdin.on("keypress", (_s: string, key: { name?: string; shift?: boolean; ctrl?: boolean }) => {
-      if (key?.shift && key.name === "tab" && !key.ctrl) {
+    process.stdin.on("keypress", (_s: string, key: { name?: string; shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean }) => {
+      if (matchKeyEvent(getKeybindings()["permission.cycle"], key)) {
         const next = session.broker.cycle();
         process.stdout.write(`\n[permission] ${PERMISSION_LABEL[next]} (${next})\n`);
         rl.prompt();

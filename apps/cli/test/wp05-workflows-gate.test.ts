@@ -46,18 +46,18 @@ describe("WP-05 DoD④ 实验门：/workflows 仅 flag 开启时注册", () => {
   it("门关：注册表逐字等于 CLI_COMMANDS 且恰 32 件（含 M7 /goal），/workflows 缺席", () => {
     const reg = gatedRegistry(closed);
     expect(reg.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(reg).toHaveLength(32);
+    expect(reg).toHaveLength(33);
     expect(reg.find((c) => c.name === "workflows")).toBeUndefined();
   });
 
-  it("门开（workflow flag）：/workflows 注册，注册表 32 件【M7-WP-01 /goal 30→31】", () => {
+  it("门开（workflow flag）：/workflows 注册，注册表 34 件【M7-WP-01 /goal 30→31；M7-WP-03 /theme 31→32；M7-WP-04 /keybindings 32→33】", () => {
     const reg = gatedRegistry(open);
     expect(reg.find((c) => c.name === "workflows")).toBeDefined();
-    expect(reg).toHaveLength(33);
+    expect(reg).toHaveLength(34);
   });
 
   it("CLI_COMMANDS 常量仍恰 32【M7-WP-01 /goal 30→31】（未被改动），实验命令实现不污染基础表", () => {
-    expect(CLI_COMMANDS).toHaveLength(32);
+    expect(CLI_COMMANDS).toHaveLength(33);
     expect(CLI_COMMANDS.map((c) => c.name)).not.toContain("workflows");
   });
 });

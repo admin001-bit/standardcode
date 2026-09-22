@@ -74,14 +74,14 @@ function lastUserText(s: Session): string {
 
 describe("DoD① 注册面：CLI_COMMANDS 恰 32（/goal=第 32 件，正式面）", () => {
   it("CLI_COMMANDS 恰 32 且尾项=goal（30→31 同步口径登记）", () => {
-    expect(CLI_COMMANDS).toHaveLength(32);
-    expect(CLI_COMMANDS.at(-1)!.name).toBe("theme");
+    expect(CLI_COMMANDS).toHaveLength(33);
+    expect(CLI_COMMANDS.at(-1)!.name).toBe("keybindings");
   });
   it("gatedRegistry 默认关=逐字等于 CLI_COMMANDS（31，含 goal——goal 非实验命令）", () => {
     const closed = { enabled: false, flags: [], notices: [] } as ExperimentalGate;
     const reg = gatedRegistry(closed);
     expect(reg.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(reg).toHaveLength(32);
+    expect(reg).toHaveLength(33);
     expect(reg.find((c) => c.name === "goal")).toBeDefined();
   });
 });

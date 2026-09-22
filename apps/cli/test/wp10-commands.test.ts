@@ -170,7 +170,7 @@ describe("DoD④ 两命令 Tab 补全", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
     expect(names).toContain("status");
     expect(names).toContain("usage");
-    expect(names.length).toBe(32);
+    expect(names.length).toBe(33);
     expect(completeInput("/st", CLI_COMMANDS).insert).toBe("/status ");
     expect(completeInput("/us", CLI_COMMANDS).insert).toBe("/usage "); // 四路唯一仍走 insert
     const cu = completeInput("/u", CLI_COMMANDS); // WP-08 /update 注册后 /u 双义（/e 先例形制）

@@ -11,6 +11,7 @@
    - settings 族增补（WP-06 消费）：`model.thinking`（值形同上，env 逃逸舱同名覆盖）。settings 族增补（WP-03 消费）：`autocompact.enabled`（默认 true）/ `autocompact.window`（值形同 env）/ `autocompact.pct`。
    - settings 族增补（M6-WP-01 消费）：`experimental.enabled`（默认关；布尔字面 `true` 才开，非布尔=fail-closed）、`experimental.flags`（字符串数组白名单，已知名 `workflow`/`teams`/`fork`；未登记 LIST_KEYS⇒不分层合并、最高来源胜出 `[自定]`）。env 族增补（M6-WP-01）：`STANDARD_CODE_EXPERIMENTAL`（值形 `1`/`true`/`yes`/`on` 与 `0`/`false`/`no`/`off`；逃逸舱**凌驾** settings，非法非空值=fail-closed 不回退）。
    - settings 族增补（M7-WP-03 消费）：`ui.theme`（值形枚举字符串 `plain`|`light`|`dark`；层=local，命令行/共享/user 不消费；缺省=`plain` 零 ANSI；非法值=fail-closed 不回退；自定义主题文件格式=[自定] 留白不做）。读侧由 `apps/cli/src/theme.ts` 的 `themeFromSettings(loaded)` 单源解析（重启恢复入口）。
+   - settings 族增补（M7-WP-04 消费）：`ui.keybindings`（值形=对象 `action -> key spec`，键集限于可绑动作全集 `permission.cycle`；key spec 形如 `shift+tab`/`ctrl+b`，**多键序 chord 不支持**；层=local；缺省=`{ "permission.cycle": "shift+tab" }`〔承 EXE-001 既有硬键位〕；未知动作/非法键位/同一键绑两动作=fail-closed 抛错不回退）。读侧由 `apps/cli/src/keybindings.ts` 的 `keybindingsFromSettings(loaded)` 单源解析（重启恢复入口）；键事件面（main.ts）只消费该单源表，不再内联硬编码键位。
 2. **合并语义**：叶子键最高来源胜出（自末尾遍历首中即返，_704.js 同构）；**列表键跨层合并**（高→低拼接去重）；`env.*` 键注入进程 env 后**粘滞**——进程存活期不可 unset（省略/null 均不解除），同键更新允许（§7.7 原文的可操作化）。
 3. **managed 路径 Linux 档**：Q-3 只给 Windows/macOS，Linux 取 `/etc/standardcode/managed-settings.json`（POSIX 系统级配置惯例）`[自定]`。
 4. **容错**：坏 JSON / schemaVersion 不符 → 该来源跳过 + 告警，启动不拒（企业下发坏文件不应瘫痪 CLI，fail-open 限单文件、fail-closed 限安全语义——安全键消费方各自校验）。

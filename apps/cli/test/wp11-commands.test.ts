@@ -256,7 +256,7 @@ describe("DoD①⑧ 注册+Tab 补全（M2 全集十八；M3 增五件后 23—�
   it("七命令注册（M2 分期）且 /re 前缀含 /reload", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
     for (const n of ["compact", "config", "provider", "doctor", "cd", "add-dir", "reload"]) expect(names).toContain(n);
-    expect(names.length).toBe(32); // M2 十八+M3 七+M4 五件+M7 /goal（M7-WP-01，2026-09-19：30→31）
+    expect(names.length).toBe(33); // M2 十八+M3 七+M4 五件+M7 /goal（M7-WP-01，2026-09-19：30→31）+M7-WP-03 /theme（2026-09-23：31→32）+M7-WP-04 /keybindings（2026-09-23：32→33）
     expect(completeInput("/re", CLI_COMMANDS).candidates).toContain("/reload");
   });
 });

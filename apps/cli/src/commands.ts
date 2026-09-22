@@ -224,6 +224,9 @@ export interface CommandContext {
   goal(args: string): Promise<{ text: string }>;
   /** M7-WP-03 /theme：无参=展示当前主题+可选主题；带参=切换并写 ui.theme 到 local 层（重启恢复）；非法值 fail-closed 抛错。 */
   theme(args: string): Promise<{ text: string }>;
+  /** M7-WP-04 /keybindings：无参=列出动作→键位；`<action> <key>`=重绑定并写 ui.keybindings 到 local 层（重启恢复）；
+   *  非法动作/非法键位/chord/键位冲突 = fail-closed 抛错（不静默回落缺省）。 */
+  keybindings(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 
@@ -711,6 +714,21 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     },
     async execute(args, ctx) {
       const r = await ctx.theme(args);
+      ctx.write(r.text);
+    },
+  },
+  // —— M7-WP-04：M7 分期第三件（§8.2 M7 增 /keybindings；键位表单源+持久化 settings.local.json ui.keybindings；
+  // 只绑既有动作不新增语义；不做多键序 chord [自定] 留白登记）。命令清单第 33 件（30→31→32→33）——
+  {
+    name: "keybindings",
+    get usage() {
+      return t("cmd.keybindings.usage");
+    },
+    get description() {
+      return t("cmd.keybindings.desc");
+    },
+    async execute(args, ctx) {
+      const r = await ctx.keybindings(args);
       ctx.write(r.text);
     },
   },

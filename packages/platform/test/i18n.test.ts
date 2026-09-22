@@ -62,8 +62,8 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
   it("commands.ts 零残留 description/usage 字面量（全经运行时 getter t）", () => {
     expect(cmdSrc).not.toMatch(/description: "/);
     expect(cmdSrc).not.toMatch(/usage: "/);
-    expect((cmdSrc.match(/get description\(\) \{/g) ?? []).length).toBe(32); // +WP-08 /update（2026-09-15）+M7-WP-01 /goal（2026-09-19）+M7-WP-03 /theme（2026-09-23）
-    expect((cmdSrc.match(/get usage\(\) \{/g) ?? []).length).toBe(18); // +M7-WP-01 /goal usage（2026-09-19）+M7-WP-03 /theme usage（2026-09-23）
+    expect((cmdSrc.match(/get description\(\) \{/g) ?? []).length).toBe(33); // +WP-08 /update（2026-09-15）+M7-WP-01 /goal（2026-09-19）+M7-WP-03 /theme（2026-09-23）
+    expect((cmdSrc.match(/get usage\(\) \{/g) ?? []).length).toBe(19); // +M7-WP-01 /goal usage（2026-09-19）+M7-WP-03 /theme usage（2026-09-23）
   });
   it("全部 catalog 键被消费（死键守卫；动态拼装基名豁免）", () => {
     const allSrc = cmdSrc + replSrc + sessSrc;

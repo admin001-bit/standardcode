@@ -51,7 +51,7 @@ describe("DoD⑥ flag 默认关=工具零注册", () => {
 describe("命令面零回归（工具面改动不触命令门）", () => {
   it("默认关门下命令表仍恰 32 件【M7-WP-01 /goal 30→31】且实验命令零命中", () => {
     const names = gatedRegistry(OFF).map((c) => c.name);
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(33);
     for (const experimental of ["workflows", "fork", "export", "branch", "batch", "loop", "btw"]) {
       expect(names).not.toContain(experimental);
     }

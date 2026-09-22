@@ -234,7 +234,7 @@ describe("DoD⑤⑥：list/remove+命令清单 29→30 适配", () => {
   });
   it("命令清单恰 32（DoD⑥ 断言随清单递增【2026-09-19：M7-WP-01 /goal 30→31】）", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(33);
     expect(names).toContain("plugin");
   });
 });

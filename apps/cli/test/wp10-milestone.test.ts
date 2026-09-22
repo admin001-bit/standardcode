@@ -13,7 +13,7 @@ const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
 /** M7 正式面首件（M7-WP-01 /goal，2026-09-19 注册）。 */
-const M7 = ["goal", "theme"];
+const M7 = ["goal", "theme", "keybindings"];
 /** M5 新增面（旗标/子命令/M7 分期命令）=不得进斜杠集合。 */
 const M5_NOT_SLASH = ["sdb", "uninstall", "sandbox"];
 
@@ -22,7 +22,7 @@ const names = CLI_COMMANDS.map((c) => c.name);
 
 describe("WP-10 DoD⑤ 命令全集零增量+发布面负查", () => {
   it("命令全集=32 件【2026-09-19：M7-WP-01 注册 /goal 30→31】且集合 ≡ §8.2 M1∪M2∪M3∪M4∪M7", () => {
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(33);
     expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
   });
 

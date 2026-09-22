@@ -121,7 +121,7 @@ describe("DoD⑥ /memory 双轨可视化", () => {
   });
 
   it("命令清单恰 32【勘误链至 30；2026-09-19：M7-WP-01 /goal 30→31】", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(32);
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(33);
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("memory");
   });
 });
