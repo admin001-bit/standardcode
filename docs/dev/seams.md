@@ -109,7 +109,7 @@
 
 ## 接缝㉑ 实验特性位 × 命令注册 × 遥测事件（2026-09-19，WP-12 随 M6-1 板补登）
 
-- 定义：flag 默认关=三层零产出——命令不注册（基表逐字等于 `CLI_COMMANDS` 恰 30；`workflows`/`fork`/`export` 门内注册）、工具不注册（默认六件无 SendMessage/Workflow）、遥测零事件（双层：遥测门关=emit 纯布尔即返零构造零写盘；flag 关=桥接不注入=onTelemetry 缺位零事件）；非法值 fail-closed 不猜、未知名/未知键告警不静默。
+- 定义：flag 默认关=三层零产出——命令不注册（基表逐字等于 `CLI_COMMANDS` **恰 35**〔M7 分期逐件注册后现值；本条 2026-09-19 立文时为 30，递增链 30→31→32→33→34→35〕；`workflows`/`fork`/`export` 门内注册）、工具不注册（默认六件无 SendMessage/Workflow）、遥测零事件（双层：遥测门关=emit 纯布尔即返零构造零写盘；flag 关=桥接不注入=onTelemetry 缺位零事件）；非法值 fail-closed 不猜、未知名/未知键告警不静默。
 - 锚点：v2.8 ORC-050（行 298）+§8.2 行 365+§12.5 接缝㉑+ENG-090 行 433；实现 packages/platform/src/experimental.ts:28（EXPERIMENTAL_FLAGS）/:75（resolveExperimental）+apps/cli/src/experimental-gate.ts（命令/工具注册门）+packages/capabilities/src/workflow/telemetry-bridge.ts（onTelemetry 注入件）。
-- 测试：apps/cli/test/wp12-milestone.test.ts（收口断言集：基表 30 零增量+七件候选零命中+工具面六件+门候选守恒 7 件）+apps/cli/test/wp11-workflow-telemetry.test.ts:129/:130/:149（接缝㉑ 双层=门关 emit 即返/flag 关桥接不注入）+wp01-experimental.test.ts（门序/告警/零注册）。
+- 测试：apps/cli/test/wp12-milestone.test.ts（收口断言集：基表计数随分期递增〔现值 35，见上条〕+七件候选零命中+工具面六件+门候选守恒 7 件）+apps/cli/test/wp11-workflow-telemetry.test.ts:129/:130/:149（接缝㉑ 双层=门关 emit 即返/flag 关桥接不注入）+wp01-experimental.test.ts（门序/告警/零注册）。
 - 未解决：无（桥接生产装配位=M6 统一接线义务，WP-11 F1）。
