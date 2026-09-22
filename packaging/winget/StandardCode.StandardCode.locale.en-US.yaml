@@ -1,0 +1,27 @@
+# WP-10（M7）winget 默认 locale 清单。PackageIdentifier 与 version 清单同源。
+PackageIdentifier: StandardCode.StandardCode
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: StandardCode OSS
+PublisherUrl: https://github.com/admin001-bit/standardcode
+PublisherSupportUrl: https://github.com/admin001-bit/standardcode/issues
+PackageName: StandardCode
+PackageUrl: https://github.com/admin001-bit/standardcode
+License: Apache-2.0
+LicenseUrl: https://github.com/admin001-bit/standardcode/blob/main/LICENSE
+Copyright: Copyright (c) StandardCode OSS contributors
+ShortDescription: Open-source CLI coding agent (generic multi-protocol providers).
+Description: |-
+  StandardCode is an open-source terminal coding agent with a generic multi-protocol
+  provider layer, sandboxed tool execution, and a slash-command driven surface.
+  Distributed as a single-file binary (Bun compile, ADR-0047); no installer lifecycle
+  scripts, zero privilege escalation on install.
+Moniker: standardcode
+Tags:
+  - cli
+  - ai
+  - coding-agent
+  - developer-tools
+  - terminal
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
