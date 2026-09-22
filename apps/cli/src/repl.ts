@@ -27,7 +27,7 @@ import { exportTargetPath, renderSessionMarkdown } from "./export-command.ts";
 import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
-import { resolveTheme, setTheme, THEMES, themeFromSettings } from "./theme.ts";
+import { resolveTheme, setTheme, THEMES, themeFromSettings, type Theme } from "./theme.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
 export const SHELL_OUTPUT_TRUNCATE_CHARS = 30_000;
@@ -822,7 +822,13 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         const opts = THEMES.map((t) => (t === cur ? `* ${t}` : `  ${t}`)).join("\n");
         return { text: `${s.i18n.t("repl.theme.current", { value: cur })}\n${opts}` };
       }
-      const next = resolveTheme(raw); // 非法/未知 = fail-closed 抛错（不静默回落）
+      let next: Theme;
+      try {
+        next = resolveTheme(raw); // 非法/未知 = fail-closed 抛错（不静默回落）
+      } catch {
+        // 经 i18n 本地化报错（repl.theme.err.unknown 键对应；EN/ZH 模板均含 "plain, light, dark"）
+        throw new Error(s.i18n.t("repl.theme.err.unknown", { value: raw }));
+      }
       setLocalSetting(s.cwd, "ui.theme", next);
       s.reload(); // 重载 settings（local 层并入）；下一 turn 渲染读取新主题
       setTheme(next); // 本会话即时生效（模块单源）

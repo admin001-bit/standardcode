@@ -20,8 +20,10 @@ import {
   type ThemeToken,
 } from "../src/theme.ts";
 
-const ESC = "\x1b";
-const COLOR_RE = new RegExp(ESC + "\\[[0-9;]*m"); // ANSI SGR 颜色码（含 reset）；擦除码 [2K 不匹配（结尾非 m）
+const ESC = "\x1b"; // 真实 ESC 字节 0x1B，用于校验 colorize 运行时真实产物
+// 守卫判据须覆盖三种书写形态（main 抽查补判据）：①源码真实 ESC 字节（运行时产物）②文本转义 `\x1b[`
+// ③文本转义 `\u001b[`，后接 [0-9;]*m；擦除码 `[2K`（结尾非 m）不匹配 → 维持既有语义；白名单 theme.ts/main.ts 不变。
+const COLOR_RE = /\x1b\[[0-9;]*m|\\x1b\[[0-9;]*m|\\u001b\[[0-9;]*m/;
 
 function fixture(cwd: string) {
   const init: SessionInit = { provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd };
@@ -152,7 +154,7 @@ describe("/theme 命令（切换/持久化/重启恢复 + 非法 fail-closed）"
 
   it("非法值 fail-closed 抛错（不静默回落缺省，且不写盘）", async () => {
     const { ctx } = fixture(cwd);
-    await expect(themeCmd().execute("neon", ctx)).rejects.toThrow(/invalid theme/);
+    await expect(themeCmd().execute("neon", ctx)).rejects.toThrow(/plain, light, dark/);
     const file = path.join(cwd, ".standardcode", "settings.local.json");
     expect(existsSync(file)).toBe(false); // 失败不落盘
   });
@@ -160,8 +162,9 @@ describe("/theme 命令（切换/持久化/重启恢复 + 非法 fail-closed）"
 
 describe("DoD② 渲染单源守卫（grep 无散落硬编码色）", () => {
   // 白名单理由：theme.ts 是唯一颜色字面量单源（接缝㉔）；main.ts:207 的 \x1b[2K 是清行擦除码（非颜色，
-  // 本正则 [0-9;]*m 不匹配），允许保留。其余 apps/cli/src 任何文件出现裸 ANSI 颜色码 → 本用例转红。
-  it("apps/cli/src（除 theme.ts/main.ts）无裸 ANSI 颜色码；新增一处硬编码色可判别转红", () => {
+  // 本正则 [0-9;]*m 不匹配），允许保留。其余 apps/cli/src 任何文件出现裸 ANSI 颜色码（三种书写形态：
+  // 真实 ESC 字节 / 文本 `\x1b[` / 文本 `\u001b[`）→ 本用例转红。
+  it("apps/cli/src（除 theme.ts/main.ts）无裸 ANSI 颜色码（三形态）；新增一处硬编码色可判别转红", () => {
     const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
     const WHITELIST = new Set(["theme.ts", "main.ts"]);
     const violations: string[] = [];
