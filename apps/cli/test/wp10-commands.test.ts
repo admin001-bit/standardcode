@@ -166,11 +166,11 @@ describe("DoD③ 价格表行合计（内置固定表 [自定] 占位）", () =>
 });
 
 describe("DoD④ 两命令 Tab 补全", () => {
-  it("/st 唯一命中 /status；/us 唯一命中 /usage、/u 双义（insert 面）；候选列表含前缀重叠件；命令全集恰 32【勘误链 2026-09-14/15 至 30；2026-09-19：M7-WP-01 /goal 30→31】", () => {
+  it("/st 唯一命中 /status；/us 唯一命中 /usage、/u 双义（insert 面）；候选列表含前缀重叠件；命令全集恰 34【勘误链 2026-09-14/15 至 30；2026-09-19：M7-WP-01 /goal 30→31；2026-09-23：M7-WP-03 /theme 31→32、M7-WP-04 /keybindings 32→33、M7-WP-06 /sandbox 33→34】", () => {
     const names = CLI_COMMANDS.map((c) => c.name);
     expect(names).toContain("status");
     expect(names).toContain("usage");
-    expect(names.length).toBe(33);
+    expect(names.length).toBe(34);
     expect(completeInput("/st", CLI_COMMANDS).insert).toBe("/status ");
     expect(completeInput("/us", CLI_COMMANDS).insert).toBe("/usage "); // 四路唯一仍走 insert
     const cu = completeInput("/u", CLI_COMMANDS); // WP-08 /update 注册后 /u 双义（/e 先例形制）

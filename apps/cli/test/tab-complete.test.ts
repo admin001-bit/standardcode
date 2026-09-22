@@ -12,7 +12,7 @@ describe("completeInput (UI-001)", () => {
 
   it("多义前缀 → 候选列表；单命令前缀 → 唯一补全", () => {
     const c = completeInput("/", CLI_COMMANDS);
-    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff", "/new", "/resume", "/rename", "/compact", "/config", "/provider", "/doctor", "/cd", "/add-dir", "/reload", "/tasks", "/background", "/subtask", "/effort", "/init", "/status", "/usage", "/mcp", "/skills", "/memory", "/plugin", "/update", "/goal", "/theme", "/keybindings"]); // 30（2026-09-15）+M7-WP-01 /goal=31（2026-09-19）+M7-WP-03 /theme=32（2026-09-23）
+    expect(c.candidates).toEqual(["/help", "/clear", "/exit", "/model", "/permission", "/rewind", "/context", "/diff", "/new", "/resume", "/rename", "/compact", "/config", "/provider", "/doctor", "/cd", "/add-dir", "/reload", "/tasks", "/background", "/subtask", "/effort", "/init", "/status", "/usage", "/mcp", "/skills", "/memory", "/plugin", "/update", "/goal", "/theme", "/keybindings", "/sandbox"]); // 30（2026-09-15）+M7-WP-01 /goal=31（2026-09-19）+M7-WP-03 /theme=32、M7-WP-04 /keybindings=33、M7-WP-06 /sandbox=34（2026-09-23）
     const ce = completeInput("/e", CLI_COMMANDS); // WP-07 /effort 落地后 /e 双义
     expect(ce.candidates).toEqual(["/exit", "/effort"]);
     const c2 = completeInput("/exi", CLI_COMMANDS); // 唯一命中仍走 insert

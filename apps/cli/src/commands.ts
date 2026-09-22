@@ -227,6 +227,10 @@ export interface CommandContext {
   /** M7-WP-04 /keybindings：无参=列出动作→键位；`<action> <key>`=重绑定并写 ui.keybindings 到 local 层（重启恢复）；
    *  非法动作/非法键位/chord/键位冲突 = fail-closed 抛错（不静默回落缺省）。 */
   keybindings(args: string): Promise<{ text: string }>;
+  /** M7-WP-06 /sandbox：无参=查看沙箱状态（是否启用/档位/生效来源）；on|off=写 sandbox.enabled 到 local 层
+   *  （当前会话保持、新会话生效，不重建 session/不触碰工具装配）；tier <name>=校验 SANDBOX_TIERS 后写 sandbox.tier；
+   *  env STANDARD_CODE_SANDBOX 显式设定时明示"env 优先、settings 不生效"；后端二进制缺席=on 拒绝且不落盘（fail-closed）。 */
+  sandbox(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 
@@ -729,6 +733,22 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     },
     async execute(args, ctx) {
       const r = await ctx.keybindings(args);
+      ctx.write(r.text);
+    },
+  },
+  // —— M7-WP-06：M7 分期第四件（§8.2 M7 增 /sandbox；接 M5 沙箱后端〔-sdb 基座在位〕——
+  // 只做命令+开关+状态显示，不改沙箱后端与策略编译器〔M5 冻结面〕；读侧单源=sandbox-config.ts。
+  // 开关翻转语义 [自定]：当前会话保持、新会话生效（不重建 session/不触碰工具装配）。命令清单第 34 件（30→31→32→33→34）——
+  {
+    name: "sandbox",
+    get usage() {
+      return t("cmd.sandbox.usage");
+    },
+    get description() {
+      return t("cmd.sandbox.desc");
+    },
+    async execute(args, ctx) {
+      const r = await ctx.sandbox(args);
       ctx.write(r.text);
     },
   },

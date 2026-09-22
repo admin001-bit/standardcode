@@ -372,6 +372,17 @@ Object.assign(EN, {
   "repl.theme.err.unknown": "invalid theme: {value} (expected one of: plain, light, dark)",
   "repl.goal.err.emptyRefine": "[goal] refine produced an empty objective — refusing to clear the goal silently",
   "repl.goal.err.subcommandArgs": "[goal] /{sub} takes no arguments — if your objective starts with \"{sub}\", escape it with {hint}: /goal {hint} <objective>",
+  // —— M7-WP-06：/sandbox（沙箱开关 UI+持久化；§8.2 M7 增 /sandbox；接 M5 沙箱后端）——
+  "cmd.sandbox.usage": "[on | off | tier <name>]",
+  "cmd.sandbox.desc": "view sandbox status, or toggle it (on/off) and set the tier; persists to settings.local.json sandbox.enabled/sandbox.tier (current session unchanged, new sessions pick it up)",
+  "repl.sandbox.status": "[sandbox] enabled: {enabled}; tier: {tier}; source: {source}",
+  "repl.sandbox.sourceHint": "[sandbox] precedence: env STANDARD_CODE_SANDBOX > -sdb flag > settings sandbox.enabled (default: off)",
+  "repl.sandbox.toggled": "[sandbox] {state} — persisted to .standardcode/settings.local.json; current session unchanged, takes effect in new sessions",
+  "repl.sandbox.tierSet": "[sandbox] tier set to {value} — persisted; current session unchanged, takes effect in new sessions",
+  "repl.sandbox.envOverride": "[sandbox] STANDARD_CODE_SANDBOX is set ({value}): env takes precedence, settings sandbox.enabled does not apply until the env var is removed",
+  "repl.sandbox.err.tier": "invalid sandbox tier: {value} (expected one of: read-only, workspace-write, danger-full-access)",
+  "repl.sandbox.err.backend": "[sandbox] backend unavailable ({value}) — refusing to enable: persisting it would break the next startup; install the standardcode-sandbox binary first",
+  "repl.sandbox.err.args": "unknown /sandbox argument: {value} (expected: on | off | tier <name>)",
 });
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
@@ -560,6 +571,17 @@ Object.assign(ZH_CN, {
   "repl.keybindings.err.conflict": "键位冲突：{value} 已绑定到其它动作",
   "repl.keybindings.err.invalidKey": "非法键位：{value}（多键序与未知键名一律拒绝）",
   "repl.theme.err.unknown": "无效主题：{value}（应为其中之一：plain, light, dark）",
+  // —— M7-WP-06：/sandbox（沙箱开关 UI+持久化；§8.2 M7 增 /sandbox；接 M5 沙箱后端）——
+  "cmd.sandbox.usage": "[on | off | tier <档位名>]",
+  "cmd.sandbox.desc": "查看沙箱状态，或开关沙箱（on/off）与设置档位；持久化到 settings.local.json 的 sandbox.enabled/sandbox.tier（当前会话保持，新会话生效）",
+  "repl.sandbox.status": "[sandbox] 启用：{enabled}；档位：{tier}；来源：{source}",
+  "repl.sandbox.sourceHint": "[sandbox] 优先序：env STANDARD_CODE_SANDBOX > -sdb 旗标 > settings sandbox.enabled（缺省：关）",
+  "repl.sandbox.toggled": "[sandbox] {state}——已持久化到 .standardcode/settings.local.json；当前会话保持，新会话生效",
+  "repl.sandbox.tierSet": "[sandbox] 档位已设为 {value}——已持久化；当前会话保持，新会话生效",
+  "repl.sandbox.envOverride": "[sandbox] STANDARD_CODE_SANDBOX 已设定（{value}）：env 优先，移除该环境变量前 settings sandbox.enabled 不生效",
+  "repl.sandbox.err.tier": "非法沙箱档位：{value}（应为其中之一：read-only, workspace-write, danger-full-access）",
+  "repl.sandbox.err.backend": "[sandbox] 后端不可用（{value}）——拒绝启用：落盘会让下次启动失败；请先安装 standardcode-sandbox 二进制",
+  "repl.sandbox.err.args": "未知的 /sandbox 参数：{value}（应为：on | off | tier <档位名>）",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };

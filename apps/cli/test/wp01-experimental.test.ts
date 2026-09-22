@@ -1,6 +1,6 @@
 // WP-01（M6 首卡）flag 矩阵单测：实验特性位基座 + 命令注册门。
 // 判据自足（板 WP-01 DoD①-⑤）：
-//   ①默认关闭：flag 全缺省=七命令不注册、工具面零新增（命令全集断言随 M7-WP-01 /goal 同步 30→31，2026-09-19）
+//   ①默认关闭：flag 全缺省=七命令不注册、工具面零新增（命令全集断言随 M7 分期同步至 34，2026-09-23）
 //   ②开启路径两源生效序按 §7.7（env 逃逸舱 > settings，明文于模块头注），非法值 fail-closed 不猜
 //   ③未知/非法 flag 名=告警不静默丢弃（M4 WP-05 O1 同族教训）
 //   ④八包 tsc 0  ⑤文档标 experimental
@@ -69,11 +69,11 @@ describe("WP-01 DoD① 默认关闭=零注册零回归", () => {
     expect(gated).toEqual(["help"]); // 非实验命令原样保留
   });
 
-  it("真实表默认关=恰 32 件且逐字等于 CLI_COMMANDS（wp10 命令全集断言同步 +1 口径）", () => {
+  it("真实表默认关=恰 34 件且逐字等于 CLI_COMMANDS（wp10 命令全集断言同步 +1 口径）", () => {
     const gate = resolveExperimental({ env: {}, settings: undefined });
     const registry = gatedRegistry(gate);
     expect(registry.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(registry).toHaveLength(33);
+    expect(registry).toHaveLength(34);
   });
 
   it("M6 七命令在真实注册表内零命中（B-03：四件 M7 未实现，三件门控未开启）", () => {

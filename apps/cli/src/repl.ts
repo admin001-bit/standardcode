@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
 import { resolveTheme, setTheme, THEMES, themeFromSettings, type Theme } from "./theme.ts";
+import { probeSandboxBackend, resolveSandboxSettings, isSandboxTier, SANDBOX_ENABLED_KEY, sandboxActivationSource, SANDBOX_TIER_KEY } from "./sandbox-config.ts";
 import {
   BINDABLE_ACTIONS,
   keybindingsFromSettings,
@@ -64,6 +65,19 @@ export interface ReplDeps {
   sessionPicker?: SessionPicker;
   /** WP-08 /update 注入面（离线测试桩；缺席=真 registry+npm 子进程，缺省零网络请求依赖 env 门）。 */
   update?: UpdateDeps;
+  /** M7-WP-06 /sandbox 注入面：cliFlag=启动期 -sdb 旗标态（main.ts 装配）；probe=后端探针（测试注入，缺席=真探针）。
+   *  缺席整项=旗标 false+真探针（生产缺省）。 */
+  sandbox?: SandboxCommandDeps;
+}
+
+/** M7-WP-06 /sandbox 依赖注入面（DoD③ 后端探针可注入，不依赖本机真实装没装 rust 臂）。 */
+export interface SandboxCommandDeps {
+  /** 启动期 `-sdb` 旗标态（来源展示与装配口径与 main.ts 同源）。 */
+  cliFlag?: boolean;
+  /** 后端二进制探针（缺席=probeSandboxBackend 缺省=executor resolveSandboxBinary）。 */
+  probe?: () => string;
+  /** env 源（默认 process.env；测试注入，隔离主机 env）。 */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -877,6 +891,58 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       s.reload(); // 重载 settings（local 层并入）
       setKeybindings(keybindingsFromSettings(s.settings));
       return { text: s.i18n.t("repl.keybindings.switched", { action, value: normalizeSpec(next[action as BindableAction]) }) };
+    },
+    // —— M7-WP-06：/sandbox（沙箱开关 UI+持久化；§8.2 M7 增 /sandbox——
+    // 无参=查看「是否启用／档位／生效来源」；状态恒由 resolveSandboxSettings 以**当前会话 settings** 计算
+    //   （读侧单源 sandbox-config.ts，不自写第二套判定）；
+    // on|off=写 sandbox.enabled 到 local 层；tier <name>=校验 SANDBOX_TIERS 后写 sandbox.tier；
+    // 开关翻转语义 [自定]：**当前会话保持、新会话生效**——只写盘+s.reload()，不重建 session、不触碰工具装配；
+    // env STANDARD_CODE_SANDBOX 显式设定=明示「env 优先、settings 不生效」（不静默，仍落盘留用户意图）；
+    // 后端二进制缺席=on 拒绝且不落盘（DoD③ fail-closed：写盘会让下次启动 createSession 抛错=把 CLI 打死）；
+    // 非法 tier/未知子命令=fail-closed 抛错且不落盘）——
+    sandbox: async (args) => {
+      const s = deps.session;
+      const env = deps.sandbox?.env ?? process.env;
+      const cliFlag = deps.sandbox?.cliFlag ?? false;
+      const readSettings = () => ({
+        enabled: settingsValue<boolean>(s.settings, SANDBOX_ENABLED_KEY),
+        tier: settingsValue<string>(s.settings, SANDBOX_TIER_KEY),
+      });
+      const raw = args.trim();
+      if (raw === "") {
+        const assembly = resolveSandboxSettings({ cliFlag, env, settings: readSettings() });
+        const source = sandboxActivationSource({ cliFlag, env, settings: readSettings() });
+        const head = s.i18n.t("repl.sandbox.status", { enabled: assembly.enabled ? "on" : "off", tier: assembly.tier, source });
+        return { text: `${head}\n${s.i18n.t("repl.sandbox.sourceHint")}` };
+      }
+      const words = raw.split(/\s+/);
+      const sub = words[0]!.toLowerCase();
+      if (sub === "on" || sub === "off") {
+        if (words.length > 1) throw new Error(s.i18n.t("repl.sandbox.err.args", { value: raw }));
+        let text: string;
+        if (sub === "on") {
+          const probe = probeSandboxBackend(deps.sandbox?.probe); // 缺席=真探针（executor resolveSandboxBinary）
+          if (!probe.ok) throw new Error(s.i18n.t("repl.sandbox.err.backend", { value: probe.reason ?? "" })); // fail-closed：不落盘
+          setLocalSetting(s.cwd, SANDBOX_ENABLED_KEY, true);
+          text = s.i18n.t("repl.sandbox.toggled", { state: "on" });
+        } else {
+          setLocalSetting(s.cwd, SANDBOX_ENABLED_KEY, false);
+          text = s.i18n.t("repl.sandbox.toggled", { state: "off" });
+        }
+        s.reload(); // 重载 settings（local 层并入）；当前会话装配（tools/sandbox 句柄）不动=在途会话语义保持
+        const envRaw = (env.STANDARD_CODE_SANDBOX ?? "").trim();
+        if (envRaw !== "") text += `\n${s.i18n.t("repl.sandbox.envOverride", { value: envRaw })}`;
+        return { text };
+      }
+      if (sub === "tier") {
+        const name = words[1];
+        if (name === undefined || words.length > 2) throw new Error(s.i18n.t("repl.sandbox.err.args", { value: raw }));
+        if (!isSandboxTier(name)) throw new Error(s.i18n.t("repl.sandbox.err.tier", { value: name })); // fail-closed：不落盘
+        setLocalSetting(s.cwd, SANDBOX_TIER_KEY, name);
+        s.reload();
+        return { text: s.i18n.t("repl.sandbox.tierSet", { value: name }) };
+      }
+      throw new Error(s.i18n.t("repl.sandbox.err.args", { value: raw }));
     },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,

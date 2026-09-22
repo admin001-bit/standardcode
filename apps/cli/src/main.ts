@@ -40,8 +40,9 @@ function createLineRouter(rl: import("node:readline").Interface) {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  // M5-WP-03：唯一旗标 -sdb（显式开启沙箱，EXE-011 行 427；/sandbox 命令=M7 不注册）。
-  // 命令全集 30 断言=斜杠命令面，旗标不触（WP-10 DoD⑤ 同形）。
+  // M5-WP-03：唯一旗标 -sdb（显式开启沙箱，EXE-011 行 427；/sandbox 斜杠命令=M7-WP-06 已注册，
+  // 见 runRepl 的 `sandbox` 注入面——本旗标态传入命令面作"生效来源"展示）。
+  // 命令全集 34 断言=斜杠命令面，旗标不触（WP-10 DoD⑤ 同形）。
   const sandboxCliFlag = argv.length === 1 && argv[0] === "-sdb";
   if (argv.length > 0 && !sandboxCliFlag) {
     process.stdout.write(`usage: standardcode [-sdb]\n   (interactive REPL; --version for version; uninstall [--purge] for removal)\n`);
@@ -217,6 +218,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     fileHistory,
     confirm: ttyConfirm,
     sessionPicker,
+    // M7-WP-06：/sandbox 命令面注入（旗标态=装配期已解析的同一来源；探针缺席=executor 真探针）。
+    sandbox: { cliFlag: sandboxCliFlag },
   });
 }
 

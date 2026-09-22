@@ -5,7 +5,7 @@
 //   M3 增 /tasks /background /subtask /effort /init /status /usage；
 //   M4 增 /mcp /plugin /skills /memory /update（BLK-01 用户裁决①=Plugin 进 M4，含 /plugin，全集 30）；
 //   M6 增 /branch /fork /export /workflows /batch /loop /btw；M7 增 /goal /theme /keybindings /release-notes /sandbox。
-// 与 commands.test.ts"恰三十"有序快照断言互补：本文件是**集合相等**（不依赖注册顺序），
+// 与 commands.test.ts"恰三十四"有序快照断言互补：本文件是**集合相等**（不依赖注册顺序），
 // M6/M7 除名=负半（B-03 边界：未分期命令不得注册）。
 import { describe, expect, it } from "vitest";
 import { CLI_COMMANDS } from "../src/commands.ts";
@@ -14,17 +14,17 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
-/** M7 正式面（M7-WP-01 /goal 2026-09-19 注册；M7-WP-03 /theme 2026-09-23 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
-const M7 = ["goal", "theme", "keybindings"];
-const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "release-notes", "sandbox"];
+/** M7 正式面（M7-WP-01 /goal 2026-09-19 注册；M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox 2026-09-23 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
+const M7 = ["goal", "theme", "keybindings", "sandbox"];
+const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "release-notes"];
 
 const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
 describe("命令全集 × §8.2 分期集合相等（WP-12 DoD③）", () => {
-  it("注册表名集合 = M1∪M2∪M3∪M4∪M7 分期并集（32 件【2026-09-19：M7-WP-01 注册 /goal 30→31；2026-09-23：M7-WP-03 注册 /theme 31→32】）", () => {
+  it("注册表名集合 = M1∪M2∪M3∪M4∪M7 分期并集（34 件【2026-09-19：M7-WP-01 注册 /goal 30→31；2026-09-23：M7-WP-03 /theme 31→32、M7-WP-04 /keybindings 32→33、M7-WP-06 /sandbox 33→34】）", () => {
     expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
-    expect(names).toHaveLength(33);
+    expect(names).toHaveLength(34);
   });
 
   it("M4 五件逐名在位（/mcp /plugin /skills /memory /update）", () => {
