@@ -2,13 +2,16 @@
 import { formatRawUsage, type UsageMeter } from "@standardcode/context";
 import type { TokenUsage } from "@standardcode/providers";
 import type { AgentEvent, TurnState } from "@standardcode/harness";
+import { colorize, setTheme, type Theme } from "./theme.ts";
 
 export async function renderTurn(
   events: AsyncGenerator<AgentEvent, TurnState, unknown>,
   write: (s: string) => void,
   meter: UsageMeter,
   hooks?: { onDone?(reason: string): void; onEvent?(ev: AgentEvent): void },
+  theme: Theme = "plain",
 ): Promise<TurnState> {
+  setTheme(theme); // 渲染面单源：本 turn 着色服从当前主题（plain 零 ANSI）
   const it = events[Symbol.asyncIterator]();
   let sawText = false;
   // ADR-0027：usage 事件=轮内快照（Anthropic 每轮两条：message_start 部分快照+message_delta 合并）。
@@ -31,11 +34,11 @@ export async function renderTurn(
         break; // UI-040：M1 不上屏 thinking
       case "tool_start":
         if (sawText) write("\n");
-        write(`[tool] ${ev.name} …`);
+        write(`${colorize("tool", "[tool]")} ${ev.name} …`); // 状态标记着色（plain 原样）
         sawText = false;
         break;
       case "tool_result":
-        write(` ${ev.isError ? "✗" : "✓"}\n`);
+        write(` ${colorize(ev.isError ? "err" : "ok", ev.isError ? "✗" : "✓")}\n`);
         break;
       case "usage":
         pendingUsage = ev.usage;
@@ -45,7 +48,7 @@ export async function renderTurn(
         pendingUsage = null;
         break;
       case "recovery":
-        write(`\n[recovery] ${ev.chain} (round ${ev.round})\n`);
+        write(`\n${colorize("recovery", "[recovery]")} ${ev.chain} (round ${ev.round})\n`);
         break;
       case "reactive_step":
         // WP-05（CTX-037）：reactive 瀑布步升级上屏（tokenGap 指标可见）
@@ -53,14 +56,14 @@ export async function renderTurn(
         sawText = false;
         break;
       case "interrupted":
-        write(`\n[interrupted: ${ev.phase}]\n`);
+        write(`\n${colorize("interrupted", `[interrupted: ${ev.phase}]`)}\n`);
         break;
       case "context_exhausted":
         write("\n[context exhausted — start a new session (CTX-101)]\n");
         break;
       case "done":
         hooks?.onDone?.(ev.reason); // WP-10：终态入转录（resume 等价断言面）
-        if (ev.reason !== "end") write(`[done: ${ev.reason}]\n`);
+        if (ev.reason !== "end") write(`${colorize("done", `[done: ${ev.reason}]`)}\n`);
         break;
       default:
         break; // turn_start：上屏省略（concise）

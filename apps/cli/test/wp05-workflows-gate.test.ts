@@ -1,7 +1,7 @@
 // M6-WP-05：/workflows 命令注册门面（DoD④）+ 完成通知接线（DoD③）+ /tasks + 后台任务族零回归。
 // 判据自足：
-//   ① 门关：/workflows 不注册，注册表仍恰 31 件且逐字等于 CLI_COMMANDS（字节等价）【M7-WP-01 /goal 30→31，2026-09-19】；
-//   ② 门开（workflow flag）：/workflows 注册（31 件）；
+//   ① 门关：/workflows 不注册，注册表仍恰 32 件且逐字等于 CLI_COMMANDS（字节等价）【M7-WP-01 /goal 30→31，2026-09-19】；
+//   ② 门开（workflow flag）：/workflows 注册（32 件）；
 //   ③ /tasks、/background 在两种门态均注册且可执行（既有后台任务面零回归）；
 //   ④ /workflows 渲染 workflowBoard 上的活动 tracker 最小树（无活动=提示，不抛）；
 //   ⑤ 完成通知队列 push→drain 产出 <task-notification>（DoD③ 载荷形状 + once-only）。
@@ -43,21 +43,21 @@ afterEach(() => {
 });
 
 describe("WP-05 DoD④ 实验门：/workflows 仅 flag 开启时注册", () => {
-  it("门关：注册表逐字等于 CLI_COMMANDS 且恰 31 件（含 M7 /goal），/workflows 缺席", () => {
+  it("门关：注册表逐字等于 CLI_COMMANDS 且恰 32 件（含 M7 /goal），/workflows 缺席", () => {
     const reg = gatedRegistry(closed);
     expect(reg.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(reg).toHaveLength(31);
+    expect(reg).toHaveLength(32);
     expect(reg.find((c) => c.name === "workflows")).toBeUndefined();
   });
 
   it("门开（workflow flag）：/workflows 注册，注册表 32 件【M7-WP-01 /goal 30→31】", () => {
     const reg = gatedRegistry(open);
     expect(reg.find((c) => c.name === "workflows")).toBeDefined();
-    expect(reg).toHaveLength(32);
+    expect(reg).toHaveLength(33);
   });
 
-  it("CLI_COMMANDS 常量仍恰 31【M7-WP-01 /goal 30→31】（未被改动），实验命令实现不污染基础表", () => {
-    expect(CLI_COMMANDS).toHaveLength(31);
+  it("CLI_COMMANDS 常量仍恰 32【M7-WP-01 /goal 30→31】（未被改动），实验命令实现不污染基础表", () => {
+    expect(CLI_COMMANDS).toHaveLength(32);
     expect(CLI_COMMANDS.map((c) => c.name)).not.toContain("workflows");
   });
 });

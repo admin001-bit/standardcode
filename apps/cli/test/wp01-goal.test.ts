@@ -1,6 +1,6 @@
 // M7-WP-01：/goal 命令（DoD①②③④）。
 // 判据自足：
-//   ① 注册面（DoD①）：CLI_COMMANDS 恰 31（/goal=第 31 件，正式面非实验门——gatedRegistry 默认关态逐字等于 CLI_COMMANDS 含 goal）。
+//   ① 注册面（DoD①）：CLI_COMMANDS 恰 32（/goal=第 32 件，正式面非实验门——gatedRegistry 默认关态逐字等于 CLI_COMMANDS 含 goal）。
 //   ② 三操作（DoD②）：设定（/goal <objective>）→查看（/goal 与 /goal status）→清除（/goal clear）各一例。
 //   ③ 注入面（DoD③）：设定/清除/refine 均以 user turn 注入 s.messages 尾部（<session-goal> XML 块，repl.subtask.injected 先例形）
 //      =下一轮 prompt 模型可见的结构证据（消息历史全量进请求）。
@@ -72,16 +72,16 @@ function lastUserText(s: Session): string {
   return (last.content as Array<{ type: string; text: string }>).map((b) => b.text).join("");
 }
 
-describe("DoD① 注册面：CLI_COMMANDS 恰 31（/goal=第 31 件，正式面）", () => {
-  it("CLI_COMMANDS 恰 31 且尾项=goal（30→31 同步口径登记）", () => {
-    expect(CLI_COMMANDS).toHaveLength(31);
-    expect(CLI_COMMANDS.at(-1)!.name).toBe("goal");
+describe("DoD① 注册面：CLI_COMMANDS 恰 32（/goal=第 32 件，正式面）", () => {
+  it("CLI_COMMANDS 恰 32 且尾项=goal（30→31 同步口径登记）", () => {
+    expect(CLI_COMMANDS).toHaveLength(32);
+    expect(CLI_COMMANDS.at(-1)!.name).toBe("theme");
   });
   it("gatedRegistry 默认关=逐字等于 CLI_COMMANDS（31，含 goal——goal 非实验命令）", () => {
     const closed = { enabled: false, flags: [], notices: [] } as ExperimentalGate;
     const reg = gatedRegistry(closed);
     expect(reg.map((c) => c.name)).toEqual(CLI_COMMANDS.map((c) => c.name));
-    expect(reg).toHaveLength(31);
+    expect(reg).toHaveLength(32);
     expect(reg.find((c) => c.name === "goal")).toBeDefined();
   });
 });

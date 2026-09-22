@@ -14,17 +14,17 @@ const M1 = ["help", "clear", "exit", "model", "permission"];
 const M2 = ["new", "resume", "reload", "rename", "compact", "context", "diff", "rewind", "config", "provider", "doctor", "cd", "add-dir"];
 const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage"];
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
-/** M7 正式面首件（M7-WP-01 /goal，2026-09-19 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
-const M7 = ["goal"];
-const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "theme", "keybindings", "release-notes", "sandbox"];
+/** M7 正式面（M7-WP-01 /goal 2026-09-19 注册；M7-WP-03 /theme 2026-09-23 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
+const M7 = ["goal", "theme"];
+const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw", "keybindings", "release-notes", "sandbox"];
 
 const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);
 
 describe("命令全集 × §8.2 分期集合相等（WP-12 DoD③）", () => {
-  it("注册表名集合 = M1∪M2∪M3∪M4∪M7 分期并集（31 件【2026-09-19：M7-WP-01 注册 /goal 30→31】）", () => {
+  it("注册表名集合 = M1∪M2∪M3∪M4∪M7 分期并集（32 件【2026-09-19：M7-WP-01 注册 /goal 30→31；2026-09-23：M7-WP-03 注册 /theme 31→32】）", () => {
     expect(sorted(names)).toEqual(sorted([...M1, ...M2, ...M3, ...M4, ...M7]));
-    expect(names).toHaveLength(31);
+    expect(names).toHaveLength(32);
   });
 
   it("M4 五件逐名在位（/mcp /plugin /skills /memory /update）", () => {

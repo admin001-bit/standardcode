@@ -27,6 +27,7 @@ import { exportTargetPath, renderSessionMarkdown } from "./export-command.ts";
 import { join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
+import { resolveTheme, setTheme, THEMES, themeFromSettings } from "./theme.ts";
 import { completeInput, type TabCompletion } from "./tab-complete.ts";
 
 export const SHELL_OUTPUT_TRUNCATE_CHARS = 30_000;
@@ -810,6 +811,23 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       transcriptAppend(deps, { kind: "user_message", message: injected });
       return { text: s.i18n.t("repl.goal.set", { value: sessionGoal }) };
     },
+    // —— M7-WP-03：/theme（终端渲染主题单源+持久化；§8.2 M7 增 /theme——
+    // 无参=展示当前主题+可选主题；带参=切换并写 ui.theme 到 local 层（setLocalSetting→settings.local.json）；
+    // 非法值=fail-closed 抛错（不静默回落缺省）；重启恢复=下一 turn 由 settings 装配经 themeFromSettings 解析当前主题）——
+    theme: async (args) => {
+      const s = deps.session;
+      const raw = args.trim();
+      if (raw === "") {
+        const cur = themeFromSettings(s.settings);
+        const opts = THEMES.map((t) => (t === cur ? `* ${t}` : `  ${t}`)).join("\n");
+        return { text: `${s.i18n.t("repl.theme.current", { value: cur })}\n${opts}` };
+      }
+      const next = resolveTheme(raw); // 非法/未知 = fail-closed 抛错（不静默回落）
+      setLocalSetting(s.cwd, "ui.theme", next);
+      s.reload(); // 重载 settings（local 层并入）；下一 turn 渲染读取新主题
+      setTheme(next); // 本会话即时生效（模块单源）
+      return { text: s.i18n.t("repl.theme.switched", { value: next }) };
+    },
     t: (key, params) => deps.session.i18n.t(key, params),
     write: deps.io.write,
   };
@@ -1081,6 +1099,7 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
           else if (ev.type === "recovery" && ev.chain === "max_tokens_continue") s.telemetry.maxTokensReached({ round: ev.round });
         },
       },
+      themeFromSettings(s.settings), // 每 turn 由 settings 重装配当前主题（重启恢复；plain 缺省）
     );
     s.messages = final.messages;
     // WP-10 R1+R3 修复（V 退回+复验发现）：仅追加本轮新增的消息块（含 prompt user/tool_result user/assistant

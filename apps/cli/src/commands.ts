@@ -222,6 +222,8 @@ export interface CommandContext {
   /** M7-WP-01 /goal：会话目标（<objective> 设定｜无参或 status 查看｜refine 细化=spawn 改写｜clear 清除；-- 转义；
    *  设定/清除/refine 均以 user turn 注入会话=下一轮 prompt 模型可见；目标仅会话内存态不落盘 [自定]）。 */
   goal(args: string): Promise<{ text: string }>;
+  /** M7-WP-03 /theme：无参=展示当前主题+可选主题；带参=切换并写 ui.theme 到 local 层（重启恢复）；非法值 fail-closed 抛错。 */
+  theme(args: string): Promise<{ text: string }>;
   write(line: string): void;
 }
 
@@ -694,6 +696,21 @@ export const CLI_COMMANDS: readonly SlashCommand[] = [
     },
     async execute(args, ctx) {
       const r = await ctx.goal(args);
+      ctx.write(r.text);
+    },
+  },
+  // —— M7-WP-03：M7 分期次件（§8.2 M7 增 /theme；终端渲染主题单源+持久化 settings.local.json ui.theme；
+  // 不设自定义主题文件格式 [自定] 留白登记；不做快捷键=WP-04 边界）。命令清单第 32 件（30→31→32）——
+  {
+    name: "theme",
+    get usage() {
+      return t("cmd.theme.usage");
+    },
+    get description() {
+      return t("cmd.theme.desc");
+    },
+    async execute(args, ctx) {
+      const r = await ctx.theme(args);
       ctx.write(r.text);
     },
   },

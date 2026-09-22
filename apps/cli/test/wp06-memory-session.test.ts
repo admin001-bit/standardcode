@@ -120,8 +120,8 @@ describe("DoD⑥ /memory 双轨可视化", () => {
     expect(out).toContain("记忆文件: 1 个");
   });
 
-  it("命令清单恰 31【勘误链至 30；2026-09-19：M7-WP-01 /goal 30→31】", () => {
-    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(31);
+  it("命令清单恰 32【勘误链至 30；2026-09-19：M7-WP-01 /goal 30→31】", () => {
+    expect(CLI_COMMANDS.map((c) => c.name)).toHaveLength(32);
     expect(CLI_COMMANDS.map((c) => c.name)).toContain("memory");
   });
 });

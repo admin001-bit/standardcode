@@ -357,6 +357,12 @@ Object.assign(EN, {
   "repl.goal.refused": "[goal] refine refused: {value}",
   "repl.goal.unexpected": "[goal] unexpected launch status: {value}",
   "repl.goal.err.noGoal": "[goal] no session goal to refine — set one first: /goal <objective>",
+  // —— M7-WP-03：/theme（终端渲染主题单源+持久化；§8.2 M7 增 /theme；缺省=plain 零 ANSI）——
+  "cmd.theme.usage": "[<theme> | list]",
+  "cmd.theme.desc": "view or switch the terminal render theme (plain/light/dark); persists to settings.local.json ui.theme and restores on restart",
+  "repl.theme.current": "[theme] current: {value}",
+  "repl.theme.switched": "[theme] set to {value} (persisted to .standardcode/settings.local.json; restored on restart)",
+  "repl.theme.err.unknown": "invalid theme: {value} (expected one of: plain, light, dark)",
   "repl.goal.err.emptyRefine": "[goal] refine produced an empty objective — refusing to clear the goal silently",
   "repl.goal.err.subcommandArgs": "[goal] /{sub} takes no arguments — if your objective starts with \"{sub}\", escape it with {hint}: /goal {hint} <objective>",
 });
@@ -534,6 +540,12 @@ Object.assign(ZH_CN, {
   "repl.goal.err.noGoal": "[goal] 尚无会话目标可细化——请先设定：/goal <目标>",
   "repl.goal.err.emptyRefine": "[goal] 细化产出为空——拒绝静默清空目标",
   "repl.goal.err.subcommandArgs": "[goal] /{sub} 不接受参数——若你的目标以「{sub}」开头，请用 {hint} 转义：/goal {hint} <目标>",
+  // —— M7-WP-03：/theme（终端渲染主题单源+持久化；§8.2 M7 增 /theme；缺省=plain 零 ANSI）——
+  "cmd.theme.usage": "[<主题> | list]",
+  "cmd.theme.desc": "查看或切换终端渲染主题（plain/light/dark）；持久化到 settings.local.json 的 ui.theme，重启后恢复",
+  "repl.theme.current": "[theme] 当前主题：{value}",
+  "repl.theme.switched": "[theme] 已切换为 {value}（已持久化到 .standardcode/settings.local.json；重启后恢复）",
+  "repl.theme.err.unknown": "无效主题：{value}（应为其中之一：plain, light, dark）",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };
