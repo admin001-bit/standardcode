@@ -23,6 +23,11 @@
 `install-manifest.json` 的 `pathEntries` 形状（`{value, scope:"posix-rcfile", file}`）**不在本通道覆写**，
 仅在 node 在位时 best-effort 同步同款条目，使 M5 `standardcode uninstall` 的 PATH 还原面亦覆盖本通道写入项。
 
+## 更新与卸载全通道矩阵（M7 WP-11）
+
+`update-uninstall-matrix.md`——更新源（npm registry / GitHub Releases）× 卸载通道（CLI `--purge` / 手动清理脚本）× 三平台，
+逐格标注已验证（证据）／本机不可验证（原因）／待 CI；通道语义见 `docs/adr/0050-update-dual-source.md`。
+
 ## 校验
 
 ```bash

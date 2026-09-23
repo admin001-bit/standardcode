@@ -1,5 +1,6 @@
 // WP-08（M4）：/update 自动更新检查——ENG-041 落地（v2.8 §10 行 431；§8.2 M4 增 /update）。
-// 通道=附录 E（行 630）npm registry（`@standardcode-oss/cli` 全平台首选；GitHub Releases/二进制通道=M5 边界）。
+// 通道=附录 E（行 630）npm registry（`@standardcode-oss/cli` 全平台首选）+ GitHub Releases（本产品仓=双源其二；
+// WP-11（M7）补入——原"GitHub Releases/二进制通道=M5 边界"登记就此清偿；通道择优语义见 ADR-0050）。
 // 检查/提示形状无 [CC] 一手锚→全 [自定]（卡参考资料栏预登记；mini 决策走结果页偏差登记，B-06 判定
 // 不构成未覆盖级：机制主干在 spec 文字）。更新原子性=M5 设计（§13 行 534），本模块不含原子回滚面。
 // 纯函数+注入面（fetchImpl/runner，仿 mcp/transport.ts 形制）：测试全离线零网络（卡交付物"网络注入面"）。
@@ -19,6 +20,60 @@ export const DEFAULT_REGISTRY_LATEST_URL = `https://registry.npmjs.org/${encodeU
 export const AUTO_UPDATE_ENV_KEY = "STANDARD_CODE_AUTO_UPDATE";
 
 export type UpdateCheckResult = { ok: true; latest: string } | { ok: false; reason: string };
+
+// —— WP-11（M7）：GitHub Releases 源（附录 E 行 630 双源其二；原"GitHub Releases/二进制通道=M5 边界"登记就此清偿）——
+// 仓坐标 [自定] 取本产品仓实测值（`git remote get-url origin`=https://github.com/admin001-bit/standardcode.git；
+// owner/repo 常量化，URL 可注入）。与 npm 源同形（UpdateCheckResult 复用，latest 与 compareVersions 同口径）；
+// **fail-closed**：非 2xx／JSON 异常／tag_name 缺失／tag 非版本形 → ok:false 并点名原因，绝不静默成功。
+// 通道择优语义（默认源、是否接线 /update）=ADR-0050；本函数只提供"取最新 release 版本"，不做安装动作。
+
+/** 本产品仓 GitHub owner/repo（附录 E 行 630 GitHub Releases 源落点）。 */
+export const GITHUB_REPO_OWNER = "admin001-bit";
+export const GITHUB_REPO_NAME = "standardcode";
+
+/** 缺省 latest release API URL（测试可覆写 releasesUrl）。 */
+export const DEFAULT_GITHUB_LATEST_URL = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases/latest`;
+
+/** GitHub API 版本头 [自定]（api.github.com 推荐头；缺席亦可，带上以规避默认版本漂移）。 */
+export const GITHUB_API_ACCEPT = "application/vnd.github+json";
+
+/**
+ * release tag → 版本归一：剥首尾空白 + 单个 `v`/`V` 前缀（与 compareVersions 容忍 v 前缀同口径）。
+ * 非版本形（无前导数字，如 `latest`/`nightly`/`M6`）→ null（调用方 fail-closed，不静默取号）。
+ */
+export function normalizeReleaseTag(tag: string): string | null {
+  const t = tag.trim().replace(/^[vV]/, "");
+  return /^\d/.test(t) ? t : null;
+}
+
+/** 查 GitHub Releases 最新 release 版本（tag_name 归一）。任何失败=结构化 ok:false 不抛（同 checkRegistryLatest 形制）。 */
+export async function checkGitHubLatest(
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number; releasesUrl?: string } = {},
+): Promise<UpdateCheckResult> {
+  const url = opts.releasesUrl ?? DEFAULT_GITHUB_LATEST_URL;
+  const timeoutMs = opts.timeoutMs ?? UPDATE_CHECK_TIMEOUT_MS;
+  const f = opts.fetchImpl ?? fetch;
+  try {
+    const res = await f(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: GITHUB_API_ACCEPT } });
+    if (!res.ok) return { ok: false, reason: `github releases responded HTTP ${res.status}` };
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch (err) {
+      return { ok: false, reason: `github releases response is not JSON: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const tag =
+      body !== null && typeof body === "object" && typeof (body as { tag_name?: unknown }).tag_name === "string"
+        ? (body as { tag_name: string }).tag_name
+        : null;
+    if (tag === null || tag.trim() === "") return { ok: false, reason: "github releases response has no string tag_name field" };
+    const latest = normalizeReleaseTag(tag);
+    if (latest === null) return { ok: false, reason: `github releases tag is not version-like: ${tag}` };
+    return { ok: true, latest };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 /**
  * DoD①②③：查 npm registry 最新版本。任何失败（非 2xx/坏体/超时/异常）=结构化 ok:false 不抛——

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # standardcode 手动清理脚本 — macOS / Linux（Windows 用 scripts/cleanup.ps1）。
 # ADR-0044 决策 5/6：不经 CLI 的等价卸载通道（自动化矩阵与 CLI 不可用时）——逐步打印、逐步断言。
-# 步骤：①npm rm -g @standardcode/cli（残留断言）②PATH 留痕还原（install-manifest.json）③--purge-home 删 ~/.standardcode（残留断言）。
+# 步骤：①npm rm -g @standardcode-oss/cli（残留断言）②PATH 留痕还原（install-manifest.json）③--purge-home 删 ~/.standardcode（残留断言）。
 # 用法：bash scripts/cleanup.sh [--purge-home]（不带旗标=仅程序体+PATH；矩阵自动化可直接带旗标=非交互）
 set -euo pipefail
 
-PKG="@standardcode/cli"
+PKG="@standardcode-oss/cli"
 HOME_DIR="${HOME:?}"
 DATA_DIR="$HOME_DIR/.standardcode"
 MANIFEST="$DATA_DIR/install-manifest.json"

@@ -1,6 +1,6 @@
 # standardcode manual cleanup script - Windows (macOS/Linux use scripts/cleanup.sh).
 # ADR-0044 decision 5/6: CLI-independent uninstall channel (automation matrix and when CLI unusable).
-# Steps: (1) npm rm -g @standardcode/cli (+residue assert) (2) PATH manifest restore
+# Steps: (1) npm rm -g @standardcode-oss/cli (+residue assert) (2) PATH manifest restore
 #        (3) -PurgeHome removes ~\.standardcode (+residue assert).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\cleanup.ps1 [-PurgeHome]
 # NOTE: keep this file ASCII-only (Windows PowerShell 5.1 parses BOM-less files as ANSI).
@@ -8,7 +8,7 @@ param(
   [switch]$PurgeHome
 )
 $ErrorActionPreference = "Stop"
-$Pkg = "@standardcode/cli"
+$Pkg = "@standardcode-oss/cli"
 $DataDir = Join-Path $env:USERPROFILE ".standardcode"
 $Manifest = Join-Path $DataDir "install-manifest.json"
 
