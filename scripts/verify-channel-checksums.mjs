@@ -13,7 +13,7 @@ const EXPECTED_ARTIFACTS = ["standardcode-windows-x64.exe", "standardcode-linux-
 
 // 四通道「引用点」表：文件 → 该文件内引用的产物 + 抽取该 sha 的正则（恰 1 捕获组）。
 const REFS = [
-  { ch: "winget", file: "packaging/winget/StandardCode.StandardCode.installer.yaml", artifact: "standardcode-windows-x64.exe", re: /InstallerSha256:\s*([0-9a-f]{64})/ },
+  { ch: "winget", file: "packaging/winget/manifests/StandardCode.StandardCode.installer.yaml", artifact: "standardcode-windows-x64.exe", re: /InstallerSha256:\s*([0-9a-f]{64})/ },
   { ch: "homebrew", file: "packaging/homebrew/standardcode.rb", artifact: "standardcode-darwin-arm64", re: /sha256\s+"([0-9a-f]{64})"/ },
   { ch: "linux/direct", file: "packaging/linux/install.sh", artifact: "standardcode-linux-x64", re: /SHA256_LINUX_X64="([0-9a-f]{64})"/ },
   { ch: "linux/deb", file: "packaging/linux/build-deb.sh", artifact: "standardcode-linux-x64", re: /SHA256_LINUX_X64="([0-9a-f]{64})"/ },
@@ -66,8 +66,8 @@ for (const r of REFS) {
 // ④ 版本坐标一致（URL vX.Y.Z / PackageVersion / Version 三处同源）
 const ver = JSON.parse(readFileSync(join(ROOT, "apps/cli/package.json"), "utf8")).version;
 const verRefs = [
-  { ch: "winget", file: "packaging/winget/StandardCode.StandardCode.yaml", re: /PackageVersion:\s*(\S+)/ },
-  { ch: "winget", file: "packaging/winget/StandardCode.StandardCode.installer.yaml", re: /releases\/download\/v([0-9][^\s/]*)\// },
+  { ch: "winget", file: "packaging/winget/manifests/StandardCode.StandardCode.yaml", re: /PackageVersion:\s*(\S+)/ },
+  { ch: "winget", file: "packaging/winget/manifests/StandardCode.StandardCode.installer.yaml", re: /releases\/download\/v([0-9][^\s/]*)\// },
   { ch: "homebrew", file: "packaging/homebrew/standardcode.rb", re: /version\s+"([^"]+)"/ },
   { ch: "linux", file: "packaging/linux/install.sh", re: /DEFAULT_VERSION="([^"]+)"/ },
 ];

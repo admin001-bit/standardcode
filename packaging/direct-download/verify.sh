@@ -35,9 +35,11 @@ fail() { echo "[verify] FAILED: $*" >&2; exit 1; }
 mkdir -p "$DEST"
 BASE_DIR="$BASE/v$VERSION"
 
-fetch() { # $1=url-or-localpath  $2=dest
+fetch() { # $1=url-or-localpath（file:// 形会先剥 scheme）  $2=dest
   case "$BASE" in
-    file://*|/*) cp "$1" "$2" ;;
+    file://*|/*)
+      SRC="${1#file://}"   # 剥 file:// scheme（与 install.sh ${BASE#file://} 同形；V-WP10 R5 修复）
+      cp "$SRC" "$2" ;;
     *)
       if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
       elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"

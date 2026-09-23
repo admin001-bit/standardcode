@@ -9,10 +9,10 @@
 
 | 通道 | 目录 | 交付物 | 本地验证 |
 |---|---|---|---|
-| Windows winget | `winget/` | 三 YAML 清单（version/locale/installer，`InstallerType: portable`） | **未本地验证**（本机 winget 缺位）→ BLK-12 |
-| macOS Homebrew | `homebrew/` | `standardcode.rb`（formula） | **未本地验证**（无 macOS/brew/ruby）→ BLK-12 |
+| Windows winget | `winget/`（清单在 `winget/manifests/`） | 三 YAML 清单（version/locale/installer，`InstallerType: portable`） | `winget validate` **实测通过（0 告警）**；**安装/卸载链未本地验证**（`--manifest` 安装需管理员启用 LocalManifestFiles）→ BLK-12 |
+| macOS Homebrew | `homebrew/` | `standardcode.rb`（formula） | **静态核验通过**（用户态 ruby 3.3.8 `-c`＝Syntax OK）；**brew 安装链未本地验证**（无 macOS/brew）→ BLK-12 |
 | Linux | `linux/` | `install.sh` / `uninstall.sh` / `build-deb.sh` / `build-rpm.sh` + `standardcode.spec` | **WSL2 实跑**（脚本全链 + deb 真装真卸 + rpm 真装真卸） |
-| 直接下载 | `direct-download/` | `verify.sh` / `verify.ps1` + README（资产清单与校验值） | **Windows 本机实跑**（exe `--version` + checksum verify） |
+| 直接下载 | `direct-download/` | `verify.sh` / `verify.ps1` + README（资产清单与校验值） | **Windows 本机实跑**（exe `--version` + checksum verify）＋Linux 侧 file:// 正负例实跑 |
 
 ## 与既有 npm 通道的关系
 
@@ -36,8 +36,8 @@ node scripts/verify-channel-checksums.mjs
 
 | 通道 | 未验证面 | 原因 | 可选验证环境 |
 |---|---|---|---|
-| winget | `winget install --manifest` → `--version` → `winget uninstall` 全链 | 本机 winget/App Installer 缺位 | 装有 App Installer 的 Windows 机 / CI windows runner |
-| Homebrew | `ruby -c` 语法检查 + `brew install/uninstall` 全链 | 本机与 WSL 均无 ruby/brew；无 macOS | macOS 机 / CI macos runner |
-| rpm | （已用用户态 rpmbuild + `unshare -r` 实跑；若判等价性不足则登记） | 系统级 `rpm`/`rpmbuild` 缺位、sudo 需密码 | 装有 rpm/rpm-build 的 Linux 机 / CI ubuntu runner |
+| winget | `winget install --manifest` → `--version` → `winget uninstall` 全链（`winget validate` 已实测通过） | `--manifest` 本地安装需管理员启用 `LocalManifestFiles`（实测报错原文留档） | 管理员启用该设置的 Windows 机 / CI windows runner |
+| Homebrew | `brew install/uninstall` 全链（`ruby -c` 静态核验已通过） | 本机无 macOS/brew（ruby 已用户态取用） | macOS 机 / CI macos runner |
+| rpm | （已用用户态 rpmbuild + `unshare -r` 实跑；窄口径 `__brp_strip %{nil}` 已实测等价） | 系统级 `rpm`/`rpmbuild` 缺位、sudo 需密码 | 装有 rpm/rpm-build 的 Linux 机 / CI ubuntu runner |
 
 签名/公证维持 **Q-7 首版不做**（ADR-0044 决策 2）；SHA-256 checksum 为唯一完整性通道。

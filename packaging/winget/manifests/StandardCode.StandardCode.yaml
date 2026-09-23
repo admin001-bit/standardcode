@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
 # WP-10（M7）winget 版本清单 — 坐标单源。通道阶梯=附录 E 行 630；骨架口径=ADR-0044 决策 1。
 # 不外发（winget-pkgs PR=外发动作，逐项用户明示）。
 PackageIdentifier: StandardCode.StandardCode

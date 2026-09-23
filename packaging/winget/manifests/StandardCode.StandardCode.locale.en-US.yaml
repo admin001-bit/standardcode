@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
 # WP-10（M7）winget 默认 locale 清单。PackageIdentifier 与 version 清单同源。
 PackageIdentifier: StandardCode.StandardCode
 PackageVersion: 0.1.0
