@@ -50,10 +50,12 @@ describe("WP-05 DoD④ 实验门：/workflows 仅 flag 开启时注册", () => {
     expect(reg.find((c) => c.name === "workflows")).toBeUndefined();
   });
 
-  it("门开（workflow flag）：/workflows 注册，注册表 36 件【M7-WP-01 /goal 30→31；M7-WP-03 /theme 31→32；M7-WP-04 /keybindings 32→33；M7-WP-06 /sandbox 33→34；M7-WP-08 /release-notes 34→35】", () => {
+  it("门开（workflow flag）：/workflows+/batch+/loop 注册，注册表 38 件【M7-WP-01 /goal 30→31；M7-WP-03 /theme 31→32；M7-WP-04 /keybindings 32→33；M7-WP-06 /sandbox 33→34；M7-WP-08 /release-notes 34→35；M7-WP-07 /batch+/loop +2→38】", () => {
     const reg = gatedRegistry(open);
     expect(reg.find((c) => c.name === "workflows")).toBeDefined();
-    expect(reg).toHaveLength(36);
+    expect(reg.find((c) => c.name === "batch")).toBeDefined();
+    expect(reg.find((c) => c.name === "loop")).toBeDefined();
+    expect(reg).toHaveLength(38);
   });
 
   it("CLI_COMMANDS 常量仍恰 35【M7-WP-06 /sandbox 33→34、M7-WP-08 /release-notes 34→35】（未被改动），实验命令实现不污染基础表", () => {

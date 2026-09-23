@@ -31,8 +31,8 @@ import type { ProviderAdapter } from "@standardcode/providers";
 
 /** §8.2 行 365 M6 分期七件（板 WP-01 DoD① 口径）。 */
 const M6_COMMAND_NAMES = ["branch", "fork", "export", "workflows", "batch", "loop", "btw"];
-/** 门覆盖面=M6 三件（BLK-06=①）；其余四件 M7。 */
-const GATED_M6 = ["workflows", "fork", "export"];
+/** 门覆盖面=六件（workflows/fork/export 三件 M6 + branch/batch/loop 三件 M7-WP-07；teams 无命令面、/btw 侧信道恒不注册）。 */
+const GATED_M6 = ["workflows", "fork", "export", "branch", "batch", "loop"];
 
 /** 只读数组排序副本（readonly string[] 无 sort）。 */
 const sorted = (xs: readonly string[]): string[] => [...xs].sort();
@@ -131,11 +131,11 @@ describe("WP-01 DoD② 开启路径两源生效序 + 非法值 fail-closed", () 
     expect(gate.notices).toEqual([]);
   });
 
-  it("开启后门放行 M6 三件、仍拦 M7 四件（白名单未含=M7 未实现不入映射）", () => {
+  it("开启后门放行六件（M6 三件 + M7 三长尾 branch/batch/loop 对应 flag 开即注册），仍拦侧信道 /btw（恒不注册）", () => {
     const gate = resolveExperimental({ env: { [EXPERIMENTAL_ENV_KEY]: "1" }, settings: undefined });
     const gated = gateCommands(candidates, gate).map((c) => c.name);
-    for (const name of GATED_M6) expect(gated).toContain(name);
-    for (const name of ["branch", "batch", "loop", "btw"]) expect(gated).not.toContain(name);
+    for (const name of GATED_M6) expect(gated, `门开应注册 /${name}`).toContain(name);
+    expect(gated, "/btw 侧信道恒不注册").not.toContain("btw");
   });
 });
 
@@ -196,10 +196,10 @@ describe("WP-01 配置面接线（settings 子树切取 + /help 同源）", () =
   it("斜杠命令映射与注册表一致（flag→命令名 [自定] 登记面）", () => {
     expect(sorted(experimentalCommandNames())).toEqual(sorted(M6_COMMAND_NAMES)); // 拒绝面=M6 七件
     expect(sorted(activeExperimentalCommandNames(resolveExperimental({ env: { [EXPERIMENTAL_ENV_KEY]: "1" }, settings: undefined })))).toEqual(sorted(GATED_M6)); // 放行面=三件
-    expect(EXPERIMENTAL_FLAG_COMMANDS.workflow).toEqual(["workflows"]);
-    expect(EXPERIMENTAL_FLAG_COMMANDS.teams).toEqual([]); // M6 无斜杠命令面（工具面同门，WP-06 起）
-    expect(EXPERIMENTAL_FLAG_COMMANDS.fork).toEqual(["fork", "export"]);
-    expect(EXPERIMENTAL_DEFERRED_COMMANDS).toEqual(["branch", "batch", "loop", "btw"]);
+    expect(EXPERIMENTAL_FLAG_COMMANDS.workflow).toEqual(["workflows", "batch", "loop"]); // M7-WP-07：+batch/loop
+    expect(EXPERIMENTAL_FLAG_COMMANDS.teams).toEqual([]); // 无斜杠命令面（工具面同门，WP-06 起）；/btw 走侧信道
+    expect(EXPERIMENTAL_FLAG_COMMANDS.fork).toEqual(["fork", "export", "branch"]); // M7-WP-07：+branch
+    expect(EXPERIMENTAL_DEFERRED_COMMANDS).toEqual([]); // M7-WP-07：四件全迁入映射/侧信道，推后集清空
   });
 
   it("/help 与派发同源（门关=实验命令不出现在帮助表；开启=出现）", () => {

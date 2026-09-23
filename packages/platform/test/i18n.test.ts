@@ -59,6 +59,7 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
   const cmdSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/commands.ts"), "utf8");
   const replSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/repl.ts"), "utf8");
   const sessSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/session.ts"), "utf8");
+  const gateSrc = readFileSync(path.resolve(import.meta.dirname, "../../../apps/cli/src/experimental-gate.ts"), "utf8");
   it("commands.ts 零残留 description/usage 字面量（全经运行时 getter t）", () => {
     expect(cmdSrc).not.toMatch(/description: "/);
     expect(cmdSrc).not.toMatch(/usage: "/);
@@ -66,7 +67,7 @@ describe("DoD④ 命令面收敛守卫（源码级 grep 型——ADR-0042 决策
     expect((cmdSrc.match(/get usage\(\) \{/g) ?? []).length).toBe(21); // +M7-WP-01 /goal usage（2026-09-19）+M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox、M7-WP-08 /release-notes usage（2026-09-23）
   });
   it("全部 catalog 键被消费（死键守卫；动态拼装基名豁免）", () => {
-    const allSrc = cmdSrc + replSrc + sessSrc;
+    const allSrc = cmdSrc + replSrc + sessSrc + gateSrc;
     const dynamicAssembled = new Set(["repl.mcp.done.approve", "repl.mcp.done.reject", "repl.mcp.done.enable", "repl.mcp.done.disable"]);
     const dead: string[] = [];
     for (const key of Object.keys(EN)) {

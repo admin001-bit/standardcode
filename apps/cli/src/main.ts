@@ -201,6 +201,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   await runRepl({
     session,
     commands, // WP-01：门控后的注册表（派发/help/补全同源）
+    experimentalGate: experimental, // M7-WP-07：/btw 侧信道派发开关判据（teams flag）
     io: {
       lines: router.lines,
       write: (s) => process.stdout.write(s),

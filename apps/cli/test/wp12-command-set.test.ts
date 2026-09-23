@@ -16,7 +16,7 @@ const M3 = ["tasks", "background", "subtask", "effort", "init", "status", "usage
 const M4 = ["mcp", "plugin", "skills", "memory", "update"];
 /** M7 正式面（M7-WP-01 /goal 2026-09-19 注册；M7-WP-03 /theme、M7-WP-04 /keybindings、M7-WP-06 /sandbox、M7-WP-08 /release-notes 2026-09-23 注册；§8.2 M7 分期其余件/实验面件仍未到期或走实验门）。 */
 const M7 = ["goal", "theme", "keybindings", "sandbox", "release-notes"];
-const M6_M7 = ["branch", "fork", "export", "workflows", "batch", "loop", "btw"];
+const M6_M7: string[] = []; // M7-WP-07：七件全迁入实验门/侧信道（branch→fork、batch/loop→workflow、btw 侧信道），基表零命中集清空
 
 const sorted = (xs: string[]) => [...xs].sort();
 const names = CLI_COMMANDS.map((c) => c.name);

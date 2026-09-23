@@ -394,6 +394,28 @@ Object.assign(EN, {
   "repl.release-notes.unknown": "[release-notes] version not found in {file}: {value} (available: {list})",
   "repl.release-notes.err.args": "unknown /release-notes argument: {value} (expected a single version, e.g. /release-notes 2.1.0)",
 });
+// —— M7-WP-07：四长尾命令 i18n 双包键（usage/desc/反馈文案；死键守卫扫描面含 experimental-gate.ts）——
+Object.assign(EN, {
+  "cmd.branch.usage": "[name]",
+  "cmd.branch.desc": "branch the current session into a new session at this point (experimental: enable the `fork` flag)",
+  "repl.branch.created": "[branch] created branch session {id} (title: {title}) — recoverable via /resume; current session unchanged",
+  "cmd.batch.usage": "<file>",
+  "cmd.batch.desc": "run each non-empty line of <file> as a user turn, in order (experimental: enable the `workflow` flag)",
+  "repl.batch.done": "[batch] ran {n} line(s) from {file}",
+  "repl.batch.err.required": "/batch <file>: file required",
+  "repl.batch.err.missing": "[batch] file not found: {value}",
+  "repl.batch.err.limit": "[batch] too many lines ({value}); cap is {cap} (refusing to run)",
+  "cmd.loop.usage": "<n> <prompt>",
+  "cmd.loop.desc": "run <prompt> <n> times in a loop (experimental: enable the `workflow` flag); /loop with no args shows loop status",
+  "repl.loop.done": "[loop] ran {n} round(s) of: {prompt}",
+  "repl.loop.err.usage": "/loop <n> <prompt>: n must be an integer in [1, {max}] (got {value})",
+  "repl.loop.status": "[loop] no active loop",
+  "cmd.btw.usage": "<question>",
+  "cmd.btw.desc": "ask a quick side question without interrupting the main conversation (experimental: enable the `teams` flag)",
+  "repl.btw.answer": "[btw] {answer}",
+  "repl.btw.err.required": "/btw <question>: question required",
+  "repl.btw.err.failed": "[btw] provider failed: {value} (answer not written to transcript)",
+});
 Object.assign(ZH_CN, {
   "cmd.tasks.err.multiple": "/tasks：应为 [all] [limit 1-100]，收到多个数字：{value}",
   "cmd.model.err.unknownModel": "unknown model：{value}（可用：{list}）",
@@ -602,6 +624,28 @@ Object.assign(ZH_CN, {
   "repl.release-notes.missing": "[release-notes] {path} 无 {file}——请先创建含 '## <版本号>' 节与 '- ' 条目行的文件，再重试 /release-notes",
   "repl.release-notes.unknown": "[release-notes] {file} 中未找到版本：{value}（可用：{list}）",
   "repl.release-notes.err.args": "未知的 /release-notes 参数：{value}（应为单个版本号，如 /release-notes 2.1.0）",
+});
+// —— M7-WP-07：四长尾命令 i18n 双包键（usage/desc/反馈文案；死键守卫扫描面含 experimental-gate.ts）——
+Object.assign(ZH_CN, {
+  "cmd.branch.usage": "[name]",
+  "cmd.branch.desc": "把当前会话自此处分支为新 session（实验：开启 `fork` flag）",
+  "repl.branch.created": "[branch] 已创建分支 session {id}（标题：{title}）——可经 /resume 恢复；当前会话不变",
+  "cmd.batch.usage": "<file>",
+  "cmd.batch.desc": "把 <file> 中每条非空行作为 user turn 顺序执行（实验：开启 `workflow` flag）",
+  "repl.batch.done": "[batch] 已执行 {file} 的 {n} 行",
+  "repl.batch.err.required": "/batch <file>：必须提供文件",
+  "repl.batch.err.missing": "[batch] 找不到文件：{value}",
+  "repl.batch.err.limit": "[batch] 行数过多（{value}）；上限 {cap}（拒绝执行）",
+  "cmd.loop.usage": "<n> <prompt>",
+  "cmd.loop.desc": "把 <prompt> 循环执行 <n> 次（实验：开启 `workflow` flag）；/loop 无参显示循环状态",
+  "repl.loop.done": "[loop] 已循环执行 {n} 轮：{prompt}",
+  "repl.loop.err.usage": "/loop <n> <prompt>：n 必须为 [1, {max}] 内整数（得到 {value}）",
+  "repl.loop.status": "[loop] 当前无活动循环",
+  "cmd.btw.usage": "<question>",
+  "cmd.btw.desc": "旁路问一个简短问题，不打断主对话（实验：开启 `teams` flag）",
+  "repl.btw.answer": "[btw] {answer}",
+  "repl.btw.err.required": "/btw <question>：必须提供问题",
+  "repl.btw.err.failed": "[btw] provider 失败：{value}（答案未写入转录）",
 });
 
 const CATALOGS: Record<I18nLang, Record<string, string>> = { en: EN, "zh-CN": ZH_CN };

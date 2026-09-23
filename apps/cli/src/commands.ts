@@ -237,6 +237,14 @@ export interface CommandContext {
    *  仓根 CHANGELOG.md（`## <version>` 节＋条目行；读法见 release-notes.ts／ADR-0048）；
    *  带参=按版本号选节；文件缺省/版本未命中一律明报不静默；零写盘（不做版本升降级，更新走 /update）。 */
   releaseNotes(args: string): Promise<{ text: string }>;
+  /** M7-WP-07 /branch（fork flag）：复制当前会话转录为新 session 并注册进会话索引（供 /resume），打印新分支 session id，不切换当前会话。 */
+  branch(args: string): Promise<{ text: string }>;
+  /** M7-WP-07 /btw（teams flag 侧信道）：旁路单问——用 provider 以最小上下文问、流式打印答案；不进主消息流、不写转录。 */
+  btw(args: string): Promise<{ text: string }>;
+  /** M7-WP-07 /loop（workflow flag）：计数制循环执行 <prompt> <n> 次（上限防失控）；无参=查看状态。 */
+  loop(args: string): Promise<{ text: string }>;
+  /** M7-WP-07 /batch（workflow flag）：读文件逐非空行作为 user turn 顺序执行（行数上限防失控）。 */
+  batch(args: string): Promise< { text: string }>;
   write(line: string): void;
 }
 

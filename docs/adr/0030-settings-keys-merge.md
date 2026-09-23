@@ -17,6 +17,19 @@
 3. **managed 路径 Linux 档**：Q-3 只给 Windows/macOS，Linux 取 `/etc/standardcode/managed-settings.json`（POSIX 系统级配置惯例）`[自定]`。
 4. **容错**：坏 JSON / schemaVersion 不符 → 该来源跳过 + 告警，启动不拒（企业下发坏文件不应瘫痪 CLI，fail-open 限单文件、fail-closed 限安全语义——安全键消费方各自校验）。
 
+## 实验 flag→命令映射表（M7-WP-07 增补；[自定] 登记）
+
+- M6-WP-01 落 `experimental.enabled`/`experimental.flags`/`STANDARD_CODE_EXPERIMENTAL`（见决策 1 第 12 行）。本段补该三键的**门消费面**：flag→命令名映射（实现点 `apps/cli/src/experimental-gate.ts` 的 `EXPERIMENTAL_FLAG_COMMANDS`），与键位合并语义正交（键位归本 ADR，映射归实验门，二者经 `resolveExperimental` 判定衔接）。
+- 映射表（CLI_COMMANDS 守恒 35 不变；默认关=全部命令零注册）：
+
+| flag | 注册表命令面（`EXPERIMENTAL_FLAG_COMMANDS`） | 工具面（`EXPERIMENTAL_FLAG_TOOLS`） | 备注 |
+| --- | --- | --- | --- |
+| `workflow` | `workflows`、`batch`、`loop` | （无） | M7-WP-07 增 `batch`/`loop`（M6 仅 `workflows`） |
+| `fork` | `fork`、`export`、`branch` | （无） | M7-WP-07 增 `branch`（M6 仅 `fork`/`export`） |
+| `teams` | （无斜杠命令面） | `SendMessage` | `teams:[]`；`/btw` 为 teams 侧信道命令，恒不注册（见 `EXPERIMENTAL_SIDECHANNEL_COMMANDS`） |
+
+- 语义归属与差异（计数制/逐行制/侧信道/分支复制）见 mini-ADR-0049；本 ADR 只落"键位→映射"登记，不重复语义。
+
 ## 影响的相邻机制
 
 - `packages/platform/src/settings.ts`：实现落点；apps/cli session 装配消费（env 直读清偿点）。

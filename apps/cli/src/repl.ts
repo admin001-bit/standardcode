@@ -4,18 +4,18 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
 import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue, TELEMETRY_SETTINGS_KEY } from "@standardcode/platform";
-import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, type SessionIndexEntry } from "@standardcode/platform";
+import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, SCHEMA_VERSION, transcriptsDir, type SessionIndexEntry } from "@standardcode/platform";
 import { checkRegistryLatest, compareVersions, runNpmUpdate, AUTO_UPDATE_ENV_KEY, type UpdateCheckResult, type NpmRunResult, type NpmRunner } from "@standardcode/platform";
 import { CLI_VERSION } from "./version.ts";
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
 import { parseInput } from "./input-modes.ts";
 import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT_SEMANTICS, EFFORT_TO_THINKING, effortLabel, parseTasksArgs, priceTableRow, splitSubtaskType, usageCostUsd, type CommandContext, type EffortLevel, type SlashCommand } from "./commands.ts";
-import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type FileHistoryStore } from "@standardcode/platform";
+import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type ExperimentalGate, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
 import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
@@ -24,10 +24,11 @@ import { createStandardTools } from "@standardcode/capabilities";
 import { workflowBoard } from "./workflow-board.ts";
 import { DEFAULT_FORK_INSTRUCTION, deriveForkDescription, renderForkContextPrompt } from "./fork-command.ts";
 import { exportTargetPath, renderSessionMarkdown } from "./export-command.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setLocalSetting } from "./config-store.ts";
 import { renderTurn } from "./render.ts";
 import { resolveTheme, setTheme, THEMES, themeFromSettings, type Theme } from "./theme.ts";
+import { EXPERIMENTAL_SIDECHANNEL_COMMANDS } from "./experimental-gate.ts";
 import { probeSandboxBackend, resolveSandboxSettings, isSandboxTier, SANDBOX_ENABLED_KEY, sandboxActivationSource, SANDBOX_TIER_KEY } from "./sandbox-config.ts";
 import {
   BINDABLE_ACTIONS,
@@ -69,6 +70,11 @@ export interface ReplDeps {
   /** M7-WP-06 /sandbox 注入面：cliFlag=启动期 -sdb 旗标态（main.ts 装配）；probe=后端探针（测试注入，缺席=真探针）。
    *  缺席整项=旗标 false+真探针（生产缺省）。 */
   sandbox?: SandboxCommandDeps;
+  /** M7-WP-07：实验门态（main.ts 传入 `resolveExperimental` 结果）——`/btw` 侧信道派发的开关判据
+   *  （teams flag 开启且门 enabled 才旁路派发；缺席=门关语义，/btw 走未知命令提示）。 */
+  experimentalGate?: ExperimentalGate;
+  /** M7-WP-07 /loop 中断钩子（REPL 中断路径：Esc/Ctrl+C 语义；缺席=恒否，循环跑满 n 轮）。 */
+  isInterrupted?: () => boolean;
 }
 
 /** M7-WP-06 /sandbox 依赖注入面（DoD③ 后端探针可注入，不依赖本机真实装没装 rust 臂）。 */
@@ -171,6 +177,24 @@ async function drainSessionAssets(deps: ReplDeps): Promise<void> {
   const assets = sessionAssets.get(deps.session);
   if (assets) await assets.chain;
 }
+
+/**
+ * 单轮 provider 直连（M7-WP-07 /loop /batch 的"执行"语义）：以单条 user 消息问模型、拼接 text_delta 为答案。
+ * 非完整 agent 循环（不触工具/校验序列）——计数制循环与批量执行的"执行"取可测的最小单轮语义（见 mini-ADR-0049 与 /loop 计数制差异登记）。
+ */
+async function runProviderTurn(s: Session, prompt: string): Promise<string> {
+  let out = "";
+  const events = s.provider.stream({ model: s.model, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] });
+  for await (const ev of events) {
+    if (ev.type === "text_delta") out += ev.text;
+  }
+  return out;
+}
+
+/** M7-WP-07 /loop 轮次上限（防失控）；[自定]，见 mini-ADR-0049。 */
+export const LOOP_MAX_ROUNDS = 10;
+/** M7-WP-07 /batch 行数上限（防失控）；[自定]，见 mini-ADR-0049。 */
+export const BATCH_LINE_CAP = 200;
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
   const s = deps.session;
@@ -754,6 +778,94 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const md = renderSessionMarkdown({ sessionId: assets.sessionId, exportedAt: new Date().toISOString(), messages: s.messages });
       await writeFile(target, md, { encoding: "utf8", flag: "wx" }); // wx=存在即失败（TOCTOU 双保险，B-12 fail-closed）
       return { text: s.i18n.t("repl.export.wrote", { n: s.messages.length, target }) };
+    },
+    // —— M7-WP-07：/branch（fork flag；复制当前会话转录为新 session 并注册进会话索引，供 /resume；打印新分支 id；不切换当前会话）——
+    branch: async (args) => {
+      const s = deps.session;
+      const name = args.trim();
+      const newId = randomUUID();
+      const assets = sessionAssets.get(s);
+      if (assets) {
+        await assets.chain.catch(() => {}); // drain 在途写入，保证复制源完整
+        const src = assets.writer.file;
+        if (src) {
+          const dst = join(dirname(src), `${newId}.jsonl`);
+          const content = await readFile(src, "utf8");
+          await writeFile(dst, content, "utf8");
+          if (name !== "") await renameSessionTitle(s.cwd, newId, name, deps.baseDir);
+          return { text: s.i18n.t("repl.branch.created", { id: newId, title: name || "(untitled)" }) };
+        }
+      }
+      // 降级态（无 writer）：从内存消息重建最小转录（落点=transcriptsDir），仍注册进 /resume 索引
+      const dir = transcriptsDir(s.cwd, deps.baseDir);
+      await mkdir(dir, { recursive: true });
+      const dst = join(dir, `${newId}.jsonl`);
+      const recs = s.messages.map((mm, i) => JSON.stringify({ schemaVersion: SCHEMA_VERSION, seq: i + 1, ts: new Date().toISOString(), kind: mm.role === "user" ? "user_message" : "assistant_message", message: mm }));
+      await writeFile(dst, recs.length ? recs.join("\n") + "\n" : "", "utf8");
+      if (name !== "") await renameSessionTitle(s.cwd, newId, name, deps.baseDir);
+      return { text: s.i18n.t("repl.branch.created", { id: newId, title: name || "(untitled)" }) };
+    },
+    // —— M7-WP-07：/btw（teams flag 侧信道：旁路单问——最小上下文＋provider 流式；不进主消息流、不写转录 [CC] CHANGELOG:2859 教训）——
+    btw: async (args) => {
+      const s = deps.session;
+      const q = args.trim();
+      if (q === "") throw new Error(s.i18n.t("repl.btw.err.required"));
+      try {
+        const events = s.provider.stream({ model: s.model, messages: [{ role: "user", content: [{ type: "text", text: q }] }] });
+        let out = "";
+        for await (const ev of events) {
+          if (ev.type === "text_delta") out += ev.text;
+        }
+        return { text: s.i18n.t("repl.btw.answer", { answer: out }) };
+      } catch (err) {
+        throw new Error(s.i18n.t("repl.btw.err.failed", { value: err instanceof Error ? err.message : String(err) }));
+      }
+    },
+    // —— M7-WP-07：/loop（workflow flag：计数制循环，<prompt> 连跑 <n> 次，上限防失控；无参=查看状态）——
+    loop: async (args) => {
+      const s = deps.session;
+      const raw = args.trim();
+      if (raw === "") return { text: s.i18n.t("repl.loop.status") };
+      const m = /^(\d+)\s+([\s\S]+)$/.exec(raw);
+      if (!m) throw new Error(s.i18n.t("repl.loop.err.usage", { max: LOOP_MAX_ROUNDS, value: raw }));
+      const n = Number(m[1]);
+      const prompt = m[2]!;
+      if (!Number.isInteger(n) || n < 1 || n > LOOP_MAX_ROUNDS) throw new Error(s.i18n.t("repl.loop.err.usage", { max: LOOP_MAX_ROUNDS, value: raw }));
+      let done = 0;
+      for (let i = 0; i < n; i++) {
+        if (deps.isInterrupted?.()) break; // REPL 中断路径（Esc/Ctrl+C 语义）
+        const turn = { role: "user" as const, content: [{ type: "text" as const, text: prompt }] };
+        s.messages.push(turn);
+        transcriptAppend(deps, { kind: "user_message", message: turn });
+        const answer = await runProviderTurn(s, prompt);
+        const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
+        s.messages.push(ast);
+        transcriptAppend(deps, { kind: "assistant_message", message: ast });
+        done++;
+      }
+      return { text: s.i18n.t("repl.loop.done", { n: done, prompt }) };
+    },
+    // —— M7-WP-07：/batch（workflow flag：读文件逐非空行作为 user turn 顺序执行；行数上限防失控）——
+    batch: async (args) => {
+      const s = deps.session;
+      const file = args.trim();
+      if (file === "") throw new Error(s.i18n.t("repl.batch.err.required"));
+      if (!existsSync(file)) throw new Error(s.i18n.t("repl.batch.err.missing", { value: file }));
+      const lines = (await readFile(file, "utf8")).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+      if (lines.length > BATCH_LINE_CAP) throw new Error(s.i18n.t("repl.batch.err.limit", { value: lines.length, cap: BATCH_LINE_CAP }));
+      let n = 0;
+      for (const line of lines) {
+        if (deps.isInterrupted?.()) break;
+        const turn = { role: "user" as const, content: [{ type: "text" as const, text: line }] };
+        s.messages.push(turn);
+        transcriptAppend(deps, { kind: "user_message", message: turn });
+        const answer = await runProviderTurn(s, line);
+        const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
+        s.messages.push(ast);
+        transcriptAppend(deps, { kind: "assistant_message", message: ast });
+        n++;
+      }
+      return { text: s.i18n.t("repl.batch.done", { n, file }) };
     },
     // —— M7-WP-01：/goal（Kimi goal mode 语义束收敛 [自定]；锚=KimiCode的产品细节.md 行 334-364——
     // status 显示收敛为纯目标文本（Kimi 的已用时间/轮次/token 数=自动续跑面，本卡边界不做）；
@@ -1347,6 +1459,25 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
   if (name === "") {
     deps.io.write(`${deps.session.i18n.t("repl.command.usage")}\n`);
     return;
+  }
+  // M7-WP-07：侧信道命令（EXPERIMENTAL_SIDECHANNEL_COMMANDS）**不进注册表**——teams flag 开启且门 enabled 时
+  // 由 REPL 旁路派发到 ctx（mini-ADR-0049）；teams 未开/门关 = 走与 registry 缺席同形的未知命令提示（拒绝面语义）。
+  if ((EXPERIMENTAL_SIDECHANNEL_COMMANDS as readonly string[]).includes(name)) {
+    const gate = deps.experimentalGate;
+    const active = gate?.enabled === true && gate.flags.includes("teams");
+    if (!active) {
+      deps.io.write(`${deps.session.i18n.t("repl.command.unknown", { value: name })}\n`);
+      return;
+    }
+    if (name === "btw") {
+      try {
+        const r = await createCommandContext(deps).btw(args);
+        deps.io.write(`${r.text}\n`);
+      } catch (err) {
+        deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
+      }
+      return;
+    }
   }
   const cmd = commands.get(name);
   if (!cmd) {
