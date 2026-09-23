@@ -62,4 +62,7 @@
 5. **`--purge` 删除失败分支**（`rmSync` 后仍存在 → exit 1）：需 OS 级故障注入（如占用句柄），本机不可构造 → 未覆盖。
 6. **`defaultPathRestorer` win 分支实跑**（`reg query/add`）：见 §2，待管理员机/CI。
 7. **双源择优/回退**：规格未定义且本卡不引入（ADR-0050 决策 1）；`/update` 仍单接 npm 源，**GitHub 源已导出但未接线** —— 待后续卡按用户裁决决定。
-8. **邻通道未修缺陷（本卡发现、不在边界内，交 main 裁决）**：`scripts/install.sh` / `scripts/install.ps1` 仍字面 `@standardcode/cli`（ADR-0044 决策 10 改判前旧名），与已修的 `cleanup.*` 不一致——本卡只修卸载通道（`cleanup.sh`/`cleanup.ps1`），安装侧留待裁决。
+8. **邻通道同族缺陷（本卡发现并登记 D1；已由 main 于 `8fffaa2` 一并订正，非本卡越界）**：`scripts/install.sh` / `scripts/install.ps1`
+   原亦字面 `@standardcode/cli`（ADR-0044 决策 10 改判前旧名，安装通道会装到另一个包）。本卡只修卸载通道（`cleanup.sh`/`cleanup.ps1`），
+   安装侧登记交 main 裁决 → main 于 `8fffaa2` 订正两脚本并补守卫断言（两脚本新包名在位＋旧名零命中），`wp11-uninstall-channels` 16→17 例。
+   现四脚本包名一致＝ `@standardcode-oss/cli`。
