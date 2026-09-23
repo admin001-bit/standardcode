@@ -789,11 +789,21 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         await assets.chain.catch(() => {}); // drain 在途写入，保证复制源完整
         const src = assets.writer.file;
         if (src) {
-          const dst = join(dirname(src), `${newId}.jsonl`);
-          const content = await readFile(src, "utf8");
-          await writeFile(dst, content, "utf8");
-          if (name !== "") await renameSessionTitle(s.cwd, newId, name, deps.baseDir);
-          return { text: s.i18n.t("repl.branch.created", { id: newId, title: name || "(untitled)" }) };
+          // 容错口只包读取：转录文件尚未落盘（writer 只建目录、首条 append 才建文件）——
+          // 新会话首条输入即 /branch、或 /new 后尚无记录即 /branch —— 落到下方内存重建路径；
+          // 其余错误（ENOSPC/权限等）仍 fail-closed 上抛；写入/改名不在容错口内（失败即实报错）。
+          let content: string | null = null;
+          try {
+            content = await readFile(src, "utf8");
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+          }
+          if (content !== null) {
+            const dst = join(dirname(src), `${newId}.jsonl`);
+            await writeFile(dst, content, "utf8");
+            if (name !== "") await renameSessionTitle(s.cwd, newId, name, deps.baseDir);
+            return { text: s.i18n.t("repl.branch.created", { id: newId, title: name || "(untitled)" }) };
+          }
         }
       }
       // 降级态（无 writer）：从内存消息重建最小转录（落点=transcriptsDir），仍注册进 /resume 索引

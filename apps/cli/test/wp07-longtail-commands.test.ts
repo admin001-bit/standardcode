@@ -5,9 +5,13 @@
 //      teams 开=+0（无命令面→35）、三 flag 全开=+6（→41；btw 侧信道恒不注册）；
 //   ③ 四个语义各一正例（branch 复制转录/btw 旁路单问/loop 计数制/batch 逐行执行）；
 //   ④ fail-closed：/loop 用法错、/batch 缺文件/空参、/btw 空参均点名报错；
-//   ⑤ EXPERIMENTAL_DEFERRED_COMMANDS === []（M7 清空推后集）。
+//   ⑤ EXPERIMENTAL_DEFERRED_COMMANDS === []（M7 清空推后集）；
+//   ⑤b /btw 侧信道路由（REPL 真实派发：teams 开=旁路派发、teams 关=未知命令）＋拦截块判别力（provider 调用计数）
+//      ＋/btw 不写转录（转录文件级断言）；
+//   ⑥ 中断钩子（/loop 当轮即止）与上限边界（/loop n=10 恰接受、/batch 200 接受·201 拒绝且零执行）；
+//   ⑦ /branch 转录未落盘态回归（新会话首条输入即 /branch 不得 ENOENT）。
 // 计数口径（CLI_COMMANDS 守恒 35 不变）与 wp01/wp05/wp10/wp12 同形；侧信道 /btw 不进注册表（见 mini-ADR-0049）。
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -74,6 +78,26 @@ function makeSession(): Session {
 }
 function ctxOf(s: Session, out?: string[]): ReturnType<typeof createCommandContext> {
   return createCommandContext({ session: s, io: { lines: (async function* () {})(), write: (x) => out?.push(x), close: () => {} }, baseDir });
+}
+/** 计数 provider 会话：判「旁路派发是否真的发生」（仅断言提示文案对拦截块存在性零判别力）。 */
+function countingSession(): { s: Session; streams: number } {
+  const box = { streams: 0 };
+  const base = fakeProvider();
+  const s = createSession({
+    provider: {
+      ...base,
+      async *stream(req: LLMRequest): AsyncIterable<LLMEvent> {
+        box.streams++;
+        yield* base.stream(req);
+      },
+    },
+    catalog: ["m"],
+    model: "m",
+    cwd: projDir,
+    projectRoot: projDir,
+    home: root,
+  });
+  return { s, get streams() { return box.streams; } };
 }
 
 describe("WP-07 ① 默认关闭=四件零注册（注册表逐字等于 CLI_COMMANDS，仍 35）", () => {
@@ -230,7 +254,7 @@ describe("WP-07 ⑤ 推后集已清空（M7 四件全部迁入映射/侧信道�
   });
 });
 
-describe('WP-07 ⑤ /btw 侧信道路由（REPL 真实派发路径；V-WP10 轮发现的缺口闭合）', () => {
+describe('WP-07 ⑤b /btw 侧信道路由（REPL 真实派发路径；V-WP10 轮发现的缺口闭合）', () => {
   async function runReplCapture(lines: string[], gate: ExperimentalGate): Promise<string[]> {
     const out: string[] = [];
     const s = makeSession();
@@ -254,5 +278,103 @@ describe('WP-07 ⑤ /btw 侧信道路由（REPL 真实派发路径；V-WP10 轮�
   it('teams 关：/btw 走未知命令提示（拒绝面语义，不派发）', async () => {
     const out = await runReplCapture(['/btw hello'], workflowOpen);
     expect(out.join('')).toContain('/btw');
+  });
+
+  it('判别力：teams 关时 provider 零调用（拦截块存在性的判据——仅断言提示文案不足以判别）', async () => {
+    const calls = countingSession();
+    const bd = path.join(root, 'repl-store-intr-' + Math.random().toString(36).slice(2));
+    const out: string[] = [];
+    await runRepl({
+      session: calls.s,
+      commands: gatedRegistry(workflowOpen),
+      io: { lines: (async function* () { yield '/btw hello'; })(), write: (x: string) => out.push(x), close: () => {} },
+      experimentalGate: workflowOpen,
+      baseDir: bd,
+    });
+    expect(out.join('')).toContain('/btw');
+    expect(calls.streams, 'teams 未开：/btw 不得旁路派发到 provider').toBe(0);
+  });
+
+  it('判别力：teams 开时 provider 恰一次调用（旁路派发真的发生）', async () => {
+    const calls = countingSession();
+    const bd = path.join(root, 'repl-store-intr2-' + Math.random().toString(36).slice(2));
+    await runRepl({
+      session: calls.s,
+      commands: gatedRegistry(teamsOpen),
+      io: { lines: (async function* () { yield '/btw hello'; })(), write: () => {}, close: () => {} },
+      experimentalGate: teamsOpen,
+      baseDir: bd,
+    });
+    expect(calls.streams).toBe(1);
+  });
+
+  it('/btw 不写转录（转录文件级断言：会话目录下零 .jsonl）', async () => {
+    const bd = path.join(root, 'repl-store-btw-' + Math.random().toString(36).slice(2));
+    const s = makeSession();
+    await runRepl({
+      session: s,
+      commands: gatedRegistry(teamsOpen),
+      io: { lines: (async function* () { yield '/btw hello'; })(), write: () => {}, close: () => {} },
+      experimentalGate: teamsOpen,
+      baseDir: bd,
+    });
+    const dir = transcriptsDir(s.cwd, bd);
+    const jsonl = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl')) : [];
+    expect(jsonl, '/btw 旁路单问不得写转录').toEqual([]);
+  });
+});
+
+describe('WP-07 ⑥ 中断钩子与上限边界（V-WP07 判别力缺口补用例）', () => {
+  it('/loop 中断钩子：deps.isInterrupted 置起后当轮即止（3 轮请求→实际 1 轮）', async () => {
+    const s = makeSession();
+    let i = 0;
+    const ctx = createCommandContext({
+      session: s,
+      io: { lines: (async function* () {})(), write: () => {}, close: () => {} },
+      baseDir,
+      isInterrupted: () => ++i > 1, // 首轮通过后置起
+    });
+    const r = await ctx.loop('3 ping');
+    expect(r.text).toContain('[loop]');
+    const userRounds = s.messages.filter((m) => m.role === 'user' && Array.isArray(m.content) && (m.content[0] as { text?: string }).text === 'ping').length;
+    expect(userRounds, '中断后置起轮不再执行').toBe(1);
+  });
+
+  it('/loop 上限边界：n=10 恰接受（上限内）', async () => {
+    const s = makeSession();
+    const r = await ctxOf(s).loop('10 ping');
+    expect(r.text).toContain('10');
+  });
+
+  it('/batch 上限边界：200 行恰接受、201 行点名拒绝且零执行', async () => {
+    const ok = path.join(root, 'batch-200.txt');
+    writeFileSync(ok, Array.from({ length: 200 }, (_, i) => `l${i}`).join('\n') + '\n', 'utf8');
+    const s1 = makeSession();
+    const r = await ctxOf(s1).batch(ok);
+    expect(r.text).toContain('200');
+
+    const tooMany = path.join(root, 'batch-201.txt');
+    writeFileSync(tooMany, Array.from({ length: 201 }, (_, i) => `l${i}`).join('\n') + '\n', 'utf8');
+    const s2 = makeSession();
+    await expect(ctxOf(s2).batch(tooMany)).rejects.toThrow(/201/);
+    expect(s2.messages.length, '超限不执行任何一行').toBe(0);
+  });
+});
+
+describe('WP-07 ⑦ /branch 转录未落盘态（真缺陷回归：新会话首条输入即 /branch）', () => {
+  it('转录文件尚未创建时不报 ENOENT，落内存重建路径并打印新分支 id', async () => {
+    const bd = path.join(root, 'repl-store-branch-' + Math.random().toString(36).slice(2));
+    const s = makeSession();
+    const out: string[] = [];
+    await runRepl({
+      session: s,
+      commands: gatedRegistry(forkOpen),
+      io: { lines: (async function* () { yield '/branch early'; })(), write: (x: string) => out.push(x), close: () => {} },
+      experimentalGate: forkOpen,
+      baseDir: bd,
+    });
+    const joined = out.join('');
+    expect(joined).toContain('[branch]');
+    expect(joined, '不得出现 ENOENT 失败').not.toContain('ENOENT');
   });
 });

@@ -192,8 +192,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
     });
   }
+  // M7-WP-07：/loop·/batch 循环中断钩子的宿主判据源（Ctrl+C/SIGINT）。作用域=单条输入行——
+  // 每行输入交付 repl 前重置（见下方 io.lines 包装），故中断只作用于当条命令执行期，不跨命令残留。
+  let interrupted = false;
   rl.on("SIGINT", () => {
     // §8.4 中断：turn 进行中→停流；空闲→提示退出方式（M1 不做二次确认计数）
+    interrupted = true; // /loop·/batch 逐轮判据（repl.ts deps.isInterrupted）
     if (session.activeAbort) session.activeAbort.abort();
     else process.stdout.write("\n(输入 /exit 退出)\n");
   });
@@ -202,8 +206,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     session,
     commands, // WP-01：门控后的注册表（派发/help/补全同源）
     experimentalGate: experimental, // M7-WP-07：/btw 侧信道派发开关判据（teams flag）
+    isInterrupted: () => interrupted, // M7-WP-07：/loop·/batch 中断钩子装配（此前未注入=生产恒不中断）
     io: {
-      lines: router.lines,
+      // 每行输入交付前重置中断标志（中断作用域=当条命令，非跨行累积）
+      lines: (async function* () {
+        for await (const line of router.lines) {
+          interrupted = false;
+          yield line;
+        }
+      })(),
       write: (s) => process.stdout.write(s),
       close: () => rl.close(),
       // WP-08 DoD③：auto 更新通知行重绘（清当前行+写通知+重绘提示符；preserveCursor=保留已输入缓冲，
