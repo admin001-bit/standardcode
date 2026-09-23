@@ -202,6 +202,16 @@ describe("DoD② 三平台差异点（程序体命令／PATH 项 scope／数据�
       expect(src).not.toContain("@standardcode/cli"); // ADR-0044 决策 10 改判前旧名
     });
   }
+  // 卡外最小修复守卫（main，2026-09-24）：安装脚本 `scripts/install.sh|install.ps1` 与清理脚本同形地残留改判前
+  // 旧包名 `@standardcode/cli`（ADR-0044 决策 10 已改判 `@standardcode-oss/cli`）——安装通道会装到**另一个包**。
+  // 本卡边界只含卸载通道（清理脚本已修），安装侧一并订正并加守卫，防再度漂移。
+  it("安装脚本包名与 NPM_PACKAGE_NAME 同字（install.sh/install.ps1；旧名零命中）", () => {
+    for (const f of ["scripts/install.sh", "scripts/install.ps1"]) {
+      const src = readFileSync(join(repoRoot, f), "utf8");
+      expect(src, `${f} 缺新包名`).toContain(NPM_PACKAGE_NAME);
+      expect(src, `${f} 残留改判前旧名`).not.toContain("@standardcode/cli");
+    }
+  });
   it("默认（不带 --purge）三平台均不触 confirm、数据目录保留", async () => {
     for (const p of PLATFORMS) {
       const { io, order, dataDir } = chainIo({ platform: p.platform, entries: [pathEntry(p)] });

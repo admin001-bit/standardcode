@@ -1,12 +1,12 @@
 # standardcode installer - Windows (macOS/Linux use scripts/install.sh).
 # ADR-0044 decision 6 ([self-defined]; Appendix E line 630 mechanism backbone): npm channel, zero privilege
 # elevation (no admin actions; npm global dir = user-writable semantics).
-# Flow: precheck (node>=18 + npm) -> npm i -g @standardcode/cli@latest -> standardcode --version self-check
+# Flow: precheck (node>=18 + npm) -> npm i -g @standardcode-oss/cli@latest -> standardcode --version self-check
 #       -> PATH missing => confirm "yes" then write user PATH + record install manifest (ENG-040 line 431).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [@version]
 # NOTE: keep this file ASCII-only (Windows PowerShell 5.1 parses BOM-less files as ANSI).
 $ErrorActionPreference = "Stop"
-$Pkg = "@standardcode/cli"
+$Pkg = "@standardcode-oss/cli"
 $VersionArg = if ($args.Count -ge 1) { $args[0] } else { "@latest" }
 $NodeMinMajor = 18
 $DataDir = Join-Path $env:USERPROFILE ".standardcode"

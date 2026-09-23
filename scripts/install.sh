@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # standardcode installer — macOS / Linux（Windows 用 scripts/install.ps1）。
 # ADR-0044 决策 6（[自定]；附录 E 行 630 机制主干）：npm 通道、零提权（无 sudo；npm 全局目录=用户可写语义）。
-# 流程：环境前置核查（node>=18+npm）→ npm i -g @standardcode/cli@latest → standardcode --version 自证
+# 流程：环境前置核查（node>=18+npm）→ npm i -g @standardcode-oss/cli@latest → standardcode --version 自证
 #       → PATH 缺失时确认后写入并留痕 ~/.standardcode/install-manifest.json（ENG-040 行 431：PATH 写入需 "yes"）。
 # 用法：bash scripts/install.sh [@version]（缺省 @latest）
 set -euo pipefail
 
-PKG="@standardcode/cli"
+PKG="@standardcode-oss/cli"
 VERSION_ARG="${1:-@latest}"
 NODE_MIN_MAJOR=18
 HOME_DIR="${HOME:?}"
