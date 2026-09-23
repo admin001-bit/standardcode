@@ -209,21 +209,24 @@ const GATE_ALL = { enabled: true, flags: ["workflow", "teams", "fork"] as const,
 const GATE_CLOSED = { enabled: false, flags: [] as const, notices: [] };
 
 describe("WP-05 O2 门内实现合并顺序：append（先 CLI_COMMANDS 原序，再门内实现声明序）", () => {
-  it("门开：注册表 = CLI_COMMANDS 逐字原序 ＋ 门内实现声明序追加于末尾", () => {
+  // BLK-11=①（2026-09-24 用户裁决）随 WP-07 迁移改写：门内实现由 M6 三件扩为七件
+  // （声明序 workflows/fork/export/branch/batch/loop/btw），其中 /btw 为侧信道、恒不入注册表。
+  it("门开：注册表 = CLI_COMMANDS 逐字原序 ＋ 门内实现声明序追加于末尾（侧信道 btw 除外）", () => {
     const baseNames = CLI_COMMANDS.map((c) => c.name);
     const implNames = experimentalCommandImplementations().map((c) => c.name);
     const names = gatedRegistry(GATE_WORKFLOW_FORK).map((c) => c.name);
 
-    expect(implNames).toEqual(["workflows", "fork", "export"]);
-    expect(names).toEqual([...baseNames, ...implNames]);
+    expect(implNames).toEqual(["workflows", "fork", "export", "branch", "batch", "loop", "btw"]);
+    const registryImpls = implNames.filter((n) => n !== "btw"); // 侧信道恒被滤除
+    expect(names).toEqual([...baseNames, ...registryImpls]);
     expect(names.slice(0, baseNames.length)).toEqual(baseNames); // 首段=基础表原序（prepend 变异即在此红）
-    expect(names.at(-1)).toBe(implNames.at(-1)); // 门内实现在末尾
-    expect(names.slice(baseNames.length)).toEqual(implNames);
+    expect(names.at(-1)).toBe(registryImpls.at(-1)); // 门内实现在末尾
+    expect(names.slice(baseNames.length)).toEqual(registryImpls);
   });
 
-  it("三 flag 全开：顺序仍为「基础表原序 + 门内实现声明序」", () => {
+  it("三 flag 全开：顺序仍为「基础表原序 + 门内实现声明序」（侧信道 btw 除外）", () => {
     const baseNames = CLI_COMMANDS.map((c) => c.name);
-    const implNames = experimentalCommandImplementations().map((c) => c.name);
+    const implNames = experimentalCommandImplementations().map((c) => c.name).filter((n) => n !== "btw");
     expect(gatedRegistry(GATE_ALL).map((c) => c.name)).toEqual([...baseNames, ...implNames]);
   });
 
