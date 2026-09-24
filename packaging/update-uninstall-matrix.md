@@ -31,7 +31,7 @@
 
 | 通道 | win32 | linux | darwin | 证据 / 判据 |
 |---|---|---|---|---|
-| **CLI 默认卸载**（`npm rm -g` + PATH 还原 + 残留断言） | 已验证（注入面） | 已验证（注入面） | 已验证（注入面） | `apps/cli/test/wp11-uninstall-channels.test.ts`：三平台各跑一遍（`npm.cmd`/`npm` 分型、args 恒 `rm -g @standardcode-oss/cli`、数据目录 `<home>/.standardcode`）＋ `wp07-release-cli.test.ts` 既有 8 例 |
+| **CLI 默认卸载**（`npm rm -g` + PATH 还原 + 残留断言） | 已验证（注入面） | 已验证（注入面） | 已验证（注入面） | `apps/cli/test/wp11-uninstall-channels.test.ts`：三平台各跑一遍（`npm.cmd`/`npm` 分型、args 恒 `rm -g @standardcode-oss/cli`、数据目录 `<home>/.standardcode`）＋ `wp07-release-cli.test.ts` 既有 10 例（V-WP11 勘误：原记 8 例，实枚举 10） |
 | **CLI `--purge` 全链**（①程序体→②PATH→③残留→④确认→⑤删用户数据） | 已验证（注入面，全链顺序断言 `["runner","restorer","verifyGone","confirm"]`） | 同左 | 同左 | 同上文件「全链贯通」例：exit 0 + 五行关键输出 + 数据目录消失；反向例「残留校验失败→purge 不执行（confirm 零调用、目录保留）」＝防半卸态 |
 | **`--purge` fail-closed**（非 TTY 无确认通道=拒绝） | 已验证 | 已验证 | 已验证 | `wp07-release-cli.test.ts`（非 TTY 拒绝 exit 1 + 目录保留；用户拒答 aborted）——平台无关 |
 | **手动清理脚本**（`scripts/cleanup.ps1 -PurgeHome` / `scripts/cleanup.sh --purge-home`） | 静态已验证 | 静态已验证 | 静态已验证 | 三平台用例内静态断言：脚本含对应旗标、包名与 `NPM_PACKAGE_NAME` 同字（`@standardcode-oss/cli`）、且不含改判前旧名；**实跑未验证**（spawnSync EBUSY／wsl.exe 拦截） |
