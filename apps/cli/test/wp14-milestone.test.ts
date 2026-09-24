@@ -117,15 +117,19 @@ describe("WP-14 接缝登记：㉒㉓㉔ 追加 + 既有接缝零删除基线", 
 });
 
 describe("WP-14 DoD⑤ 偏差分桶计数（M7.md 遗留汇总表）", () => {
-  it("23 条＝A 6（随收口登记）＋B 6（留 G 门）＋C 11（留后续卡）；逐条唯一归属", () => {
+  it("23 条＝A 5（随收口登记）＋B 6（留 G 门）＋C 12（留后续卡）；逐条唯一归属且逐格解析", () => {
     const md = readRepo("docs/milestones/M7.md");
     const section = md.slice(md.indexOf("## 全板遗留与未验证面汇总"), md.indexOf("## 顺带处理说明"));
     const rows = section.split("\n").filter((l) => /^\| \d+ \|/.test(l));
-    const count = (marker: string) => rows.filter((r) => r.includes(marker)).length;
+    // 逐格解析（非整行 includes）：格数不符即红——单元格内裸竖线会撑破列并被本断言捕获（V-A D-A2 订正面）。
+    const cellsOf = (r: string) => r.replace(/^\|/, "").replace(/\|$/, "").split("|").map((s) => s.trim());
+    expect(rows.filter((r) => cellsOf(r).length !== 5).map((r) => r.slice(0, 70)), "遗留表每行须恰 5 格").toEqual([]);
+    const bucket = rows.map((r) => cellsOf(r)[3]); // 第 4 格＝处置
+    const count = (marker: string) => bucket.filter((x) => x.startsWith(marker)).length;
     const a = count("**A 已做（收口）**") + count("**A 已闭合"); // 含「已闭合」与「已闭合（追溯认定）」两形
     const b = count("**B 留 G 门**");
     const c = count("**C 留后续卡**");
-    expect({ a, b, c, total: rows.length }).toEqual({ a: 6, b: 6, c: 11, total: 23 });
+    expect({ a, b, c, total: rows.length }).toEqual({ a: 5, b: 6, c: 12, total: 23 });
     expect(a + b + c).toBe(rows.length); // 分桶互斥：无未分桶条目
   });
 });

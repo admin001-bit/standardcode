@@ -11,7 +11,7 @@
 
 ## 决策
 
-1. **flag 映射**（[自定]，登记面）：`workflow → ["workflows","batch","loop"]`、`fork → ["fork","export","branch"]`、`teams → []`（无斜杠命令面；**`/btw` 属 teams 侧信道**——不进本表、恒不注册，仅 REPL 在 teams 开启时旁路派发，见决策 3）。〔补注 2026-09-25 WP-14 收口：并列 `/btw → teams（侧信道）` 以提升映射表可读性，决策内容不变。〕
+1. **flag 映射**（[自定]，登记面）：`workflow → ["workflows","batch","loop"]`、`fork → ["fork","export","branch"]`、`teams → []`（无斜杠命令面；**`/btw` 属 teams 侧信道**——不进本表、恒不注册，仅 REPL 在 teams 开启时旁路派发，见决策 3）。〔补注 2026-09-25 WP-14 收口：**于决策 1 行内补注 `/btw` 的 teams 侧信道归属**（非增列独立映射条目），映射表本体与决策内容均不变。〕
 2. **`/branch [name]`（fork flag）**：复制当前会话转录为新 session 文件并注册进会话索引（供 `/resume` 恢复），打印新分支 session id；**不切换当前会话**（降级态：无 writer 时从内存消息重建最小转录落 `transcriptsDir`）。无 fail-closed——空会话仍可分叉为空分支（与 fork 派生"空会话拒绝"不同族：branch 是快照复制，非 agent 派生）。
 3. **`/btw <question>`（teams flag 侧信道）**：旁路边问——以 provider 单轮流式问、答案经 `ctx.write` 上屏；**不进主消息流、不写转录**（[CC] CHANGELOG:2859 教训：旁路问询不污染主上下文）。`teams:[]` 无斜杠命令面，故 `/btw` 不进 `EXPERIMENTAL_FLAG_COMMANDS`、不入注册表（`experimentalCommandNames` 经 `EXPERIMENTAL_SIDECHANNEL_COMMANDS` 仍含 `btw` 以保拒绝面），仅 REPL 在 teams 开启时旁路派发。
 4. **`/loop <n> <prompt>`（workflow flag，计数制）**：把 `<prompt>` 连续执行 `<n>` 次（上限 `LOOP_MAX_ROUNDS=10` 防失控）；无参=查看状态（"[loop] 无活动循环"）。每轮 push user+assistant 消息并 `transcriptAppend` 落盘；`ReplDeps.isInterrupted?.()` 支持 REPL 中断（Esc/Ctrl+C）提前退出。
