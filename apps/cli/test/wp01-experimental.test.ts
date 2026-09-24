@@ -195,7 +195,7 @@ describe("WP-01 配置面接线（settings 子树切取 + /help 同源）", () =
 
   it("斜杠命令映射与注册表一致（flag→命令名 [自定] 登记面）", () => {
     expect(sorted(experimentalCommandNames())).toEqual(sorted(M6_COMMAND_NAMES)); // 拒绝面=M6 七件
-    expect(sorted(activeExperimentalCommandNames(resolveExperimental({ env: { [EXPERIMENTAL_ENV_KEY]: "1" }, settings: undefined })))).toEqual(sorted(GATED_M6)); // 放行面=三件
+    expect(sorted(activeExperimentalCommandNames(resolveExperimental({ env: { [EXPERIMENTAL_ENV_KEY]: "1" }, settings: undefined })))).toEqual(sorted(GATED_M6)); // 放行面=六件〔订正 2026-09-25 WP-14 收口：原注"三件"系 M6 时点，M7-WP-07 迁移后 GATED_M6 为 workflows/fork/export/branch/batch/loop 六件；`/btw` 侧信道恒不在此面〕
     expect(EXPERIMENTAL_FLAG_COMMANDS.workflow).toEqual(["workflows", "batch", "loop"]); // M7-WP-07：+batch/loop
     expect(EXPERIMENTAL_FLAG_COMMANDS.teams).toEqual([]); // 无斜杠命令面（工具面同门，WP-06 起）；/btw 走侧信道
     expect(EXPERIMENTAL_FLAG_COMMANDS.fork).toEqual(["fork", "export", "branch"]); // M7-WP-07：+branch

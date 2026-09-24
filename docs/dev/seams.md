@@ -109,7 +109,28 @@
 
 ## 接缝㉑ 实验特性位 × 命令注册 × 遥测事件（2026-09-19，WP-12 随 M6-1 板补登）
 
-- 定义：flag 默认关=三层零产出——命令不注册（基表逐字等于 `CLI_COMMANDS` **恰 35**〔M7 分期逐件注册后现值；本条 2026-09-19 立文时为 30，递增链 30→31→32→33→34→35〕；`workflows`/`fork`/`export` 门内注册）、工具不注册（默认六件无 SendMessage/Workflow）、遥测零事件（双层：遥测门关=emit 纯布尔即返零构造零写盘；flag 关=桥接不注入=onTelemetry 缺位零事件）；非法值 fail-closed 不猜、未知名/未知键告警不静默。
+- 定义：flag 默认关=三层零产出——命令不注册（基表逐字等于 `CLI_COMMANDS` **恰 35**〔M7 分期逐件注册后现值；本条 2026-09-19 立文时为 30，递增链 30→31→32→33→34→35〕；**门内注册六件**＝`workflows` `batch` `loop`（workflow flag）＋`fork` `export` `branch`（fork flag）〔2026-09-24 M7-WP-07 迁移后实况：原推后四件中的 `/branch` `/batch` `/loop` 已并入对应 flag；**teams flag 无命令面**，`/btw` 为**侧信道**——恒不进注册表、仅 REPL 在 teams 开启时旁路派发，见 `EXPERIMENTAL_SIDECHANNEL_COMMANDS` 与 mini-ADR-0049〕）、工具不注册（默认六件无 SendMessage/Workflow）、遥测零事件（双层：遥测门关=emit 纯布尔即返零构造零写盘；flag 关=桥接不注入=onTelemetry 缺位零事件）；非法值 fail-closed 不猜、未知名/未知键告警不静默。
 - 锚点：v2.8 ORC-050（行 298）+§8.2 行 365+§12.5 接缝㉑+ENG-090 行 433；实现 packages/platform/src/experimental.ts:28（EXPERIMENTAL_FLAGS）/:75（resolveExperimental）+apps/cli/src/experimental-gate.ts（命令/工具注册门）+packages/capabilities/src/workflow/telemetry-bridge.ts（onTelemetry 注入件）。
-- 测试：apps/cli/test/wp12-milestone.test.ts（收口断言集：基表计数随分期递增〔现值 35，见上条〕+七件候选零命中+工具面六件+门候选守恒 7 件）+apps/cli/test/wp11-workflow-telemetry.test.ts:129/:130/:149（接缝㉑ 双层=门关 emit 即返/flag 关桥接不注入）+wp01-experimental.test.ts（门序/告警/零注册）。
+- 测试：apps/cli/test/wp12-milestone.test.ts（M6 收口断言集：基表计数随分期递增〔现值 35，见上条〕+七件候选零命中+工具面六件+门候选守恒 7 件）+apps/cli/test/wp14-milestone.test.ts（**M7 收口断言集**：基表仍 35＋七件候选零命中＋门候选守恒 7 件＋附录 E 通道面在位）+apps/cli/test/wp11-workflow-telemetry.test.ts:129/:130/:149（接缝㉑ 双层=门关 emit 即返/flag 关桥接不注入）+wp01-experimental.test.ts（门序/告警/零注册）。
 - 未解决：无（桥接生产装配位=M6 统一接线义务，WP-11 F1）。
+
+## 接缝㉒ OTel 导出 × 遥测 opt-in 门（2026-09-25，WP-14 随 M7 收口补登）
+
+- 定义：OTel 导出通道与遥测 opt-in 门**同门序**——默认关=零构造零外发（endpoint 未配置 ⇒ `createOtelSink` 返回 null、OTel SDK 整族不加载、facade emit 后 exporter 收 0 span）；门开后事件经 **sanitizeProps→redactSecrets 同一单源**脱敏入 span（与接缝⑮ 同函数，导出通道**不旁路**脱敏单源，防第二套实现漂移）；span resource `service.name` 缺省 `standardcode`、可被 `serviceName` 显式覆盖（非缺省形必须可判别）；endpoint 配置序 env > settings > 缺省，空串/非字符串=fail-closed 不猜。
+- 锚点：v2.8 §5.2 行 226（platform-services L6 参考 `_367.js` OTel）+ENG-090 行 433+SEC-050 行 458+§12.5 接缝⑮（脱敏单源）；实现 packages/platform/src/otel.ts（TelemetrySink：事件→instant span，span 名=ENG-090 事件名）+packages/platform/src/telemetry.ts:14/199-203（自 session-store 导入 redactSecrets＋sanitizeProps 逐值调用）+packages/platform/src/session-store.ts:29（单源）。
+- 测试：packages/platform/test/otel.test.ts:28（无 endpoint 零构造）/:34（关态 SDK 亦不加载，注入计数双向确证）/:47（门关 emit→0 span＝接缝㉒ 关侧）/:66（门开经 redactSecrets 单源＝开侧）/:87（turn_end 逐枚入 span，ENG-090 参数对位）/:110（env 凌驾 settings、空串 fail-closed）/:120（service.name 缺省＋非缺省两形）。
+- 未解决：OTel sink 生产装配点未接线（WP-05 遗留，属 M6 统一接线义务族，留 G 门）；真 OTLP 外发未实跑（无 collector，登记）。
+
+## 接缝㉓ `/sandbox` 命令面 × M5 沙箱后端三平台臂（2026-09-25，WP-14 随 M7 收口补登）
+
+- 定义：`/sandbox` 命令与用户开关只做**键位持久化＋状态显示**，不改 M5 已冻结的沙箱后端与策略编译器；读侧判定单源=`sandbox-config.ts`（命令面不自写第二套判定），写入落 `sandbox.enabled`／`sandbox.tier` **点路径标量键**（本仓 settings 装配把嵌套对象展开为点路径叶子，对象形键取不到值——WP-03/04 同族教训），新会话经 `resolveSandboxSettings` 生效；后端缺席时 `on` 请求**零落盘并拒绝**（fail-closed，B-12），`off` 不需探针；env 逃逸舱 `STANDARD_CODE_SANDBOX` 凌驾时**明示**不静默；**开关翻转对在途会话的语义 [自定]＝当前会话保持、新会话生效**（不重建 session、不触碰工具装配）。
+- 锚点：v2.8 §5.3(3)（三档策略）/§5.4（执行序）/EXE-010~012/ENG-072/B-12+§8.2 行 365（M7 分期含 /sandbox）；M5-1-results §WP-03（宿主接线＋默认档 workspace-write＋元数据禁写＋fail-closed）；实现 apps/cli/src/sandbox-config.ts（读侧单源）+apps/cli/src/commands.ts（`/sandbox` 末位注册，CLI_COMMANDS 33→34）+packages/platform/src/settings.ts（点路径叶子装配）。
+- 测试：apps/cli/test/wp06-sandbox-command.test.ts:61（末位注册且全集恰 35）/:70（来源判定 env>flag>settings>default）/:84（档位全集相等＝命令面校验单源）/:96/:108/:116（缺省/开/关三态）/:133（持久化＋新会话生效）+apps/cli/test/wp03-sandbox-integration.test.ts（越界写拒/元数据禁写/fail-closed＝M5 冻结面零改回归）。
+- 未解决：Windows deny-read 需 elevated（承接缝③ M5 条目，提权渠道到手后 `--ignored` 补跑）；真探针读 `process.env` 一例本机不可覆盖（WP-06 V O1，判据强度类非缺陷）。
+
+## 接缝㉔ 主题/快捷键 × 终端渲染单源（2026-09-25，WP-14 随 M7 收口补登）
+
+- 定义：色板与键位表收敛于 cli-terminal L0 **单源**（`theme.ts`／`keybindings.ts`）——渲染一律经 `colorize` 着色、键事件一律消费单源键位表，命令面与 REPL 面**禁散落硬编码色码/键位字面量**（防双份漂移，守卫用例判别新增散落）；二者均落 settings 点路径键（`ui.theme`／`ui.keybindings.<action>`）并由 settings 装配解析即恢复重启态；非法值 fail-closed 抛错**不静默回落缺省**；保留键（如 `ctrl+c`）冲突拒绝且不落盘。
+- 锚点：v2.8 §5.2 行 214（cli-terminal L0 职责含渲染；主题/快捷键属该层）+§13 行 532（终端兼容矩阵维持 M1 裁决）+§12.5 接缝㉔；实现 apps/cli/src/theme.ts（THEMES/themeTokens/resolveTheme/colorize/themeFromSettings）+apps/cli/src/keybindings.ts（动作全集/parseKeySpec/matchKeyEvent/keybindingsFromSettings/resolveKeybindings）+apps/cli/src/render.ts（经 colorize，零裸 ANSI）。
+- 测试：apps/cli/test/wp03-theme.test.ts:51/:55/:64/:73（单源纯函数，**非缺省形必覆盖**）/:88（themeFromSettings＝重启恢复入口）/:132/:142（持久化＋重启恢复）/:167（**渲染单源守卫**：`apps/cli/src` 除 theme.ts/main.ts 无裸 ANSI，三书写形态全覆盖）；apps/cli/test/wp04-keybindings.test.ts:79（动作全集与缺省表全集相等）/:93（非法形 fail-closed）/:100（修饰位全等才命中）/:108（重启恢复入口）/:132（冲突拒绝且不改当前表）/:205（**键位表单源守卫**：判据**不绑定变量名**、去注释后无硬编码键位字面量）。
+- 未解决：无（不做自定义主题文件格式、不做多键序 chord，均 [自定] 留白登记）。

@@ -41,7 +41,7 @@ export function experimentalCommandNames(): readonly string[] {
   return [...all];
 }
 
-/** 门内可用命令名（总闸关=空；推后 M7 四件恒不含）。 */
+/** 门内可用命令名（总闸关=空）。〔订正 2026-09-25 WP-14 收口：原注"推后 M7 四件恒不含"已过时——M7-WP-07 迁移后 `/branch`/`/batch`/`/loop` 已并入对应 flag，flag 开即属本函数返回集；`/btw` 为侧信道恒不含（仅 REPL 旁路派发）。〕 */
 export function activeExperimentalCommandNames(gate: ExperimentalGate): readonly string[] {
   if (!gate.enabled) return [];
   const active = new Set<string>();
