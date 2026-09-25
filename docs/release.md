@@ -21,6 +21,14 @@
 2. `npm publish`（2FA OTP；scope=`@standardcode-oss`，ADR-0044 决策 10）；
 3. 发布后复验链：registry 查询 200 → 真实安装 → 更新路（runNpmUpdateAtomic verified）→ 卸载残留 gone（WP-07 DoD⑦ 形制）。
 
+## GitHub Release 通道步骤（M8-WP-01；授权到手后）
+
+> 资产＝三平台单文件＋`SHA256SUMS.txt`（四件）；**按 tag M7=e8b27f8 树重建**，不沿用早期产物。重建命令内建 bundle 重建＋三目标编译＋checksum 生成（交叉编译首跑需联网下载目标运行时）。
+
+1. 重建与自证（工作区 `D:\projects\standardcode`，`git rev-parse M7` 须=当前 HEAD）：`node scripts/build-binaries.mjs` → `node scripts/checksum.mjs verify apps/cli/dist/bin`=PASSED → 本机 `standardcode-windows-x64.exe --version`=0.1.0 → WSL2 跑 `standardcode-linux-x64 --version`=0.1.0 → **darwin 臂由 `ci.yml` `binaries` 泳道（macos runner）实跑**（ADR-0047 决策 5 核销口径）。
+2. 建 tag `v0.1.0` 指向 M7 树 commit（`e8b27f8`）并创建 GitHub Release（**tag 创建与 Release 发布同属外发动作，逐项用户明示**）；资产四件上传；发行说明＝首版要点＋**未签名声明**（Q-7：完整性以 SHA-256 为通道，指向 `SHA256SUMS.txt`）。
+3. 发布后复验（只读）：下载四资产 → 与 `SHA256SUMS.txt` 逐条校验相等 → 实跑 `--version`；GitHub 源 `/update` 探测接线归 M8-WP-06（本步骤不改 npm 源）。
+
 ## 相关文档
 
 - 通道集/签名/uninstall 语义：`docs/adr/0044-release-channels-and-uninstall.md`
