@@ -31,7 +31,7 @@ Get-FileHash .\standardcode-windows-x64.exe -Algorithm SHA256   # 与 SHA256SUMS
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/admin001-bit/standardcode/main/scripts/install.sh
-bash install.sh          # 装到用户目录（零提权）；PATH 写入需显式 "yes"；内置 SHA-256 校验
+bash install.sh          # 装到用户目录（零提权）；PATH 写入需显式 "yes"；完整性由 npm registry 承担
 ```
 
 ## 完整性校验（首版不签名）
