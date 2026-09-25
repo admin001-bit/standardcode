@@ -65,12 +65,16 @@ beforeAll(() => {
   writeFileSync(path.join(srcDir, "agents", "wp09-bot.md"), AGENT_MD, "utf8");
 });
 afterAll(() => {
+  // M8-WP-04（M7 遗留 #9 清偿）：清理钩子加固——默认 10s hookTimeout 在慢 runner（GitHub
+  // windows-latest）上超时判红（2026-09-26 CI 三连红＋冻结树对照同签名）；此处①清理降为**有界**
+  // 重试（≈1.2s 上限，失败即放行——临时目录残留可容忍，套件判红不得由清理承担）②显式放宽
+  // hookTimeout 至 30s（含慢盘 rmSync 单次阻塞余量）。
   try {
-    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
   } catch {
-    /* 可接受 */
+    /* 有界清理：残留 tmp 目录可接受 */
   }
-});
+}, 30_000);
 
 function fakeProvider(): ProviderAdapter & { requests: LLMRequest[] } {
   const requests: LLMRequest[] = [];
