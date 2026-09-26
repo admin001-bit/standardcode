@@ -22,16 +22,16 @@ jobs:
       - name: ruby syntax check (M7 未验证面)
         run: ruby -c packaging/homebrew/standardcode.rb
 
-      - name: brew audit (non-blocking record)
-        continue-on-error: true
-        run: brew audit --formula ./packaging/homebrew/standardcode.rb
-
       - name: brew install via local tap (下载 Release 资产 + sha256 校验)
         run: |
           brew tap-new --no-git admin001-bit/tap
           TAP_PATH="$(brew --repository admin001-bit/tap)"
           cp packaging/homebrew/standardcode.rb "$TAP_PATH/Formula/standardcode.rb"
           brew install admin001-bit/tap/standardcode
+
+      - name: brew audit (non-blocking record; tap 名形式——新版 brew 禁 audit 路径形)
+        continue-on-error: true
+        run: brew audit admin001-bit/tap/standardcode
 
       - name: version assert
         run: standardcode --version | grep -q '0.1.1'
