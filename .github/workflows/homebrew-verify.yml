@@ -4,6 +4,8 @@ name: homebrew-verify
 # （`ruby -c` 语法检查 + `brew` 安装/卸载全链；静态面已由 scripts/verify-channel-checksums.mjs 覆盖）。
 # 定位同 release-matrix：workflow_dispatch 手动触发，不进入 gate 门面（ci.yml 不变）。
 # runner=macos-latest（arm64；由 ci.yml binaries 泳道 darwin-arm64 产物实跑实证）。
+# 2026-09-27：新版 Homebrew 拒绝 tap 外的本地 formula（install ./x.rb 报 "formulae to be in a tap"）
+#   ⇒ 验证走本地 tap 形态（tap-new --no-git + brew install <tap>/standardcode，与真实用户路径一致）。
 on:
   workflow_dispatch:
 
@@ -24,8 +26,12 @@ jobs:
         continue-on-error: true
         run: brew audit --formula ./packaging/homebrew/standardcode.rb
 
-      - name: brew install from local formula (下载 Release 资产 + sha256 校验)
-        run: brew install ./packaging/homebrew/standardcode.rb
+      - name: brew install via local tap (下载 Release 资产 + sha256 校验)
+        run: |
+          brew tap-new --no-git admin001-bit/tap
+          TAP_PATH="$(brew --repository admin001-bit/tap)"
+          cp packaging/homebrew/standardcode.rb "$TAP_PATH/Formula/standardcode.rb"
+          brew install admin001-bit/tap/standardcode
 
       - name: version assert
         run: standardcode --version | grep -q '0.1.1'

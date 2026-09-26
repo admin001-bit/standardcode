@@ -19,13 +19,14 @@
 
 本机与 WSL **均无 `ruby`**（`.work/wp10-wsl-probe.sh`：`ruby: MISSING`）⇒ `ruby -c standardcode.rb` **未执行**，`brew audit` / `brew install` 更无从跑起。
 本卡对该通道只做到**静态自洽**：formula 文本与 `SHA256SUMS.txt` 逐字符相等（DoD③，由 `scripts/verify-channel-checksums.mjs` 断言）。
-**未本地验证面 = formula 语法检查（ruby -c）、brew 安装/卸载全链**（登记 BLK-12；可选验证环境=macOS 机或 CI macos runner + Homebrew）。
+**未本地验证面 = formula 语法检查（ruby -c）、brew 安装/卸载全链**（登记 BLK-12；可选验证环境=macOS 机或 CI macos runner + Homebrew）。**2026-09-27 更新**：CI 载体已落地＝`.github/workflows/homebrew-verify.yml`（workflow_dispatch；macos-latest arm64），实跑结果见该 workflow 的运行记录。
 
-授权环境下的完整验证命令（未执行）：
+验证命令（**2026-09-27 更新**：新版 Homebrew 拒绝 tap 外的本地 formula——`brew install ./standardcode.rb` 报 "Homebrew requires formulae to be in a tap"；原 `--build-from-source ./standardcode.rb` 写法失效。验证与真实用户路径统一走 tap 形态）：
 
 ```bash
-brew audit --strict --formula ./standardcode.rb
-brew install --build-from-source ./standardcode.rb   # 或装入本地 tap 后 brew install standardcode
+brew tap-new --no-git admin001-bit/tap
+cp standardcode.rb "$(brew --repository admin001-bit/tap)/Formula/standardcode.rb"
+brew install admin001-bit/tap/standardcode
 standardcode --version
 brew uninstall standardcode
 ```
