@@ -24,23 +24,31 @@ jobs:
 
       - name: brew install via local tap (下载 Release 资产 + sha256 校验)
         run: |
-          brew tap-new --no-git admin001-bit/tap
-          TAP_PATH="$(brew --repository admin001-bit/tap)"
+          brew tap-new --no-git sc-verify/tap
+          TAP_PATH="$(brew --repository sc-verify/tap)"
           cp packaging/homebrew/standardcode.rb "$TAP_PATH/Formula/standardcode.rb"
-          brew install admin001-bit/tap/standardcode
+          brew install sc-verify/tap/standardcode
 
       - name: brew audit (non-blocking record; tap 名形式——新版 brew 禁 audit 路径形)
         continue-on-error: true
-        run: brew audit admin001-bit/tap/standardcode
+        run: brew audit sc-verify/tap/standardcode
 
       - name: version assert
         run: standardcode --version | grep -q '0.1.1'
 
       - name: brew test (执行 formula 的 test do 块——M7 起从未执行过)
-        run: brew test admin001-bit/tap/standardcode
+        run: brew test sc-verify/tap/standardcode
 
       - name: brew uninstall
         run: brew uninstall standardcode
 
       - name: residue assert
         run: "! command -v standardcode"
+
+      - name: brew install via published tap (真实用户路径；完全限定名=自动仅信任该 formula)
+        run: |
+          brew tap admin001-bit/tap
+          brew install admin001-bit/tap/standardcode
+          standardcode --version | grep -q '0.1.1'
+          brew uninstall standardcode
+          ! command -v standardcode
