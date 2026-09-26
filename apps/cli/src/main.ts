@@ -2,6 +2,8 @@
 import { createInterface } from "node:readline";
 import { createSession, PERMISSION_LABEL } from "./session.ts";
 import { runRepl, completerFor } from "./repl.ts";
+// M8-WP-02（附录 E 品牌资源）：TTY 启动标识位（logo 左 + tagline 右；非 TTY 零输出）。
+import { startupBrandBanner } from "./brand.ts";
 import { gatedRegistry } from "./experimental-gate.ts";
 import { FileHistoryStoreImpl, acceptTrust, experimentalSettingsFrom, findGitRoot, isTrusted, isNativeDirSymlink, loadSettings, resolveExperimental, settingsValue, type SessionIndexEntry } from "@standardcode/platform";
 import { confirmQuestion, parseConfirmAnswer, trustQuestion, parseTrustAnswer, type ConfirmChoice } from "./confirm.ts";
@@ -201,6 +203,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     if (session.activeAbort) session.activeAbort.abort();
     else process.stdout.write("\n(输入 /exit 退出)\n");
   });
+  // M8-WP-02（附录 E 品牌资源）：产品标识位横幅在 REPL 前印出，仅 TTY（管道/CI 零打扰，见 brand.ts）。
+  const brand = startupBrandBanner(process.stdout);
+  if (brand) process.stdout.write(brand);
   process.stdout.write(`standardcode ${CLI_VERSION} — /help 查看命令，/exit 退出\n`);
   await runRepl({
     session,
