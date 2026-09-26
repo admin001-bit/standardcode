@@ -8,7 +8,7 @@
 - 现状（`packages/harness/src/subagent.ts` 校验段③）：`input.subagentType !== undefined && denied.has(input.subagentType.toLowerCase())` —— **仅显式类型过 deny**；类型省略时（段⑥解析为 `general-purpose`）不查 deny。
 - 两通道同暴露：`/subtask`（`apps/cli/src/repl.ts:431`）与 `/fork`（`apps/cli/src/repl.ts:740`）都只在类型显式时传 `subagentType`；缺省时下游按 `general-purpose` 派发（`apps/cli/src/session.ts:401` 注册表取 `subagentType ?? "general-purpose"`）。
 - 用户在 settings 写 `permissions.deny: ["Agent(general-purpose)"]` 的意图＝禁止该类型被派发；该规则对"缺省类型派发"静默失效 ⇒ deny 规则 fail-open 缺口（安全面）。
-- 规格空白：v2.8／ORC-022 只写"Agent(X) deny 规则拒绝"，未言明 X 取"显式字面量"还是"生效类型"。本 ADR 定规格为**生效类型**。
+- 规格空白：v2.8 未定义 subagent deny 规则的 X 取值（全文无 `Agent(` 字样）；校验序列实现注释（CC §4.1 step4）只写"Agent(X) deny 规则拒绝"，未言明 X 取"显式字面量"还是"生效类型"。本 ADR 定规格为**生效类型**。
 
 ## 决策
 
