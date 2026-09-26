@@ -17,6 +17,9 @@ import type { AgentEvent, ContentBlock, LoopOptions, TokenUsage, Tool, TurnState
 export const SUBAGENT_ANTI_FABRICATION =
   "Never fabricate or predict a pending agent's results.";
 
+/** 缺省 subagent 类型（类型省略时解析为此名；M8-WP-03/ADR-0052：deny 判定取**生效类型**，与段⑥解析同源）。 */
+const DEFAULT_SUBAGENT_TYPE = "general-purpose";
+
 /** 默认深度上限 3（ORC-022 原文；CC CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH 的 STANDARD_CODE_ 同构，ADR-0007）。 */
 export const MAX_SUBAGENT_DEPTH = 3;
 /** 默认并发上限 20（ORC-022 原文；CC MAX_CONCURRENT_SUBAGENTS 同构）。 */
@@ -180,15 +183,17 @@ export async function validateSpawn(
     return { ok: false, trace, code: "description_invalid", message: "description is required (3-5 word summary of the task)." };
   }
 
-  // ③ 权限规则（CC §4.1 step4：Agent(X) deny 规则拒绝）
+  // ③ 权限规则（CC §4.1 step4：Agent(X) deny 规则拒绝；M8-WP-03/ADR-0052：X＝**生效类型**——
+  //     类型省略时按缺省解析 general-purpose 同过 deny；显式形消息逐字不变，缺省形加 (default) 标注）
   trace.push("permission");
   const denied = new Set((ctx.deniedAgentTypes ?? []).map((t) => t.toLowerCase()));
-  if (input.subagentType !== undefined && denied.has(input.subagentType.toLowerCase())) {
+  const effectiveType = input.subagentType ?? DEFAULT_SUBAGENT_TYPE;
+  if (denied.has(effectiveType.toLowerCase())) {
     return {
       ok: false,
       trace,
       code: "agent_denied",
-      message: `Agent type '${input.subagentType}' has been denied by permission rule 'Agent(${input.subagentType})'.`,
+      message: `Agent type '${effectiveType}'${input.subagentType === undefined ? " (default)" : ""} has been denied by permission rule 'Agent(${effectiveType})'.`,
     };
   }
 
@@ -224,10 +229,10 @@ export async function validateSpawn(
   }
   let resolvedName: string;
   if (input.subagentType === undefined) {
-    if (!byLower.has("general-purpose")) {
+    if (!byLower.has(DEFAULT_SUBAGENT_TYPE)) {
       return { ok: false, trace, code: "type_missing", message: "No subagent type resolved: subagent_type was omitted and no general-purpose agent is available." };
     }
-    resolvedName = "general-purpose";
+    resolvedName = DEFAULT_SUBAGENT_TYPE;
   } else {
     const matches = byLower.get(input.subagentType.toLowerCase()) ?? [];
     if (matches.length > 1) {
