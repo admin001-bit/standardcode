@@ -7,6 +7,12 @@
 
 `standardcode.rb` — formula（`url`/`sha256` 指向 WP-09 `standardcode-darwin-arm64` 产物）。
 
+## 公开通道（2026-09-27 上线）
+
+- tap 仓＝<https://github.com/admin001-bit/homebrew-tap>（其 `Formula/standardcode.rb` 与本目录 formula 逐字节同步，已由回读核验）。
+- 用户安装＝`brew install admin001-bit/tap/standardcode`（**完全限定名＝自动仅信任该 formula**）；按短名安装须先 `brew trust --formula admin001-bit/tap/standardcode`——Homebrew ≥6.0 非官方 tap 默认不受信任（官方 `docs/Tap-Trust.md`）。
+- **发版同步义务**：每次 Release 更新后须同步 tap 仓 formula 的 `url`/`sha256`（本目录＝单源，tap 仓＝副本）。
+
 ## [自定] 决策
 
 - **`depends_on :macos` + `depends_on arch: :arm64`**：WP-09 `TARGETS` 仅三目标、darwin 仅 arm64（ADR-0047 决策 2）→ 无 x64/Intel 产物，formula 显式约束而非静默取错产物。
