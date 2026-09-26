@@ -1,0 +1,37 @@
+name: homebrew-verify
+
+# M8 后·外发第二批（Homebrew 通道）：formula 安装链验证——补 M7 WP-10 登记的未验证面
+# （`ruby -c` 语法检查 + `brew` 安装/卸载全链；静态面已由 scripts/verify-channel-checksums.mjs 覆盖）。
+# 定位同 release-matrix：workflow_dispatch 手动触发，不进入 gate 门面（ci.yml 不变）。
+# runner=macos-latest（arm64；由 ci.yml binaries 泳道 darwin-arm64 产物实跑实证）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: homebrew verify (macos arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ruby syntax check (M7 未验证面)
+        run: ruby -c packaging/homebrew/standardcode.rb
+
+      - name: brew audit (non-blocking record)
+        continue-on-error: true
+        run: brew audit --formula ./packaging/homebrew/standardcode.rb
+
+      - name: brew install from local formula (下载 Release 资产 + sha256 校验)
+        run: brew install ./packaging/homebrew/standardcode.rb
+
+      - name: version assert
+        run: standardcode --version | grep -q '0.1.1'
+
+      - name: brew uninstall
+        run: brew uninstall standardcode
+
+      - name: residue assert
+        run: "! command -v standardcode"
