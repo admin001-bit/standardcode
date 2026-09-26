@@ -204,6 +204,34 @@ export async function runUninstall(argv: readonly string[], io: UninstallIo = {}
 }
 
 /**
+ * 默认 TTY 确认工厂（M8-WP-11；抽为可注入名以便判据直测——消除"扫描型断言"的判别力边界）。
+ * y/N 语义：`^y(es)?$`（大小写不敏感、trim）＝是；其余（含空行）＝否；
+ * **D-V1′**：`close`（stdin 纯 EOF／终端关闭）与 `question` 竞速 resolve("")＝否（不悬挂 → 走 aborted＋rc=1）。
+ */
+export function createTtyConfirm(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): (question: string) => Promise<boolean> {
+  return async (question) => {
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({ input, output });
+    try {
+      const raw = await new Promise<string>((resolve) => {
+        let settled = false;
+        const done = (value: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(value);
+          }
+        };
+        rl.question(`${question} [y/N] `, done);
+        rl.once("close", () => done("")); // EOF／流关闭＝未确认（fail-closed 方向）
+      });
+      return /^y(es)?$/i.test(raw.trim());
+    } finally {
+      rl.close();
+    }
+  };
+}
+
+/**
  * M8-WP-11（D-V1）：**CLI 入口**（bin 消费）——TTY 下装配交互确认通道（readline y/N），
  * 非 TTY 不装配（沿用 purge 段 fail-closed 拒绝，语义零改）。`runUninstall` 本体保持纯注入面。
  */
@@ -211,16 +239,7 @@ export async function runUninstallCli(argv: readonly string[], overrides: Partia
   const isTTY = overrides.isTTY ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
   const io: UninstallIo = { ...overrides, isTTY };
   if (isTTY && io.confirm === undefined) {
-    io.confirm = async (question) => {
-      const { createInterface } = await import("node:readline");
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const raw = await new Promise<string>((resolve) => rl.question(`${question} [y/N] `, resolve));
-        return /^y(es)?$/i.test(raw.trim());
-      } finally {
-        rl.close();
-      }
-    };
+    io.confirm = createTtyConfirm(process.stdin, process.stdout);
   }
   return runUninstall(argv, io);
 }

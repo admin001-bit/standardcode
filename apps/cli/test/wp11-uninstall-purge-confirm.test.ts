@@ -3,9 +3,10 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runUninstallCli, type UninstallIo } from "../src/uninstall.ts";
+import { createTtyConfirm, runUninstallCli, type UninstallIo } from "../src/uninstall.ts";
 
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), "sc-wp11-"));
@@ -75,10 +76,38 @@ describe("M8-WP-11 DoD① 入口确认通道装配（D-V1）", () => {
     }
   });
 
-  it("入口默认装配在岗（扫描型断言，判别力边界随结果页登记）：isTTY 且未注入 confirm 时装配默认通道", () => {
+  it("入口默认装配在岗（轻量接线断言）：isTTY 且未注入 confirm 时装配 createTtyConfirm", () => {
     const src = readFileSync(fileURLToPath(new URL("../src/uninstall.ts", import.meta.url)), "utf8");
     expect(src).toContain("if (isTTY && io.confirm === undefined)");
-    expect(src).toContain("node:readline");
+    expect(src).toContain("io.confirm = createTtyConfirm(process.stdin, process.stdout)");
+  });
+});
+
+describe("M8-WP-11 DoD①′ 默认确认工厂直测（createTtyConfirm；D-V1′ 判别面）", () => {
+  const mk = () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.on("data", () => {});
+    return { input, output, confirm: createTtyConfirm(input, output) };
+  };
+
+  it("y / YES → true；n / 空行 → false（大小写与空白归一）", async () => {
+    for (const [line, want] of [["y\n", true], ["YES\n", true], [" n \n", false], ["\n", false]] as const) {
+      const { input, output, confirm } = mk();
+      const p = confirm("继续?");
+      input.write(line);
+      expect(await p, JSON.stringify(line)).toBe(want);
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("stdin 纯 EOF（无输入即关闭）→ false（不悬挂；D-V1′ 修复的判别面）", async () => {
+    const { input, output, confirm } = mk();
+    const p = confirm("继续?");
+    input.end(); // 纯 EOF：无字节
+    await expect(p).resolves.toBe(false);
+    output.destroy();
   });
 });
 
