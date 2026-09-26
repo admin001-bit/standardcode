@@ -10,9 +10,9 @@
 class Standardcode < Formula
   desc "Open-source CLI coding agent (generic multi-protocol providers)"
   homepage "https://github.com/admin001-bit/standardcode"
-  url "https://github.com/admin001-bit/standardcode/releases/download/v0.1.0/standardcode-darwin-arm64"
-  sha256 "4b3b83ccd0541bab7100ad7cf2503663d9206cd64c474f70592e97167d43905e"
-  version "0.1.0"
+  url "https://github.com/admin001-bit/standardcode/releases/download/v0.1.1/standardcode-darwin-arm64"
+  sha256 "f41f865f225c745f1e7bf8a23d045e184b42157f214548512ae032f58780af83"
+  version "0.1.1"
   license "Apache-2.0"
 
   # WP-09 仅产 darwin-arm64（TARGETS；ADR-0047 决策 2）：x64 模板未产 → arch 硬约束。

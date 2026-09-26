@@ -9,7 +9,7 @@
 #   V-WP10 复核后按窄口径收窄（2026-09-23）：`%global __brp_strip %{nil}` 只关 brp-strip、保留 brp-compress 等其余
 #   后处理——已在本机重跑 build-rpm.sh，载荷摘要硬断言仍 PASS（若后续发行版宏布局变化导致失败，回退全局口径并登记）。
 Name:           standardcode
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Open-source CLI coding agent (generic multi-protocol providers)
 
@@ -44,5 +44,7 @@ install -D -m 0644 %{SOURCE1} %{buildroot}%{_datadir}/doc/standardcode/README.md
 %{_datadir}/doc/standardcode/README.md
 
 %changelog
+* Sun Sep 27 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.1-1
+- Version bump to 0.1.1 (M8 fixes): rebuilt single-file binary; checksum channel, not signed (Q-7).
 * Wed Sep 23 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.0-1
 - Initial package (M7 WP-10): single-file binary, checksum channel, not signed (Q-7).

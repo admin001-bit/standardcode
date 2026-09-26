@@ -3,14 +3,14 @@
 # InstallerType=portable（WP-09 单文件 exe，无安装器外壳）；Commands 暴露 `standardcode` 于 PATH。
 # InstallerSha256 = apps/cli/dist/bin/SHA256SUMS.txt 中 standardcode-windows-x64.exe 现值（小写原文，DoD③ 逐字符相等）。
 PackageIdentifier: StandardCode.StandardCode
-PackageVersion: 0.1.0
+PackageVersion: 0.1.1
 InstallerLocale: en-US
 InstallerType: portable
 Commands:
   - standardcode
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/admin001-bit/standardcode/releases/download/v0.1.0/standardcode-windows-x64.exe
-    InstallerSha256: 6ca25cfe7a537b6cdbbb8949fb97b484ea16a9833c2b4f7ce54a8ad7c0b0ac6a
+    InstallerUrl: https://github.com/admin001-bit/standardcode/releases/download/v0.1.1/standardcode-windows-x64.exe
+    InstallerSha256: 4543a23cc5e27bd3a581d2b0e5316552686de6090ca0a881ce52d6b936380317
 ManifestType: installer
 ManifestVersion: 1.10.0

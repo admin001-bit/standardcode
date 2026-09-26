@@ -31,7 +31,7 @@ bash packaging/linux/uninstall.sh --prefix "$TMP/prefix"
 
 # deb 构建 + 真实包管理器安装/卸载（unshare -r 取 fake-root，--root 隔离）
 bash packaging/linux/build-deb.sh --out-dir "$TMP/pkgs"
-unshare -r dpkg --root="$TMP/root" --instdir="$TMP/root" --admindir="$TMP/root/var/lib/dpkg" -i "$TMP/pkgs/standardcode_0.1.0_amd64.deb"
+unshare -r dpkg --root="$TMP/root" --instdir="$TMP/root" --admindir="$TMP/root/var/lib/dpkg" -i "$TMP/pkgs/standardcode_0.1.1_amd64.deb"
 ```
 
 实跑证据与原始输出见 `M7-1-results.md §WP-10` 与产品仓 `.work/wp10-*.log`。

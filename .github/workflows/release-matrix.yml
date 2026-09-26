@@ -27,19 +27,19 @@ jobs:
       - name: install (workspace)
         run: pnpm install --frozen-lockfile
       - name: pack release (bundle+staged manifest+checksum; DoD⑤⑥)
-        run: node scripts/pack-release.mjs --version 0.1.0
+        run: node scripts/pack-release.mjs --version 0.1.1
       - name: checksum verify (SEC-040)
         run: node scripts/checksum.mjs verify apps/cli/dist
       - name: install (local tarball channel)
-        run: npm i -g ./apps/cli/dist/standardcode-oss-cli-0.1.0.tgz
+        run: npm i -g ./apps/cli/dist/standardcode-oss-cli-0.1.1.tgz
       - name: version verify
         run: standardcode --version
       - name: update (bump overlay — 模拟通道更新路)
         shell: bash
         run: |
-          node scripts/pack-release.mjs --version 0.1.1
-          npm i -g ./apps/cli/dist/standardcode-oss-cli-0.1.1.tgz
-          standardcode --version | grep 0.1.1
+          node scripts/pack-release.mjs --version 0.1.2
+          npm i -g ./apps/cli/dist/standardcode-oss-cli-0.1.2.tgz
+          standardcode --version | grep 0.1.2
       - name: uninstall (CLI default; DoD④)
         run: standardcode uninstall
       - name: residue assert (package gone)
