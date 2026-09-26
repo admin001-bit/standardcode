@@ -58,12 +58,12 @@
 ## 4. 未验证面（显式登记）
 
 1. **真进程面**〔**2026-09-26 更新（M8-WP-08）：`npm i -g`／`npm rm -g` 已实跑**（见 §1/§2 复验行）；**2026-09-26 晚订正（M8-WP-12，V 登记 1 同步）**〕：`reg` **已实跑并收口**（M8-WP-09 写-还原〔免提权〕→ 暴露 D-1 → M8-WP-12 修复，见 §2）——`npm` 两面与 `reg` 已转"已验证"；`winget` 免提权面（`validate` rc=0）已实跑、真机安装链仍不可得（管理员 LocalManifestFiles）；`brew` 无 macOS；历史"spawnSync 恒 EBUSY"记录见 §0 行内订正。
-2. **Linux 臂**〔**2026-09-26 更新（M8-WP-08）：已实跑**——`wsl.exe -d Ubuntu` 跑 `standardcode-linux-x64`＝`0.1.0` rc=0（见 §2）〕：`cleanup.sh`／`packaging/linux/uninstall.sh` **本卡仍未实跑**（壳脚本链，归 WP-09/10 裁量）。
+2. **Linux 臂**〔**2026-09-26 更新（M8-WP-08）：已实跑**——`wsl.exe -d Ubuntu` 跑 `standardcode-linux-x64`＝`0.1.0` rc=0（见 §2）〕：`cleanup.sh` **仍未实跑**（壳脚本链，归后续卡）；`packaging/linux/uninstall.sh` **已验**（M7-WP-10，WSL2 真跑，见 §2"二进制通道卸载器"行）——本条与 §2 口径合并（**2026-09-26（M8-WP-10 收口）订正，承 WP-12 V 的 D-V3**）。
 3. **macOS 臂**：本机无 macOS → 全格待 CI（`release-matrix` / 三平台 CI）。
 4. **GitHub Releases 成功路**〔**2026-09-26 更新（M8-WP-06）：已闭合**——Release `v0.1.0` 在线，`scripts/probe-update-sources.mjs` → `github=0.1.0`／`npm=0.1.0`／`probe: PASS` rc=0〕：历史"releases 空数组、无真实成功样本"仅对记录日成立；后续复跑同一脚本即验。
-5. **`--purge` 删除失败分支**〔**2026-09-26 更新（M8-WP-08）：已构造**——子进程 CWD 占位 → `rmSync` EPERM（见 §2 两行）〕：构造同时暴露 **D-1**（注入面错误路径文案不可达；真 bin 下不可达＝严重度已由 V 订正）与 **D-V1**（真 bin 的 `--purge` 确认通道从未装配 ⇒ 恒 fail-closed 拒绝＝交互路径不可用；待后续卡裁量）。
+5. **`--purge` 删除失败分支**〔**2026-09-26 更新（M8-WP-08）：已构造**——子进程 CWD 占位 → `rmSync` EPERM（见 §2 两行）〕：构造同时暴露 **D-1**（注入面错误路径文案不可达；真 bin 下不可达＝严重度已由 V 订正；**已由 M8-WP-11 try/catch 修复**，见 §2 同族行）与 **D-V1**（真 bin 的 `--purge` 确认通道从未装配 ⇒ 恒 fail-closed 拒绝＝交互路径不可用；**已由 M8-WP-11 装配修复〔含 D-V1′ 追加修 e9bf920〕**，见 §2 fail-closed 行）——**2026-09-26（M8-WP-10 收口）订正，承 WP-12 V 的 D-V1**。
 6. **`defaultPathRestorer` win 分支实跑**（`reg query/add`）：**已实跑（M8-WP-09，HKCU 免提权；暴露 D-1）→ D-1 已修（M8-WP-12：读侧 `chcp 65001` 包装＋保真判据；见 §2）**。
-7. **双源择优/回退**：规格未定义且本卡不引入（ADR-0050 决策 1）；`/update` 仍单接 npm 源，**GitHub 源已导出但未接线** —— 待后续卡按用户裁决决定。
+7. **双源择优/回退**：规格未定义且维持不引入（ADR-0050 决策 1）；**GitHub 源已由 M8-WP-06 接线**（`STANDARD_CODE_UPDATE_SOURCE` 源选择＋只读报告分支，ADR-0053；见 §2）——**2026-09-26（M8-WP-10 收口）订正，承 WP-12 V 的 D-V2**。
 8. **邻通道同族缺陷（本卡发现并登记 D1；已由 main 于 `8fffaa2` 一并订正，非本卡越界）**：`scripts/install.sh` / `scripts/install.ps1`
    原亦字面 `@standardcode/cli`（ADR-0044 决策 10 改判前旧名，安装通道会装到另一个包）。本卡只修卸载通道（`cleanup.sh`/`cleanup.ps1`），
    安装侧登记交 main 裁决 → main 于 `8fffaa2` 订正两脚本并补守卫断言（两脚本新包名在位＋旧名零命中），`wp11-uninstall-channels` 16→17 例。

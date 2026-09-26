@@ -134,3 +134,17 @@
 - 锚点：v2.8 §5.2 行 214（cli-terminal L0 职责含渲染；主题/快捷键属该层）+§13 行 532（终端兼容矩阵维持 M1 裁决）+§12.5 接缝㉔；实现 apps/cli/src/theme.ts（THEMES/themeTokens/resolveTheme/colorize/themeFromSettings）+apps/cli/src/keybindings.ts（动作全集/parseKeySpec/matchKeyEvent/keybindingsFromSettings/resolveKeybindings）+apps/cli/src/render.ts（经 colorize，零裸 ANSI）。
 - 测试：apps/cli/test/wp03-theme.test.ts:51/:55/:64/:73（单源纯函数，**非缺省形必覆盖**）/:88（themeFromSettings＝重启恢复入口）/:132/:142（持久化＋重启恢复）/:167（**渲染单源守卫**：`apps/cli/src` 除 theme.ts/main.ts 无裸 ANSI，三书写形态全覆盖）；apps/cli/test/wp04-keybindings.test.ts:79（动作全集与缺省表全集相等）/:93（非法形 fail-closed）/:100（修饰位全等才命中）/:108（重启恢复入口）/:132（冲突拒绝且不改当前表）/:205（**键位表单源守卫**：判据**不绑定变量名**、去注释后无硬编码键位字面量）。
 - 未解决：无（不做自定义主题文件格式、不做多键序 chord，均 [自定] 留白登记）。
+
+## 接缝㉕ harness deny × 缺省类型 × 两通道（agent 工具 / workflow kernel）（2026-09-26，WP-10 随 M8 收口补登）
+
+- 定义：`Agent` 工具的 deny 判定取**生效类型**——调用方省略 `subagentType` 时按缺省 `general-purpose` 参与 `deniedAgentTypes` 匹配（**省略≠豁免**），拒绝文案标注 `(default)`；两消费通道（apps/cli agent 工具链 / packages/harness workflow kernel 复用 `validateSpawn` 面）同收紧；注册表无缺省 agent 时走 `type_missing`（早于 deny 判定）。
+- 锚点：ADR-0052（mini-ADR，规格变更；承 M7 遗留 #21）；实现 `packages/harness/src/subagent.ts`（`DEFAULT_SUBAGENT_TYPE`＋生效类型判定）；v2.8 §12.6（Agent 工具 deny 语义）；卡 M8-WP-03。
+- 测试：`packages/harness/test/subagent-deny-default.test.ts`（7 例）＋`apps/cli/test/wp03-deny-default.test.ts`（5 例，双通道生产链）；变异针 M1（去 `(default)` 标注）恰红。
+- 未解决：边界形（缺省＋deny 命中但注册表无 `general-purpose` → `type_missing` 越前）为登记语义；裸 `Agent`／通配形不在本口径（ADR 边界节）；kernel 路径生产可达性依赖 M6 未接线面（如实登记）。
+
+## 接缝㉖ 更新双源 × `/update` × 探测（2026-09-26，WP-10 随 M8 收口补登）
+
+- 定义：`/update` 源选择单点消费 env `STANDARD_CODE_UPDATE_SOURCE`（未设/空白→npm、大小写不敏感、非法→fail-closed 点名原值）；npm 源＝既有安装链（逐字零改）；github 源＝**只读报告**分支（查 Releases 报最新/已最新，**不安装**——ADR-0053 决策 3 命名张力已明示）；启动期自动检查维持 npm 单源；探测面＝`scripts/probe-update-sources.mjs` 双源只读探测（rc=0＝两源 ok）。
+- 锚点：ADR-0053（接线）＋ADR-0050 决策 1/6（双源并列、不引入自动择优/回退）；v2.8 附录 E 行 631（更新走 GitHub Releases）；实现 `packages/platform/src/updater.ts`（`UPDATE_SOURCE_ENV_KEY`／`parseUpdateSource`）＋`apps/cli/src/repl.ts`（`UpdateDeps.checkGitHub`＋github 分支）；卡 M8-WP-06（M7 遗留 #13 闭合）。
+- 测试：`packages/platform/test/wp06-update-source.test.ts`（4 例）＋`apps/cli/test/wp06-update-github.test.ts`（8 例）；真网络 probe（`github=0.1.0／npm=0.1.0／probe: PASS`）。
+- 未解决：`STANDARD_CODE_AUTO_UPDATE` 键位表缺口（既有漂移，供后续）；择优/回退规格未定义且维持不引入（ADR-0050 决策 1）。
