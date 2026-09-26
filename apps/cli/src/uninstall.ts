@@ -53,27 +53,56 @@ export interface PathRestoreResult {
   skipped: string[]; // 条目已不在 PATH（幂等）
 }
 
-/** 缺省还原器：win=HKCU\Environment Path reg 读写；posix=rc 文件行删除。测试经 io.pathRestorer 注入桩。 */
-export function defaultPathRestorer(entries: readonly InstallManifestPathEntry[]): Promise<PathRestoreResult> {
+/** 子进程执行注入面（测试桩；缺省=node:child_process spawnSync）。 */
+export type SpawnLike = (
+  cmd: string,
+  args: readonly string[],
+  opts?: { encoding?: string; windowsHide?: boolean },
+) => { status: number | null; stdout?: string | Buffer | null; stderr?: string | Buffer | null };
+
+export interface PathRestorerDeps {
+  spawn?: SpawnLike;
+}
+
+/** WP-12（缺陷 D-1）读 HKCU Path 的命令形：`cmd /c chcp 65001>nul & reg query …`。
+ * 裸调 `reg query` 的输出按控制台代码页（本机 CP936）编码——含非 ASCII 段的 PATH 按 utf8 解码即被破坏
+ * （WP-09 实证 `识别`→替换符）；前置 `chcp 65001` 把子进程控制台代码页钉为 UTF-8，输出即 UTF-8
+ * （只读对照实验 C0/E1 见产品仓 `.work/M8-X-WP12-report.md`）。 */
+export function buildUserPathQuery(): { cmd: string; args: string[] } {
+  return { cmd: "cmd", args: ["/c", "chcp 65001>nul & reg query HKCU\\Environment /v Path"] };
+}
+
+/** 解析 `reg query` 输出（`Path    REG_EXPAND_SZ    <值>` 行）；不可读=null（调用方 fail-closed，不动 PATH）。 */
+export function parseRegQueryPath(stdout: string): string | null {
+  const m = /Path\s+REG(?:_EXPAND_)?SZ\s+(.*)/i.exec(stdout);
+  return m ? m[1]!.replace(/\r$/, "") : null; // 行终止符不进值
+}
+
+/** 缺省还原器：win=HKCU\Environment Path reg 读写；posix=rc 文件行删除。测试经 io.pathRestorer／deps.spawn 注入桩。 */
+export function defaultPathRestorer(
+  entries: readonly InstallManifestPathEntry[],
+  deps: PathRestorerDeps = {},
+): Promise<PathRestoreResult> {
   const result: PathRestoreResult = { removed: [], failed: [], skipped: [] };
   const tasks = entries.map(async (e) => {
     try {
       if (e.scope === "win-user-registry") {
         const { spawnSync } = await import("node:child_process");
-        const q = spawnSync("reg", ["query", "HKCU\\Environment", "/v", "Path"], { encoding: "utf8", windowsHide: true });
-        const out = `${q.stdout ?? ""}`;
-        const m = /Path\s+REG(?:_EXPAND_)?SZ\s+(.*)/i.exec(out);
-        if (!m) {
+        const spawn = deps.spawn ?? (spawnSync as unknown as SpawnLike);
+        const { cmd, args } = buildUserPathQuery();
+        const q = spawn(cmd, args, { encoding: "utf8", windowsHide: true });
+        const raw = parseRegQueryPath(`${q.stdout ?? ""}`);
+        if (raw === null) {
           result.failed.push({ value: e.value, reason: "HKCU Path not readable" });
           return;
         }
-        const parts = m[1]!.split(";");
+        const parts = raw.split(";");
         const keep = parts.filter((p) => p.trim() !== "" && p.trim().toLowerCase() !== e.value.trim().toLowerCase());
         if (keep.length === parts.filter((p) => p.trim() !== "").length) {
           result.skipped.push(e.value);
           return;
         }
-        const w = spawnSync("reg", ["add", "HKCU\\Environment", "/v", "Path", "/t", "REG_EXPAND_SZ", "/d", keep.join(";"), "/f"], { encoding: "utf8", windowsHide: true });
+        const w = spawn("reg", ["add", "HKCU\\Environment", "/v", "Path", "/t", "REG_EXPAND_SZ", "/d", keep.join(";"), "/f"], { encoding: "utf8", windowsHide: true });
         if (w.status === 0) result.removed.push(e.value);
         else result.failed.push({ value: e.value, reason: `reg add exited ${w.status}` });
         return;
