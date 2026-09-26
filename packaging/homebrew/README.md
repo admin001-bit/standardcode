@@ -11,7 +11,7 @@
 
 - **`depends_on :macos` + `depends_on arch: :arm64`**：WP-09 `TARGETS` 仅三目标、darwin 仅 arm64（ADR-0047 决策 2）→ 无 x64/Intel 产物，formula 显式约束而非静默取错产物。
 - **`bin.install "<产物名>" => "standardcode"`**：Release 资产名带平台后缀，安装名统一为命令名 `standardcode`。
-- **`version` 显式声明**：资产 URL 内无版本段（文件名不含版本）⇒ 不可从 URL 推导，须显式。
+- **`version` 不显式声明**（2026-09-27 改，原判"须显式"经 `brew audit` 证伪）：文件名虽无版本，但 URL 的 tag 段（`.../download/v0.1.1/...`）可被 brew 推导——audit 实测判显式声明「redundant with version scanned from URL」⇒ 已删除显式 version；`scripts/verify-channel-checksums.mjs` 的版本抽取同步改为按 URL tag 段。
 - **签名/公证**：首版不做（Q-7 维持，ADR-0044 决策 2）——`sha256` 为完整性通道；README 如实声明未签名，macOS Gatekeeper 首次运行需用户手动放行。
 - **`test do` 断言**：`standardcode <version>`，与 WP-09 版本门口径同源。
 

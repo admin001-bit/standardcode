@@ -68,7 +68,7 @@ const ver = JSON.parse(readFileSync(join(ROOT, "apps/cli/package.json"), "utf8")
 const verRefs = [
   { ch: "winget", file: "packaging/winget/manifests/StandardCode.StandardCode.yaml", re: /PackageVersion:\s*(\S+)/ },
   { ch: "winget", file: "packaging/winget/manifests/StandardCode.StandardCode.installer.yaml", re: /releases\/download\/v([0-9][^\s/]*)\// },
-  { ch: "homebrew", file: "packaging/homebrew/standardcode.rb", re: /version\s+"([^"]+)"/ },
+  { ch: "homebrew", file: "packaging/homebrew/standardcode.rb", re: /releases\/download\/v([0-9][^\s/"]*)\// },
   { ch: "linux", file: "packaging/linux/install.sh", re: /DEFAULT_VERSION="([^"]+)"/ },
 ];
 for (const r of verRefs) {

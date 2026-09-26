@@ -36,6 +36,9 @@ jobs:
       - name: version assert
         run: standardcode --version | grep -q '0.1.1'
 
+      - name: brew test (执行 formula 的 test do 块——M7 起从未执行过)
+        run: brew test admin001-bit/tap/standardcode
+
       - name: brew uninstall
         run: brew uninstall standardcode
 
