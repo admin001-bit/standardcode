@@ -33,14 +33,14 @@
 |---|---|---|---|---|
 | **CLI 默认卸载**（`npm rm -g` + PATH 还原 + 残留断言） | 已验证（注入面） | 已验证（注入面） | 已验证（注入面） | `apps/cli/test/wp11-uninstall-channels.test.ts`：三平台各跑一遍（`npm.cmd`/`npm` 分型、args 恒 `rm -g @standardcode-oss/cli`、数据目录 `<home>/.standardcode`）＋ `wp07-release-cli.test.ts` 既有 10 例（V-WP11 勘误：原记 8 例，实枚举 10） |
 | **CLI `--purge` 全链**（①程序体→②PATH→③残留→④确认→⑤删用户数据） | 已验证（注入面，全链顺序断言 `["runner","restorer","verifyGone","confirm"]`） | 同左 | 同左 | 同上文件「全链贯通」例：exit 0 + 五行关键输出 + 数据目录消失；反向例「残留校验失败→purge 不执行（confirm 零调用、目录保留）」＝防半卸态 |
-| **`--purge` fail-closed**（非 TTY 无确认通道=拒绝） | 已验证 | 已验证 | 已验证 | `wp07-release-cli.test.ts`（非 TTY 拒绝 exit 1 + 目录保留；用户拒答 aborted）——平台无关 |
+| **`--purge` fail-closed**（非 TTY 无确认通道=拒绝） | 已验证 | 已验证 | 已验证 | `wp07-release-cli.test.ts`（非 TTY 拒绝 exit 1 + 目录保留；用户拒答 aborted）——平台无关。**2026-09-26（M8-WP-08/V）新增 D-V1**：真 bin（`bin/standardcode.js:19`／`.binary.mjs:25`）均以**单参**调 `runUninstall` ⇒ `io.confirm` 从未装配 ⇒ 真 bin 下 `--purge` **恒走本条拒绝路**（含 TTY＝交互路径不可用；④ 段引导文案指向不可达路径）。fail-closed 安全面成立（无数据删除）；功能面缺口＝交互 purge 通道未装配，**待后续卡裁量**（修 D-1 须先装该通道） |
 | **手动清理脚本**（`scripts/cleanup.ps1 -PurgeHome` / `scripts/cleanup.sh --purge-home`） | 静态已验证 | 静态已验证 | 静态已验证 | 三平台用例内静态断言：脚本含对应旗标、包名与 `NPM_PACKAGE_NAME` 同字（`@standardcode-oss/cli`）、且不含改判前旧名；**实跑未验证**（spawnSync EBUSY／wsl.exe 拦截） |
 | **`reg` 注册表 PATH 还原**（`defaultPathRestorer` win 分支） | 本机不可验证（spawnSync EBUSY） | — | — | 注入面覆盖"条目与 scope 传入还原器"；`reg add` 实跑待 CI/管理员机 |
 | **rc 文件行删除**（`defaultPathRestorer` posix 分支） | — | 已验证（真文件系统） | 已验证（同一实现） | `wp07-release-cli.test.ts`「PATH manifest 留痕还原（posix-rcfile 行删除）」：真临时目录 + 真 `writeFileSync`，断言删除后 rc 精确余 `echo keep` |
 | **二进制通道卸载器**（`packaging/linux/uninstall.sh`，WP-10 面） | — | WP-10 已验（WSL2 实跑） | — | 本卡不重复验证（边界：只补 GitHub Releases 源与通道矩阵），指针=`packaging/README.md` |
 | **winget / Homebrew 卸载** | 本机不可验证（需管理员 LocalManifestFiles / 无 brew） | — | 待 CI | 承 WP-10 BLK-12 未验证面登记 |
 | **WSL2 Linux 臂二进制实跑**〔**2026-09-26 新增（M8-WP-08）**〕 | — | **已验证（WSL2 真跑）** | — | `wsl.exe -d Ubuntu -- bash -lc 'cp /mnt/d/projects/standardcode/apps/cli/dist/bin/standardcode-linux-x64 /tmp/sc-linux && chmod +x /tmp/sc-linux && /tmp/sc-linux --version'` → `standardcode 0.1.0`、rc=0（`uname -a`＝`6.6.87.2-microsoft-standard-WSL2 x86_64`）；记录日"wsl.exe 被拦截"已失效（见 §0） |
-| **`--purge` 删除失败分支**〔**2026-09-26 新增构造（M8-WP-08）**〕 | **已构造（暴露缺陷 D-1）** | 同实现（平台无关） | 同实现 | 夹具＝子进程以 `dataDir` 为 CWD 占住目录（Windows 目录句柄）→ 真调 `runUninstall(["--purge"])`：`rmSync(dataDir,{recursive,force})` 抛 **EPERM** 未被捕获 → `runUninstall` **reject**（bin 侧＝未处理拒绝）；终态 dataDir **保留**（无静默成功 ✅），但设计文案 `[uninstall] purge FAILED: … 手动删除或使用 scripts/cleanup.*` **不可达**（只覆盖"rmSync 不抛但目录仍在"的窄形）。**缺陷登记 D-1（低-中危：错误路径文案/引导缺失，非静默成功）**；修法建议＝`rmSync` 包 try/catch → 命中即走同一 FAILED 文案 + rc=1 ＋补一例夹具用例（待转卡/后续裁量） |
+| **`--purge` 删除失败分支**〔**2026-09-26 新增构造（M8-WP-08）**〕 | **已构造（暴露 D-1；严重度经 V 订正）** | 同实现（平台无关） | 同实现 | 夹具＝子进程以 `dataDir` 为 CWD 占住目录（Windows 目录句柄）→ 注入面真调 `runUninstall(["--purge"])`：`rmSync(dataDir,{recursive,force})` 抛 **EPERM** 未被捕获 → `runUninstall` **reject**；终态 dataDir **保留**（无静默成功 ✅），设计文案 `[uninstall] purge FAILED: … scripts/cleanup.*` 在注入面**不可达**（只覆盖"rmSync 不抛但目录仍在"的窄形）。**D-1 严重度订正（V 核验，2026-09-26）**：真 bin 下该路径**不可达**——④ 段先因 confirm 未装配而 fail-closed 拒绝（rc=1＋引导文案现身）；故 D-1 实为**注入面错误路径质量项**（低危），非 bin 级缺陷。修法建议＝`rmSync` 包 try/catch → 同 FAILED 文案＋rc=1＋夹具用例，且**须先装 confirm 通道（D-V1）**（待转卡/后续裁量） |
 
 ## 3. 判据判别力（变异针，全红=非恒绿真空断言）
 
@@ -57,11 +57,11 @@
 
 ## 4. 未验证面（显式登记）
 
-1. **真进程面**：`npm rm -g`／`npm i -g`／`winget`／`brew`／`reg` 实跑——本机 `spawnSync` 恒 EBUSY，**零实跑证据**；全链结论均建立在注入面等价性上（注入面＝产品代码同一函数体，仅子进程被替换）。
-2. **Linux 臂**：`wsl.exe` 本会话被安全策略黑名单拦截（前卡 WP-10 可用）→ `cleanup.sh`／`packaging/linux/uninstall.sh` 本卡**未实跑**。
+1. **真进程面**〔**2026-09-26 更新（M8-WP-08）：`npm i -g`／`npm rm -g` 已实跑**（见 §1/§2 复验行）〕：`winget`／`brew`／`reg` 仍**零实跑**（需管理员 LocalManifestFiles／无 brew／需真写注册表）——`npm` 两面已转"已验证"；历史"spawnSync 恒 EBUSY"记录见 §0 行内订正。
+2. **Linux 臂**〔**2026-09-26 更新（M8-WP-08）：已实跑**——`wsl.exe -d Ubuntu` 跑 `standardcode-linux-x64`＝`0.1.0` rc=0（见 §2）〕：`cleanup.sh`／`packaging/linux/uninstall.sh` **本卡仍未实跑**（壳脚本链，归 WP-09/10 裁量）。
 3. **macOS 臂**：本机无 macOS → 全格待 CI（`release-matrix` / 三平台 CI）。
-4. **GitHub Releases 成功路**：本仓 `releases` 为空数组（实测），故"取到合法 release tag"一路**只有 mock 证据、无真实成功样本**；待真实 release 建立后复跑 `.work/wp11-probe-sources.mjs` 即闭（不属外发：读）。
-5. **`--purge` 删除失败分支**（`rmSync` 后仍存在 → exit 1）：需 OS 级故障注入（如占用句柄），本机不可构造 → 未覆盖。
+4. **GitHub Releases 成功路**〔**2026-09-26 更新（M8-WP-06）：已闭合**——Release `v0.1.0` 在线，`scripts/probe-update-sources.mjs` → `github=0.1.0`／`npm=0.1.0`／`probe: PASS` rc=0〕：历史"releases 空数组、无真实成功样本"仅对记录日成立；后续复跑同一脚本即验。
+5. **`--purge` 删除失败分支**〔**2026-09-26 更新（M8-WP-08）：已构造**——子进程 CWD 占位 → `rmSync` EPERM（见 §2 两行）〕：构造同时暴露 **D-1**（注入面错误路径文案不可达；真 bin 下不可达＝严重度已由 V 订正）与 **D-V1**（真 bin 的 `--purge` 确认通道从未装配 ⇒ 恒 fail-closed 拒绝＝交互路径不可用；待后续卡裁量）。
 6. **`defaultPathRestorer` win 分支实跑**（`reg query/add`）：见 §2，待管理员机/CI。
 7. **双源择优/回退**：规格未定义且本卡不引入（ADR-0050 决策 1）；`/update` 仍单接 npm 源，**GitHub 源已导出但未接线** —— 待后续卡按用户裁决决定。
 8. **邻通道同族缺陷（本卡发现并登记 D1；已由 main 于 `8fffaa2` 一并订正，非本卡越界）**：`scripts/install.sh` / `scripts/install.ps1`
