@@ -60,13 +60,13 @@ describe("WP-10 DoD① 附录 E M8 终态表", () => {
 });
 
 describe("WP-10 DoD② CI 对账表", () => {
-  it("16 run 逐行在表（首=36186941764 failure／尾=36250502259 success）", () => {
+  it("17 run 逐行在表（首=36186941764 failure／尾=36251928920 success）", () => {
     const rows = tableRows(section("## CI 对账记录"), 5);
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(17);
     expect(rows[0]![2]).toBe("36186941764");
     expect(rows[0]![5]).toContain("failure");
-    expect(rows[15]![2]).toBe("36250502259");
-    expect(rows[15]![5]).toBe("success");
+    expect(rows[16]![2]).toBe("36251928920");
+    expect(rows[16]![5]).toContain("success");
   });
 });
 
@@ -82,12 +82,12 @@ describe("WP-10 DoD④ 接缝登记", () => {
 });
 
 describe("WP-10 DoD④ 偏差分桶计数（逐行解析实测）", () => {
-  it("偏差表 32 行＝A 16／B 9／C 7（分桶互斥、逐条唯一归属）", () => {
+  it("偏差表 34 行＝A 17／B 10／C 7（分桶互斥、逐条唯一归属）", () => {
     const rows = tableRows(section("## 偏差汇总"), 5);
-    expect(rows).toHaveLength(32);
+    expect(rows).toHaveLength(34);
     const buckets = rows.map((r) => r[4]);
-    expect(buckets.filter((b) => b === "A")).toHaveLength(16);
-    expect(buckets.filter((b) => b === "B")).toHaveLength(9);
+    expect(buckets.filter((b) => b === "A")).toHaveLength(17);
+    expect(buckets.filter((b) => b === "B")).toHaveLength(10);
     expect(buckets.filter((b) => b === "C")).toHaveLength(7);
     expect(buckets.every((b) => ["A", "B", "C"].includes(b!))).toBe(true);
   });
