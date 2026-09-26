@@ -3,14 +3,14 @@
 > 规格依据：v2.8 附录 E 行 630（"更新走 npm registry 或 GitHub Releases；卸载 `standardcode uninstall --purge` + 手动清理脚本"）。
 > 通道语义（双源并列/默认源/fail-closed/版本归一）= **ADR-0050**；卸载语义 = ADR-0044 决策 5/6；更新原子性 = ADR-0045。
 > 存放约定承 WP-09/10（`packaging/` + `docs/adr/`）。**不外发**：本卡仅只读探测（`GET`），无 `npm publish`／`gh release create`／PR。
-> 记录日期 2026-09-24（X 节）；**自评不等于核销**，V 会话复核。
+> 记录日期 2026-09-24（X 节）；**自评不等于核销**，V 会话复核。**2026-09-26（M8-WP-08）复验刷新**：§0 两条本机硬约束失效（spawnSync 转绿／wsl.exe 可用）、§1 真进程行转"已验证"、§2 新增 WSL2 二进制实跑行与 `--purge` 失败分支构造行（含缺陷登记 D-1）；历史行文保留原样、订正以行内日期标注。
 
 ## 0. 本机硬约束（决定"已验证/不可验证"分界）
 
 | 约束 | 实测表现 | 后果 |
 |---|---|---|
-| `spawnSync` 恒 EBUSY | 连 `echo baseline-ok` 亦 `status=null / EBUSY` | **真进程面**（`npm i -g`／`npm rm -g`／`winget`／`brew`／`reg`）本机一律不可跑 → 全链验证走**注入面**（runner/pathRestorer/verifyGone/confirm/homeDir） |
-| `wsl.exe` 被安全策略黑名单拦截 | `Permission denied`（沙箱不可绕过） | Linux 臂**本机不可实跑**（前卡 WP-10 曾可用，本会话不可用） |
+| `spawnSync` 恒 EBUSY 〔**2026-09-26 实测：已失效**〕 | 记录日：连 `echo baseline-ok` 亦 `status=null / EBUSY`；2026-09-26 复测：子进程族**转绿**（`spawnSync("cmd"/"git")` status=0、npm/npx 11.9.0 正常） | **真进程面已可跑** → 见 §1/§2「2026-09-26 复验」行（M8-WP-08）；原"一律走注入面"口径仅对记录日成立 |
+| `wsl.exe` 被安全策略黑名单拦截 〔**2026-09-26 实测：已失效**〕 | 记录日：`Permission denied`；2026-09-26 复测：`wsl.exe -d Ubuntu` 可用（`uname -a` 正常） | Linux 臂**已可本机实跑** → 见 §2「WSL2 二进制实跑」行（M8-WP-08） |
 | 无 macOS | — | darwin 臂**本机不可实跑** → 待 CI |
 | GitHub/registry 出站 HTTPS 可用 | 实测 200/404 均可达 | 双源**真实只读探测**可执行（与上述 git 443 通道断为两回事） |
 
@@ -25,7 +25,7 @@
 | **GitHub Releases**（本卡新增，ADR-0050） | 已验证（本机） | 待 CI | 待 CI | 单测 `packages/platform/test/wp11-updater-github.test.ts`（12 例：成功/`v` 前缀归一/超时/非 2xx/脏 JSON/`tag_name` 缺失/tag 非版本形/fetch 抛错/URL 注入/双源同形/单源收敛） |
 | **GitHub Releases 真实探测** | 已验证（本机） | 待 CI | 待 CI | 同上脚本 → `github result: {"ok":false,"reason":"github releases responded HTTP 404"}`；旁路裸 fetch 复核 `raw status 404`／`{"message":"Not Found"}`（**本仓尚无 release**＝未发布前结构化降级即真实路通过形态，承 ADR-0044 决策 8 口径）；旁路另证 `GET /repos/admin001-bit/standardcode`=200、`releases?per_page=1`=`[]` |
 | **安装/原子更新执行**（`runNpmUpdateAtomic`，ADR-0045） | 已验证（注入面） | 已验证（注入面） | 已验证（注入面） | `packages/platform/test/wp07-updater-atomic.test.ts` **零改动**复跑 10 例全绿（DoD③ 回归） |
-| **真进程 `npm i -g`** | 本机不可验证（spawnSync EBUSY） | 待 CI/WSL2 | 待 CI | 本机硬约束，非缺陷 |
+| **真进程 `npm i -g`／`npm rm -g`（全链）** 〔**2026-09-26 复验：已验证（本机）**〕 | **已验证（本机）** | 待 CI | 待 CI | M8-WP-08 复验：`npm i -g --prefix <tmp> @standardcode-oss/cli@0.1.0` rc=0（`added 1 package in 10s`）→ `<tmp>/standardcode --version`＝`standardcode 0.1.0` rc=0 → `npm rm -g --prefix <tmp> @standardcode-oss/cli` rc=0（`removed 1 package in 706ms`）→ shim 消失（`No such file or directory`）；旁记：卸载后 `<tmp>/node_modules/@standardcode-oss/` 空目录残留（npm 行为，无害）。原"本机不可验证"仅对记录日（spawnSync EBUSY 期）成立 |
 
 ## 2. 卸载通道 × 三平台
 
@@ -39,6 +39,8 @@
 | **rc 文件行删除**（`defaultPathRestorer` posix 分支） | — | 已验证（真文件系统） | 已验证（同一实现） | `wp07-release-cli.test.ts`「PATH manifest 留痕还原（posix-rcfile 行删除）」：真临时目录 + 真 `writeFileSync`，断言删除后 rc 精确余 `echo keep` |
 | **二进制通道卸载器**（`packaging/linux/uninstall.sh`，WP-10 面） | — | WP-10 已验（WSL2 实跑） | — | 本卡不重复验证（边界：只补 GitHub Releases 源与通道矩阵），指针=`packaging/README.md` |
 | **winget / Homebrew 卸载** | 本机不可验证（需管理员 LocalManifestFiles / 无 brew） | — | 待 CI | 承 WP-10 BLK-12 未验证面登记 |
+| **WSL2 Linux 臂二进制实跑**〔**2026-09-26 新增（M8-WP-08）**〕 | — | **已验证（WSL2 真跑）** | — | `wsl.exe -d Ubuntu -- bash -lc 'cp /mnt/d/projects/standardcode/apps/cli/dist/bin/standardcode-linux-x64 /tmp/sc-linux && chmod +x /tmp/sc-linux && /tmp/sc-linux --version'` → `standardcode 0.1.0`、rc=0（`uname -a`＝`6.6.87.2-microsoft-standard-WSL2 x86_64`）；记录日"wsl.exe 被拦截"已失效（见 §0） |
+| **`--purge` 删除失败分支**〔**2026-09-26 新增构造（M8-WP-08）**〕 | **已构造（暴露缺陷 D-1）** | 同实现（平台无关） | 同实现 | 夹具＝子进程以 `dataDir` 为 CWD 占住目录（Windows 目录句柄）→ 真调 `runUninstall(["--purge"])`：`rmSync(dataDir,{recursive,force})` 抛 **EPERM** 未被捕获 → `runUninstall` **reject**（bin 侧＝未处理拒绝）；终态 dataDir **保留**（无静默成功 ✅），但设计文案 `[uninstall] purge FAILED: … 手动删除或使用 scripts/cleanup.*` **不可达**（只覆盖"rmSync 不抛但目录仍在"的窄形）。**缺陷登记 D-1（低-中危：错误路径文案/引导缺失，非静默成功）**；修法建议＝`rmSync` 包 try/catch → 命中即走同一 FAILED 文案 + rc=1 ＋补一例夹具用例（待转卡/后续裁量） |
 
 ## 3. 判据判别力（变异针，全红=非恒绿真空断言）
 
