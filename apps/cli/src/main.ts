@@ -241,4 +241,4 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 }
 
 // WP-07：uninstall 子命令经 bin shim 路由至本入口的重导出（bundle 单入口；ADR-0044 决策 3/5）。
-export { runUninstall } from "./uninstall.ts";
+export { runUninstall, runUninstallCli } from "./uninstall.ts"; // M8-WP-11：bin 消费 runUninstallCli（TTY 确认装配）

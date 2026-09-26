@@ -16,7 +16,7 @@ const hasDist = existsSync(new URL("../dist/standardcode.mjs", import.meta.url))
 const mod = await import(hasDist ? "../dist/standardcode.mjs" : "../src/main.ts");
 
 if (arg === "uninstall") {
-  process.exit(await mod.runUninstall(process.argv.slice(3)));
+  process.exit(await mod.runUninstallCli(process.argv.slice(3))); // M8-WP-11：TTY 下装配 --purge 交互确认
 }
 
 if (arg === undefined) {

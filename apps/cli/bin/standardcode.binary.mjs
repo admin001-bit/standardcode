@@ -8,7 +8,7 @@
 // 边界（ADR-0047 决策 6）：Rust 沙箱臂（-sdb）不内嵌本产物——其随包分发归 WP-10；产物内沙箱探测缺位时
 // 沿用既有 fail-closed 语义（executor resolveSandboxBinary 抛 SandboxUnavailableError，B-12）。
 import { readFileSync } from "node:fs";
-import { main, runUninstall } from "../dist/standardcode.mjs";
+import { main, runUninstallCli } from "../dist/standardcode.mjs"; // M8-WP-11
 
 const VERSION = typeof __SC_VERSION__ === "string"
   ? __SC_VERSION__
@@ -22,7 +22,7 @@ if (arg === "--version" || arg === "-v") {
 }
 
 if (arg === "uninstall") {
-  process.exit(await runUninstall(process.argv.slice(3)));
+  process.exit(await runUninstallCli(process.argv.slice(3))); // M8-WP-11：TTY 下装配 --purge 交互确认
 }
 
 if (arg === undefined) {

@@ -114,6 +114,8 @@ export interface UninstallIo {
   dataDir?: string;
   /** 程序体残留断言注入（缺省=verifyInstalledVersion 期望失败）。 */
   verifyGone?: () => Promise<{ gone: boolean; detail: string }>;
+  /** M8-WP-11：目录删除注入面（缺省=fs.rmSync recursive/force；测试夹具注入抛错者以判 D-1 错误路径）。 */
+  removeDir?(dir: string): void;
 }
 
 function reportRestore(r: PathRestoreResult, write: (l: string) => void): void {
@@ -180,7 +182,16 @@ export async function runUninstall(argv: readonly string[], io: UninstallIo = {}
       write("[uninstall] purge aborted by user");
       return 1;
     }
-    rmSync(dataDir, { recursive: true, force: true });
+    const remove = io.removeDir ?? ((dir: string) => rmSync(dir, { recursive: true, force: true }));
+    try {
+      remove(dataDir);
+    } catch (err) {
+      // M8-WP-11（D-1）：删除抛错（如 Windows 目录被占 → EPERM）须走同一 FAILED 文案＋rc=1，
+      // 不裸抛（原实现只覆盖"rmSync 不抛但目录仍在"的窄形，抛出路径会绕过文案）。
+      const reason = err instanceof Error ? err.message : String(err);
+      write(`[uninstall] purge FAILED: ${dataDir} — ${reason}；手动删除或使用 scripts/cleanup.*`);
+      return 1;
+    }
     if (existsSync(dataDir)) {
       write(`[uninstall] purge FAILED: ${dataDir} still present — 手动删除或使用 scripts/cleanup.*`);
       return 1;
@@ -190,4 +201,26 @@ export async function runUninstall(argv: readonly string[], io: UninstallIo = {}
 
   write("[uninstall] done");
   return 0;
+}
+
+/**
+ * M8-WP-11（D-V1）：**CLI 入口**（bin 消费）——TTY 下装配交互确认通道（readline y/N），
+ * 非 TTY 不装配（沿用 purge 段 fail-closed 拒绝，语义零改）。`runUninstall` 本体保持纯注入面。
+ */
+export async function runUninstallCli(argv: readonly string[], overrides: Partial<UninstallIo> = {}): Promise<number> {
+  const isTTY = overrides.isTTY ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+  const io: UninstallIo = { ...overrides, isTTY };
+  if (isTTY && io.confirm === undefined) {
+    io.confirm = async (question) => {
+      const { createInterface } = await import("node:readline");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const raw = await new Promise<string>((resolve) => rl.question(`${question} [y/N] `, resolve));
+        return /^y(es)?$/i.test(raw.trim());
+      } finally {
+        rl.close();
+      }
+    };
+  }
+  return runUninstall(argv, io);
 }
