@@ -333,6 +333,11 @@ Object.assign(EN, {
   "cmd.update.found": "[update] new version {latest} (current {version}) — running: npm i -g @standardcode-oss/cli@latest",
   "cmd.update.installed": "[update] installed {latest} — restart standardcode to run the new version",
   "cmd.update.installFailed": "[update] install failed — what happened: npm global install did not complete; why: {value}; suggestion: close running instances (EBUSY/EPERM file lock) and retry manually: npm i -g @standardcode-oss/cli@latest",
+  // —— M8-WP-06（ADR-0053）：/update 源选择（STANDARD_CODE_UPDATE_SOURCE）＋GitHub Releases 源报告面 ——
+  "cmd.update.source.invalid": "[update] check failed — what happened: STANDARD_CODE_UPDATE_SOURCE has an invalid value; why: got \"{value}\", allowed: npm | github; suggestion: unset it (defaults to npm) or set npm|github",
+  "cmd.update.github.queryFailed": "[update] check failed — what happened: GitHub Releases latest-release query failed; why: {value}; suggestion: check network/proxy, or update manually: npm i -g @standardcode-oss/cli@latest",
+  "cmd.update.github.latest": "[update] already up to date — current {version} (GitHub Releases latest: {latest})",
+  "cmd.update.github.available": "[update] new version {latest} (current {version}) — GitHub Releases reports versions only (no install); npm: npm i -g @standardcode-oss/cli@latest; assets: https://github.com/admin001-bit/standardcode/releases/latest",
   "repl.update.available": "[update] new version {latest} available (current {version}) — run /update to install",
   // —— M6-WP-10（R1 修复）：/fork /export 渲染面 i18n 化（DoD④ 守卫闭合；en 值=原固定字面逐字，零语义变化）——
   "repl.fork.emptySession": "[fork] cannot fork an empty session: no parent context to derive from",
@@ -564,6 +569,11 @@ Object.assign(ZH_CN, {
   "cmd.update.found": "[update] 发现新版本 {latest}（当前 {version}）——执行：npm i -g @standardcode-oss/cli@latest",
   "cmd.update.installed": "[update] 已安装 {latest}——重启 standardcode 以生效",
   "cmd.update.installFailed": "[update] 安装失败——发生了什么：'npm i -g @standardcode-oss/cli@latest' 未完成；为什么：{value}；建议动作：关闭正在运行的 standardcode 实例（Windows 文件锁 EBUSY/EPERM）后手动重试：npm i -g @standardcode-oss/cli@latest",
+  // —— M8-WP-06（ADR-0053）：/update 源选择＋GitHub Releases 源报告面 zh 包（技术术语 GitHub Releases/npm 保留英文）——
+  "cmd.update.source.invalid": "[update] 检查失败——发生了什么：STANDARD_CODE_UPDATE_SOURCE 值非法；为什么：收到 \"{value}\"，允许值：npm | github；建议动作：不设该环境变量（缺省 npm）或设为 npm|github",
+  "cmd.update.github.queryFailed": "[update] 检查失败——发生了什么：无法查询 GitHub Releases 最新 release；为什么：{value}；建议动作：检查网络/代理（HTTP(S)_PROXY）后重试，或手动执行 npm i -g @standardcode-oss/cli@latest",
+  "cmd.update.github.latest": "[update] 已是最新——当前 {version}（GitHub Releases 最新：{latest}）",
+  "cmd.update.github.available": "[update] 发现新版本 {latest}（当前 {version}）——GitHub Releases 源只报告版本（不安装）；npm：npm i -g @standardcode-oss/cli@latest；资产：https://github.com/admin001-bit/standardcode/releases/latest",
   "repl.update.available": "[update] 发现新版本 {latest}（当前 {version}）——运行 /update 安装",
   // —— M6-WP-10（R1 修复）：/fork /export zh 包（技术术语 fork/export/agent/task 保留英文——DoD⑥ 同族）——
   "repl.fork.emptySession": "[fork] 空会话无法 fork：无父上下文可派生",

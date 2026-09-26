@@ -37,6 +37,24 @@ export const DEFAULT_GITHUB_LATEST_URL = `https://api.github.com/repos/${GITHUB_
 /** GitHub API 版本头 [自定]（api.github.com 推荐头；缺席亦可，带上以规避默认版本漂移）。 */
 export const GITHUB_API_ACCEPT = "application/vnd.github+json";
 
+// —— M8-WP-06（ADR-0053）：手动 /update 的**源选择**（显式 env 逃逸舱；缺省 npm；非法值 fail-closed 不静默回落）——
+// 承 ADR-0050 决策 1：并列不择优/不回退/不取最大；本键只决定"手动 /update 查哪个源"，不改自动检查单源口径。
+
+/** 源选择 env 键（M8-WP-06/ADR-0053）：缺省 `npm`；`github`＝GitHub Releases 源；其余值=非法（调用方 fail-closed）。 */
+export const UPDATE_SOURCE_ENV_KEY = "STANDARD_CODE_UPDATE_SOURCE";
+
+export type UpdateSource = "npm" | "github";
+
+/**
+ * 解析源选择原值（trim＋小写；缺省/空串＝npm）。返回 null＝非法值（调用方 fail-closed 点名原值，不静默回落）。
+ */
+export function parseUpdateSource(raw: string | undefined): UpdateSource | null {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "" || v === "npm") return "npm";
+  if (v === "github") return "github";
+  return null;
+}
+
 /**
  * release tag → 版本归一：剥首尾空白 + 单个 `v`/`V` 前缀（与 compareVersions 容忍 v 前缀同口径）。
  * 非版本形（无前导数字，如 `latest`/`nightly`/`M6`）→ null（调用方 fail-closed，不静默取号）。

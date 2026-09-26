@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import { runAgentLoop, spawnSubagentTask } from "@standardcode/harness";
 import { checkToolInput as guardCheck, componentCounts, installPlugin, loadPluginsDoc, removePlugin, settingsValue, TELEMETRY_SETTINGS_KEY } from "@standardcode/platform";
 import { SessionLock, ResilientTranscriptWriter, listSessions, renameSessionTitle, resumeFrom, SCHEMA_VERSION, transcriptsDir, type SessionIndexEntry } from "@standardcode/platform";
-import { checkRegistryLatest, compareVersions, runNpmUpdate, AUTO_UPDATE_ENV_KEY, type UpdateCheckResult, type NpmRunResult, type NpmRunner } from "@standardcode/platform";
+import { checkRegistryLatest, checkGitHubLatest, compareVersions, runNpmUpdate, AUTO_UPDATE_ENV_KEY, UPDATE_SOURCE_ENV_KEY, parseUpdateSource, type UpdateCheckResult, type NpmRunResult, type NpmRunner } from "@standardcode/platform";
 import { CLI_VERSION } from "./version.ts";
 import type { Session } from "./session.ts";
 import { resolveThinking } from "./session.ts";
@@ -94,6 +94,8 @@ export interface SandboxCommandDeps {
 export interface UpdateDeps {
   /** 覆写 registry 查询（返回 UpdateCheckResult；缺席=checkRegistryLatest）。 */
   check?: () => Promise<UpdateCheckResult>;
+  /** M8-WP-06/ADR-0053：覆写 GitHub Releases 查询（缺席=checkGitHubLatest；仅 github 源模式消费）。 */
+  checkGitHub?: () => Promise<UpdateCheckResult>;
   /** 覆写 npm 执行（缺席=runNpmUpdate）。 */
   runNpm?: () => Promise<NpmRunResult>;
   /** 当前版本比对基准（缺席=CLI_VERSION）。 */
@@ -713,6 +715,19 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const s = deps.session;
       const u = deps.update ?? {};
       const current = u.currentVersion ?? CLI_VERSION;
+      // —— M8-WP-06（ADR-0053）：源＝显式 env 选择（缺省 npm／`github`＝GitHub Releases 源；非法 fail-closed 不静默回落）。
+      //    双源并列不择优/不回退（承 ADR-0050 决策 1）；github 源＝只读报告面（决策 3，不执行安装）。
+      const rawSource = (u.env ?? process.env)[UPDATE_SOURCE_ENV_KEY];
+      const source = parseUpdateSource(rawSource);
+      if (source === null) {
+        throw new Error(s.i18n.t("cmd.update.source.invalid", { value: String(rawSource) }));
+      }
+      if (source === "github") {
+        const gh = u.checkGitHub ? await u.checkGitHub() : await checkGitHubLatest({ fetchImpl: u.fetchImpl, timeoutMs: u.timeoutMs });
+        if (!gh.ok) throw new Error(s.i18n.t("cmd.update.github.queryFailed", { value: gh.reason }));
+        if (compareVersions(gh.latest, current) <= 0) return { text: s.i18n.t("cmd.update.github.latest", { version: current, latest: gh.latest }) };
+        return { text: s.i18n.t("cmd.update.github.available", { version: current, latest: gh.latest }) };
+      }
       const check = u.check ? await u.check() : await checkRegistryLatest({ fetchImpl: u.fetchImpl, timeoutMs: u.timeoutMs });
       if (!check.ok) throw new Error(s.i18n.t("cmd.update.queryFailed", { value: check.reason }));
       if (compareVersions(check.latest, current) <= 0) return { text: s.i18n.t("cmd.update.latest", { version: current, latest: check.latest }) };
