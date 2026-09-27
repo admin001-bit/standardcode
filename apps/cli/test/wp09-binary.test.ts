@@ -210,10 +210,11 @@ describe("WP-09 DoD③ bin 随包复核（tarball 内 bin 消费 dist bundle）"
     expect(spawnSync(process.execPath, [join(ROOT, "scripts", "checksum.mjs"), "verify", dist], { encoding: "utf8" }).status).toBe(0);
     const dir = tmp();
     const names = extractTgz(tarball, dir);
-    expect(names.map((n) => n.replace(/^package\//, "")).sort()).toEqual(["bin/standardcode.js", "dist/standardcode.mjs", "package.json"]);
+    // F4（2026-09-28）：包内容补 LICENSE/README（合规+展示面）——断言随之三件→五件
+    expect(names.map((n) => n.replace(/^package\//, "")).sort()).toEqual(["LICENSE", "README.md", "bin/standardcode.js", "dist/standardcode.mjs", "package.json"]);
 
     const files = readdirSync(join(dir, "package")).sort();
-    expect(files).toEqual(["bin", "dist", "package.json"]);
+    expect(files).toEqual(["LICENSE", "README.md", "bin", "dist", "package.json"]);
 
     const staged = JSON.parse(readFileSync(join(dir, "package", "package.json"), "utf8")) as Record<string, unknown>;
     expect(staged.name).toBe("@standardcode-oss/cli");

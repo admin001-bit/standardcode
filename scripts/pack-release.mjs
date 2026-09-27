@@ -41,7 +41,7 @@ const staged = {
   engines: { node: ">=18" },
   repository: { type: "git", url: "git+https://github.com/admin001-bit/standardcode.git" },
   publishConfig: { access: "public" },
-  files: ["bin/", "dist/"],
+  files: ["bin/", "dist/", "LICENSE", "README.md"],
 };
 // DoD⑤ 审计（构建期硬断言）：发布 manifest 零生命周期脚本（postinstall 零提权供应链约束）
 for (const k of LIFECYCLE_SCRIPT_KEYS) {
@@ -63,6 +63,10 @@ mkdirSync(join(stage, "dist"), { recursive: true });
 writeFileSync(join(stage, "package.json"), JSON.stringify(staged, null, 2) + "\n");
 cpSync(join(CLI_DIR, "bin", "standardcode.js"), join(stage, "bin", "standardcode.js"));
 cpSync(join(CLI_DIR, "dist", "standardcode.mjs"), join(stage, "dist", "standardcode.mjs"));
+// M8 后修复（2026-09-28，F4）：npm 包补 LICENSE/README——原 files 白名单只含 bin/dist，包内缺
+// 许可证文本（Apache-2.0 分发合规面）与说明（registry 展示面）。来源=仓根两件（单一来源，不另存副本）。
+cpSync(join(ROOT, "LICENSE"), join(stage, "LICENSE"));
+cpSync(join(ROOT, "README.md"), join(stage, "README.md"));
 
 // ④ npm pack（staging 内；tarball 落 dist/）
 // WP-09 卡外最小修复（D-2）：ADR-0044 决策 10 包名改判后，npm pack 产物名随 staged.name 变为
