@@ -18,24 +18,60 @@ import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings 
 /**
  * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
  * waiter 队列优先消费，提问答案不进命令流（rl.question 与 async iterator 并挂会双吃的坑）。
+ *
+ * M8 后修复（2026-09-28，P0）：lines 原为**惰性** async generator——只有在 REPL 开始
+ * 消费它（main 尾部）时才从 rl 拉行；而信任提问/沙箱确认发生在启动早期（消费之前）⇒
+ * `askLine` 的 waiter 永远没有搬运工 → 真 TTY 下任何**未信任目录的首次运行必卡死**
+ * （CI 无 TTY 测试 + 首跑前置信任，故自 M2 潜伏）。改为**主动泵**：pump 随 router 创建
+ * 立即启动，把行分发给 waiter 或缓冲队列；EOF 时唤醒挂起 waiter（空串＝fail-closed 不信任）
+ * 并终止 lines（REPL 可退出）——非 TTY 管道跑完即退（原同样挂住）一并修复。
  */
-function createLineRouter(rl: import("node:readline").Interface) {
-  const waiters: ((line: string) => void)[] = [];
-  return {
-    askLine(question: string): Promise<string> {
-      process.stdout.write(question);
-      return new Promise((resolve) => {
-        waiters.push((line) => resolve(line));
-      });
-    },
-    lines: (async function* () {
+export function createLineRouter(rl: import("node:readline").Interface) {
+  const EOF = Symbol("line-router-eof");
+  const waiters: { kind: "ask" | "lines"; fn: (v: string | typeof EOF) => void }[] = [];
+  const buffered: string[] = [];
+  let closed = false;
+  const close = () => {
+    closed = true;
+    // 分型收束：提问等待者→空串（fail-closed＝按不信任/拒绝处理）；lines 等待者→EOF 哨兵（直接终止，不吐空行）
+    for (const w of waiters.splice(0)) w.fn(w.kind === "ask" ? "" : EOF);
+  };
+  void (async () => {
+    try {
       for await (const raw of rl) {
         const w = waiters.shift();
         if (w) {
-          w(raw);
+          w.fn(raw);
           continue;
         }
-        yield raw;
+        buffered.push(raw);
+      }
+    } finally {
+      close(); // 泵结束（全部行已分发或入缓冲）后才收束——避免抢在缓冲行之前唤醒（行序竞态）
+    }
+  })();
+  return {
+    askLine(question: string): Promise<string> {
+      process.stdout.write(question);
+      const next = buffered.shift();
+      if (next !== undefined) return Promise.resolve(next);
+      return new Promise((resolve) => {
+        waiters.push({ kind: "ask", fn: (v) => resolve(v as string) });
+      });
+    },
+    lines: (async function* () {
+      for (;;) {
+        const next = buffered.shift();
+        if (next !== undefined) {
+          yield next;
+          continue;
+        }
+        if (closed) return;
+        const line = await new Promise<string | typeof EOF>((resolve) => {
+          waiters.push({ kind: "lines", fn: resolve });
+        });
+        if (line === EOF) return;
+        yield line;
       }
     })(),
   };
