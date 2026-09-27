@@ -10,8 +10,8 @@
 set -euo pipefail
 
 NAME="standardcode"
-DEFAULT_VERSION="0.1.1"
-SHA256_LINUX_X64="8587ee035fea3d62a985b3ad96f83ca75213ae50bce1b82914819d5f96693f6d"
+DEFAULT_VERSION="0.1.2"
+SHA256_LINUX_X64="a7e9eeb9599427c888d4ab9ea5c8992e0fe25296c97954b3d68bdf050089611d"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 BINARY="$ROOT/apps/cli/dist/bin/standardcode-linux-x64"

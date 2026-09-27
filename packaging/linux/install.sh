@@ -17,10 +17,10 @@ set -euo pipefail
 
 CHANNEL="direct-download"
 NAME="standardcode"
-DEFAULT_VERSION="0.1.1"
+DEFAULT_VERSION="0.1.2"
 DEFAULT_BASE="https://github.com/admin001-bit/standardcode/releases/download"
 # WP-09 产物 sha256（apps/cli/dist/bin/SHA256SUMS.txt 中 standardcode-linux-x64 现值；DoD③ 逐字符相等）。
-SHA256_LINUX_X64="8587ee035fea3d62a985b3ad96f83ca75213ae50bce1b82914819d5f96693f6d"
+SHA256_LINUX_X64="a7e9eeb9599427c888d4ab9ea5c8992e0fe25296c97954b3d68bdf050089611d"
 ARTIFACT="standardcode-linux-x64"
 
 PREFIX="${STANDARDCODE_PREFIX:-$HOME/.local}"
