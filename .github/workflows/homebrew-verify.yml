@@ -33,8 +33,12 @@ jobs:
         continue-on-error: true
         run: brew audit sc-verify/tap/standardcode
 
-      - name: version assert
-        run: standardcode --version | grep -q '0.1.1'
+      - name: version assert（期望版本=formula 单一来源；修复：原硬编码 0.1.1 致 0.1.2 发版后误红，2026-09-28）
+        run: |
+          expected="$(brew info --json=v2 sc-verify/tap/standardcode | jq -r '.formulae[0].versions.stable')"
+          got="$(standardcode --version)"
+          echo "expected=${expected} got=${got}"
+          [ "${got}" = "standardcode ${expected}" ]
 
       - name: brew test (执行 formula 的 test do 块——M7 起从未执行过)
         run: brew test sc-verify/tap/standardcode
@@ -49,6 +53,9 @@ jobs:
         run: |
           brew tap admin001-bit/tap
           brew install admin001-bit/tap/standardcode
-          standardcode --version | grep -q '0.1.1'
+          expected="$(brew info --json=v2 admin001-bit/tap/standardcode | jq -r '.formulae[0].versions.stable')"
+          got="$(standardcode --version)"
+          echo "expected=${expected} got=${got}"
+          [ "${got}" = "standardcode ${expected}" ]
           brew uninstall standardcode
           ! command -v standardcode
