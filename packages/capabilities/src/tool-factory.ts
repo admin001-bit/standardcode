@@ -62,7 +62,8 @@ const bashTool = (env: ExecEnv) => ({
   name: "Bash",
   description:
     "Executes a shell command and returns combined stdout/stderr. Default timeout 120s, hard cap 600s (pass timeout in milliseconds to raise per-call); " +
-    "output beyond 30k characters is truncated. Long-running commands must respect user interruption.",
+    "output beyond 30k characters is truncated. Long-running commands must respect user interruption. " +
+    "Windows: the shell is cmd.exe (/d /s /c) unless STANDARD_CODE_SHELL overrides it — write commands in that shell's syntax.",
   searchHint: "shell command execution",
   isConcurrencySafe: false,
   deferred: false,
