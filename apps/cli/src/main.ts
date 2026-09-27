@@ -13,7 +13,7 @@ import type { SandboxTier } from "@standardcode/capabilities";
 // WP-08：版本号单一来源收敛入 version.ts（横幅与 /update/auto-check 的 registry 比对基准同源）。
 import { CLI_VERSION } from "./version.ts";
 // WP-04（接缝㉔）：键位表单源——本面只消费单源表，不再内联硬编码键位（缺省 shift+tab 见 keybindings.ts）。
-import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings } from "./keybindings.ts";
+import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings, stripKeyResidue } from "./keybindings.ts";
 
 /**
  * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
@@ -250,10 +250,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     isInterrupted: () => interrupted, // M7-WP-07：/loop·/batch 中断钩子装配（此前未注入=生产恒不中断）
     io: {
       // 每行输入交付前重置中断标志（中断作用域=当条命令，非跨行累积）
+      // F1（2026-09-28）：派发前清洗 shift+tab 残片（ESC[Z）——真机实测残片在**下一数据块**才被
+      // 插进行缓冲（键事件时刻清洗不及，见 keybindings.ts:stripKeyResidue 头注），此为唯一强保证位。
       lines: (async function* () {
         for await (const line of router.lines) {
           interrupted = false;
-          yield line;
+          yield stripKeyResidue(line);
         }
       })(),
       write: (s) => process.stdout.write(s),

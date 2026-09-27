@@ -110,6 +110,19 @@ export function matchKeyEvent(spec: KeySpec, key: KeyEventLike): boolean {
 }
 
 /**
+ * F1（2026-09-28）：清洗 readline 行缓冲里的 shift+tab 残片（ESC[Z）。
+ * 真机（Windows 控制台 + ConPTY）实测：权限循环键除投递 keypress 事件外，其原始序列还会被
+ * **插进行缓冲**——下一行输入被前缀污染（`/help` 变 `\u001b[Z/help` ⇒ 斜杠命令失效、被当聊天
+ * 送模型；transcript 实证 user_message 原文＝"\u001b[Z"）。纯流模拟不复现（双投递在平台层），
+ * 故实现为"防御性清洗"：整段残片与丢 ESC 的残形（仅行首前缀）两种都清。
+ */
+export function stripKeyResidue(line: string): string {
+  let out = line.replaceAll("\u001b[Z", "");
+  while (out.startsWith("[Z")) out = out.slice(2);
+  return out;
+}
+
+/**
  * settings 映射 → 完整键位表（缺项补缺省）。
  * fail-closed：未知动作名／非法键位串／**同一键绑到两个动作（冲突）** —— 一律抛错，不静默回落。
  */
