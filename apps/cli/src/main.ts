@@ -276,5 +276,36 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   });
 }
 
+/**
+ * M8 后修复（2026-09-28，F2 · Windows 收尾退出竞态）：main()/uninstall 返回后不得**立即** process.exit。
+ * 现象（真 npm 0.1.2 产物实测，3/3 复现）：坏 key + 非 TTY 管道 → 错误路径打印后立即 exit，
+ * libuv 在关闭在建句柄时触发 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c:76`
+ * （rc=127）；对照实测 setImmediate 延迟一档仍崩（不足），仅"释放 stdin + 自然排空"可消。
+ * 处置：设 exitCode → 显式 destroy stdin（TTY 下 stdin 常开，不释放则自然排空不成立）→ 自然退出；
+ * 2s unref 兜底（句柄异常滞留时保 rc 不悬死）。三态实测（管道错误/管道问答/TTY /exit）均干净退。
+ * 退出码语义保持既成事实：原 bin 口径＝process.exit(process.exitCode ?? 0)。
+ */
+export interface ExitHooks {
+  stdin: { destroy(): void };
+  setExitCode(code: number): void;
+  schedule(fn: () => void, ms: number): { unref?: () => void };
+  exit(code: number): void;
+}
+
+export function finalizeExit(code: number, hooks: Partial<ExitHooks> = {}): void {
+  const stdin = hooks.stdin ?? process.stdin;
+  const setExitCode = hooks.setExitCode ?? ((c: number) => { process.exitCode = c; });
+  const schedule = hooks.schedule ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const exit = hooks.exit ?? ((c: number) => process.exit(c));
+  setExitCode(code);
+  try {
+    stdin.destroy();
+  } catch {
+    // stdin 已关/注入桩不可销毁 → 自然排空路径仍成立（不冒泡）
+  }
+  const timer = schedule(() => exit(code), 2000);
+  timer.unref?.();
+}
+
 // WP-07：uninstall 子命令经 bin shim 路由至本入口的重导出（bundle 单入口；ADR-0044 决策 3/5）。
 export { runUninstall, runUninstallCli } from "./uninstall.ts"; // M8-WP-11：bin 消费 runUninstallCli（TTY 确认装配）
