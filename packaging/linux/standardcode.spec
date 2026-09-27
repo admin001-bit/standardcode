@@ -9,7 +9,7 @@
 #   V-WP10 复核后按窄口径收窄（2026-09-23）：`%global __brp_strip %{nil}` 只关 brp-strip、保留 brp-compress 等其余
 #   后处理——已在本机重跑 build-rpm.sh，载荷摘要硬断言仍 PASS（若后续发行版宏布局变化导致失败，回退全局口径并登记）。
 Name:           standardcode
-Version:        0.1.2
+Version:        0.1.3
 Release:        1%{?dist}
 Summary:        Open-source CLI coding agent (generic multi-protocol providers)
 
@@ -44,6 +44,8 @@ install -D -m 0644 %{SOURCE1} %{buildroot}%{_datadir}/doc/standardcode/README.md
 %{_datadir}/doc/standardcode/README.md
 
 %changelog
+* Mon Sep 28 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.3-1
+- Fix: Windows exit crash on error paths (libuv assert, rc=127), shift+tab key residue leaking into the next input line, npm package now ships LICENSE/README.
 * Mon Sep 28 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.2-1
 - Fix: REPL line-router deadlock on first run in untrusted dirs (P0); non-TTY pipe input now exits after processing.
 * Sun Sep 27 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.1-1

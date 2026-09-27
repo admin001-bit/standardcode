@@ -10,12 +10,12 @@
 class Standardcode < Formula
   desc "Open-source CLI coding agent (generic multi-protocol providers)"
   homepage "https://github.com/admin001-bit/standardcode"
-  url "https://github.com/admin001-bit/standardcode/releases/download/v0.1.2/standardcode-darwin-arm64"
-  sha256 "5681f5578ef68603b61133edac8f7209e5e33abf39e76055259dd9fa6adb8fcc"
+  url "https://github.com/admin001-bit/standardcode/releases/download/v0.1.3/standardcode-darwin-arm64"
+  sha256 "6c481a7cc6bf34106a6887c5de92f514e2fa3e2779a6b96731dbdaeca8baa87f"
   license "Apache-2.0"
 
   # WP-09 仅产 darwin-arm64（TARGETS；ADR-0047 决策 2）：x64 模板未产 → arch 硬约束。
-  # 2026-09-27（brew audit 合规）：不写显式 version（由 URL tag 段 `v0.1.2` 推导，audit 判冗余）；depends_on 序 arch 在前。
+  # 2026-09-27（brew audit 合规）：不写显式 version（由 URL tag 段 `v0.1.3` 推导，audit 判冗余）；depends_on 序 arch 在前。
   depends_on arch: :arm64
   depends_on :macos
 

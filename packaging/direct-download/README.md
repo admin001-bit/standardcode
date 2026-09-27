@@ -13,14 +13,14 @@
 
 ## 资产清单与校验值
 
-发布资产基址：`https://github.com/admin001-bit/standardcode/releases/download/v0.1.2/`
+发布资产基址：`https://github.com/admin001-bit/standardcode/releases/download/v0.1.3/`
 （`SHA256SUMS.txt` 随资产同发，**值取自 WP-09 产物** `apps/cli/dist/bin/SHA256SUMS.txt`；DoD③ 逐字符相等）
 
 | 资产 | 平台 | SHA-256 |
 |---|---|---|
-| `standardcode-windows-x64.exe` | Windows x64 | `6a22cd34b07696646b45214175f8b8474a7ae11c82f98fdc39f183492f4b1230` |
-| `standardcode-linux-x64` | Linux x64 | `a7e9eeb9599427c888d4ab9ea5c8992e0fe25296c97954b3d68bdf050089611d` |
-| `standardcode-darwin-arm64` | macOS arm64 | `5681f5578ef68603b61133edac8f7209e5e33abf39e76055259dd9fa6adb8fcc` |
+| `standardcode-windows-x64.exe` | Windows x64 | `f0d925830e3fcacf12cf0b05d3a78d09dd4896d3d648b6a80268acb6fda3433a` |
+| `standardcode-linux-x64` | Linux x64 | `81beb10cc675a1608dd4b36232baa4ccec81cfa2c450c85334c562525129d318` |
+| `standardcode-darwin-arm64` | macOS arm64 | `6c481a7cc6bf34106a6887c5de92f514e2fa3e2779a6b96731dbdaeca8baa87f` |
 
 **未签名**（Q-7 维持，ADR-0044 决策 2）：SHA-256 为唯一完整性通道；macOS/Windows 首次运行可能有系统安全提示，属预期。
 
