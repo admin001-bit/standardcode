@@ -244,7 +244,13 @@ function materializeMarketplace(source: string, ctx: ResolveContext): { dir: str
   const tmpRoot = ctx.opts?.tmpRoot ?? tmpdir();
   const tempDir = path.join(mkdtempSafe(tmpRoot), "mkt");
   const err = gitClone(source, tempDir, ctx.opts?.runGit ?? defaultGitRunner, ctx.opts?.env ?? process.env);
-  if (err) return { error: err };
+  if (err) {
+    // F19（2026-09-29 实测）：clone 失败原**早退**——两个调用方（installPlugin 的 git 源路与市场名检索路）的
+    // 清理只挂在成功路的 finally，失败即留下空中转目录（真机 %TEMP% 实测累积 199 个 `sc-plugin-*` 全空）；
+    // 在此就地回收（与成功路同形），使两路调用方零改动。
+    rmSync(path.dirname(tempDir), { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    return { error: err };
+  }
   return { dir: tempDir, tempDir };
 }
 

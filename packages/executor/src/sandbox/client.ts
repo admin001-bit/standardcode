@@ -7,6 +7,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { decodeFrame, encodeFrame, IPC_PROTOCOL_VERSION, type Frame } from "./codec.ts";
 import { policyFor, type SandboxTier, type WireSandboxPolicy } from "./policy.ts";
 
@@ -36,6 +37,14 @@ export class SandboxExecError extends Error {
   }
 }
 
+/** 模块目录解析（F20 修复位）：`new URL(url).pathname` 对非 ASCII 是 percent-encoded 形
+ * （`%E8%AF%95…`），直接拿去做 existsSync 会**结构性找不到**——中文安装路径下仓形制探针恒空
+ * （真机实测：探针位放好 exe 仍报"二进制未找到"；env BIN 形不受影响）。fileURLToPath 统一做
+ * 百分号还原 + win32 盘符形，兼作可单测的纯函数。 */
+export function moduleDirFromUrl(url: string): string {
+  return path.dirname(fileURLToPath(url));
+}
+
 /** 二进制解析序（[自定] 键位登记走结果页，WP-07 先例形制）：显式参数 >
  * env STANDARD_CODE_SANDBOX_BIN > 仓形制探针（自本包向上找 target/release 再 target/debug
  * 的 standardcode-sandbox(.exe)——开发/CI 通道；npm 发布形态=BIN 随包路径=WP-07 义务）。 */
@@ -49,7 +58,7 @@ export function resolveSandboxBinary(explicit?: string): string {
   const candidates: string[] = [];
   const envBin = process.env.STANDARD_CODE_SANDBOX_BIN;
   if (envBin) candidates.push(envBin);
-  let dir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+  let dir = moduleDirFromUrl(import.meta.url);
   for (let up = 0; up < 8; up++) {
     candidates.push(path.join(dir, "target", "release", exe), path.join(dir, "target", "debug", exe));
     const parent = path.dirname(dir);

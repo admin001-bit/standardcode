@@ -70,7 +70,12 @@ async function execBashSandboxed(input: BashInput, env: ExecEnv, shell: { comman
   for (const [k, v] of Object.entries(cleaned)) if (v !== undefined) execEnv[k] = v;
   const run = sandbox.run({
     program: shell.command,
-    args: shell.args.concat(shell.verbatim ? [`"${input.command}"`] : [input.command]),
+    // F21（2026-09-29 实测）：沙箱臂**不得复用直通臂的 cmd 引号包装**——直通臂的 `"<命令>"` 依赖 Node
+    // windowsVerbatimArguments 原样传参 + cmd `/s` 剥外层引号（见 resolveShell 注释）；沙箱臂的实参经
+    // stdio 帧交 Rust 侧**自建命令行**（plain_exec 原样拼、CPAU 形 quote_cmdline 再引号化），预包引号会被
+    // 当成命令名的一部分。铁证（danger 直通臂 A/B，同一 server 帧协议）：A 形 `"echo AB-A> ab_a.txt"`
+    // → cmd 报 `'\"echo AB-A…\"' 不是内部或外部命令` exit1 **零落盘**；B 形（裸命令）→ exit0 正常落盘。
+    args: shell.args.concat([input.command]),
     cwd: env.cwd,
     env: execEnv,
   });

@@ -28,6 +28,7 @@ export {
 // WP-03 沙箱宿主接线（ARCH-008 帧通道客户端+策略 wire+编解码；装配层注入 ExecEnv.sandbox）。
 export {
   createSandboxHandle,
+  moduleDirFromUrl,
   resolveSandboxBinary,
   SandboxExecError,
   SandboxUnavailableError,

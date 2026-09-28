@@ -11,6 +11,6 @@ Commands:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/admin001-bit/standardcode/releases/download/v0.1.3/standardcode-windows-x64.exe
-    InstallerSha256: 0682d1f773a684c4034f26839a7e6be8468c880b50e582cd5f07f2f4e613fa1b
+    InstallerSha256: 688f7efd05d7a4877679f6e586f98cd3f6f9176b9943ec54bbec4fc3423d04ae
 ManifestType: installer
 ManifestVersion: 1.12.0
