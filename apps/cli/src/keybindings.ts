@@ -116,12 +116,26 @@ export function matchKeyEvent(spec: KeySpec, key: KeyEventLike): boolean {
  * 送模型；transcript 实证 user_message 原文＝"\u001b[Z"）。纯流模拟不复现（双投递在平台层），
  * 故实现为"防御性清洗"：整段残片与丢 ESC 的残形（仅行首前缀）两种都清。
  */
+/** 中断键判定（F7/F13 收口的单源位）：main.ts 只消费谓词、不出现键位字面量
+ * （守卫 apps/cli/test/wp04-keybindings.test.ts DoD② 强制此形——F13 初版在 main.ts 直写 key.name==="escape" 被其判红）。
+ * ctrl+c 为保留键（RESERVED_KEY_SPECS）；裸 Esc 同为文档语义中断源（repl.ts /loop 注释"Esc/Ctrl+C 语义"）。 */
+export function isInterruptKey(key: { name?: string; ctrl?: boolean; meta?: boolean; alt?: boolean }): boolean {
+  if (key.ctrl === true && key.name === "c") return true;
+  // Esc 两形（真机实测 node readline 形制）：孤立 ESC → `{ name: undefined, meta: true }`（裸 ESC 被当 meta 前缀，
+  // 无 name——初版按 name==="escape" 判会漏）；部分宿主/序列给 `name:"escape"`。两形都收；Alt+字母（meta:true 且有
+  // name）与方向键（有 name 无 meta）不收。
+  if (key.name === "escape" && key.ctrl !== true && key.alt !== true) return true;
+  return key.meta === true && key.ctrl !== true && key.alt !== true && key.name === undefined;
+}
+
 export function stripKeyResidue(line: string): string {
   // F7（2026-09-28 真机实测）：TTY 下 Ctrl+C（\u0003）不触发 readline 的 SIGINT（createInterface 无 output →
   // terminal:false，见 main.ts onInterrupt 头注），该字节被当普通字符落在行首并随行提交
   // （桩侧实证模型实收 "\u0003<消息>"）。派发点一并清除（与 ESC[Z 同一位点；F1 已确立"派发前清洗是唯一强保证位"）。
+  // F13（2026-09-29 真机实测）：裸 Esc（\u001b）同族——流式中按 Esc 不中断且残片进缓冲（模型实收 "\u001b<消息>"）。
   let out = line.replaceAll("\u0003", "");
-  out = out.replaceAll("\u001b[Z", "");
+  out = out.replaceAll("\u001b[Z", ""); // F1 完整残片先处理（先例：任意位置）
+  out = out.replaceAll("\u001b", ""); // 其余裸 ESC（F13）
   while (out.startsWith("[Z")) out = out.slice(2);
   return out;
 }

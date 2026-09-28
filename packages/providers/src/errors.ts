@@ -74,9 +74,14 @@ export async function classifyHttpError(res: Response): Promise<ProviderError> {
   });
 }
 
-export function classifyNetworkError(err: unknown): ProviderError {
+/** 中断硬化（2026-09-29，随批4 深挖）：用户中断（Esc/Ctrl+C → signal.abort）产生的失败不得判为可重试。
+ * 背景如实登记：原观察到的"中断后重试风暴"经复验系**测试桩自身崩溃**（客户端对死服务器的重试属合法），
+ * 本项为防御性硬化而非缺陷修复——已 abort 的 signal 不再发起尝试/不再重试，语义上更贴近用户意图。 */
+export function classifyNetworkError(err: unknown, signal?: AbortSignal): ProviderError {
+  const aborted =
+    signal?.aborted === true || (err instanceof Error && (err.name === "AbortError" || /aborted|abort/i.test(err.message)));
   return new ProviderError("network", err instanceof Error ? err.message : String(err), {
-    retryable: true,
+    retryable: !aborted,
     cause: err,
   });
 }

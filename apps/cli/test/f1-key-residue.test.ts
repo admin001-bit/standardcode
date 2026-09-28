@@ -32,4 +32,12 @@ describe("stripKeyResidue（F1 修复）", () => {
     expect(stripKeyResidue("a\u0003b")).toBe("ab");
     expect(stripKeyResidue("\u0003\u001b[Z/usage")).toBe("/usage"); // 与 F1 残片叠加
   });
+
+  // F13（2026-09-29 真机实测）：裸 Esc（\u001b）在流式中既不中断也进缓冲（模型实收 "\u001b<消息>"）。
+  it("F13：裸 Esc 清除（且 F1 完整残片语义不回归）", () => {
+    expect(stripKeyResidue("\u001bTEXT:hello")).toBe("TEXT:hello");
+    expect(stripKeyResidue("\u001b")).toBe("");
+    expect(stripKeyResidue("a\u001b[Zb")).toBe("ab"); // 先例：完整 ESC[Z 仍任意位置清除
+    expect(stripKeyResidue("\u0003\u001bTEXT:x")).toBe("TEXT:x"); // 与 F7 叠加
+  });
 });

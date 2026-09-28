@@ -51,6 +51,9 @@ export async function withRetry<T>(
   const signal = hooks?.signal;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= pol.maxAttempts; attempt++) {
+    // 中断硬化（随批4 深挖）：已 abort 的 signal 不再发起任何尝试（含首个）——避免被中断的 turn 内后续调用
+    // 带已 abort 的 signal 进入重试循环（语义兜底；非缺陷修复，见 classifyNetworkError 头注）。
+    if (signal?.aborted) throw lastErr ?? new Error("request aborted (interrupted)");
     try {
       return await op();
     } catch (err) {

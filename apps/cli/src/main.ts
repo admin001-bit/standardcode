@@ -13,7 +13,7 @@ import type { SandboxTier } from "@standardcode/capabilities";
 // WP-08：版本号单一来源收敛入 version.ts（横幅与 /update/auto-check 的 registry 比对基准同源）。
 import { CLI_VERSION } from "./version.ts";
 // WP-04（接缝㉔）：键位表单源——本面只消费单源表，不再内联硬编码键位（缺省 shift+tab 见 keybindings.ts）。
-import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings, stripKeyResidue } from "./keybindings.ts";
+import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings, stripKeyResidue, isInterruptKey } from "./keybindings.ts";
 
 /**
  * 行路由（WP-10）：交互提问（确认/选择器）与 REPL 命令流共用一个 readline——
@@ -238,7 +238,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
     process.stdin.on("keypress", (_s: string, key: { name?: string; shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean }) => {
-      if (key.ctrl === true && key.name === "c") {
+      // F7（Ctrl+C）/F13（裸 Esc）：中断键判定归位单源 keybindings.isInterruptKey（守卫 wp04 DoD② 要求
+      // main.ts 零键位字面量）；Esc 残片由 stripKeyResidue 在派发点兜底清除。
+      if (isInterruptKey(key)) {
         onInterrupt();
         return;
       }

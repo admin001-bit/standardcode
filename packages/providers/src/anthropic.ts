@@ -273,7 +273,7 @@ export async function doFetch(
   try {
     res = await fetchImpl(url, { ...init, signal });
   } catch (err) {
-    throw classifyNetworkError(err);
+    throw classifyNetworkError(err, signal); // 中断硬化：已 abort 的 signal 判定不可重试（见 errors.ts 头注）
   }
   if (!res.ok) throw await classifyHttpError(res);
   if (!res.body) throw new Error("response has no body");
