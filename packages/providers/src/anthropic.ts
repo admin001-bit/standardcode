@@ -248,7 +248,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         }),
       httpRetryJudge,
       retryPolicyOf(this.opts),
-      retryHooksOf(this.opts),
+      retryHooksOf(this.opts, req.signal),
     );
     yield* decodeAnthropicStream(res.body!);
   }
@@ -289,6 +289,11 @@ export function retryPolicyOf(opts: ProviderOptions) {
   return { ...DEFAULT_RETRY_POLICY, maxAttempts: opts.maxRetryAttempts ?? DEFAULT_RETRY_POLICY.maxAttempts };
 }
 
-export function retryHooksOf(opts: ProviderOptions) {
-  return opts.sleep ? { sleep: opts.sleep, rng: opts.rng } : { rng: opts.rng };
+export function retryHooksOf(opts: ProviderOptions, signal?: AbortSignal) {
+  return {
+    ...(opts.sleep ? { sleep: opts.sleep } : {}),
+    rng: opts.rng,
+    ...(opts.onRetry ? { onRetry: opts.onRetry } : {}),
+    ...(signal !== undefined ? { signal } : {}),
+  };
 }

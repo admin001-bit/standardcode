@@ -26,6 +26,8 @@ export interface ProviderOptions {
   rng?: () => number;
   /** 含首试的最大尝试次数（§5.3(1)：kimi 默认 10，loop/retry.ts:16 锚点）。 */
   maxRetryAttempts?: number;
+  /** F8（2026-09-28）：重试通知（UI 可见化）；形见 retry.ts RetryNotice。 */
+  onRetry?: (notice: { attempt: number; maxAttempts: number; delayMs: number; reason: string }) => void;
 }
 
 export type ToolInputSchema = Record<string, unknown>;

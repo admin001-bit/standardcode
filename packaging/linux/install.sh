@@ -20,7 +20,7 @@ NAME="standardcode"
 DEFAULT_VERSION="0.1.3"
 DEFAULT_BASE="https://github.com/admin001-bit/standardcode/releases/download"
 # WP-09 产物 sha256（apps/cli/dist/bin/SHA256SUMS.txt 中 standardcode-linux-x64 现值；DoD③ 逐字符相等）。
-SHA256_LINUX_X64="81beb10cc675a1608dd4b36232baa4ccec81cfa2c450c85334c562525129d318"
+SHA256_LINUX_X64="e5ac7bda55c42c9d91c0366622c82e1069bddc24953e39f7c49edee5d48f1226"
 ARTIFACT="standardcode-linux-x64"
 
 PREFIX="${STANDARDCODE_PREFIX:-$HOME/.local}"

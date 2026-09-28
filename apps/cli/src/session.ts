@@ -237,6 +237,8 @@ export interface SessionInit {
   telemetryBaseDir?: string;
   /** M6-WP-07：实验特性位门（main.ts 启动期已解析的同一份判定；缺席=默认关=teams 面零构造零触盘）。 */
   experimental?: ExperimentalGate;
+  /** F8（2026-09-28）：provider 重试通知（UI 可见化；形见 providers/retry.ts RetryNotice）。缺席=静默（测试旧形）。 */
+  onProviderRetry?: (notice: { attempt: number; maxAttempts: number; delayMs: number; reason: string }) => void;
 }
 
 /**
@@ -457,7 +459,7 @@ export function createSession(init: SessionInit = {}): Session {
     providerName = init.providerName ?? providerName;
     catalog = init.catalog ?? [];
   } else {
-    const built = buildProvider(providerName, env, gatedSettings, keychain);
+    const built = buildProvider(providerName, env, gatedSettings, keychain, init.onProviderRetry);
     provider = built.provider;
     providerName = built.providerName;
     catalog = built.catalog;
@@ -542,7 +544,7 @@ export function createSession(init: SessionInit = {}): Session {
     drainMcpNotifications: () => [],
     switchProvider(name: string) {
       const n = name.toLowerCase();
-      const built = buildProvider(n, env, gatedSettings, keychain);
+      const built = buildProvider(n, env, gatedSettings, keychain, init.onProviderRetry);
       session.provider = built.provider;
       session.providerName = built.providerName;
       session.catalog = init.catalog ?? built.catalog;
@@ -919,6 +921,7 @@ function buildProvider(
   env: Record<string, string | undefined>,
   settings: LoadedSettings,
   keychain?: KeychainAdapter,
+  onRetry?: (notice: { attempt: number; maxAttempts: number; delayMs: number; reason: string }) => void,
 ): { provider: ProviderAdapter; providerName: string; catalog: readonly string[] } {
   const fromKeychain = keychain?.getSecret(keychainAccountFor(name)) ?? null;
   const apiKey = fromKeychain ?? (name === "anthropic" ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY);
@@ -929,7 +932,7 @@ function buildProvider(
     );
   }
   const baseUrl = env.STANDARD_CODE_BASE_URL ?? settingsValue<string>(settings, `providers.${name}.baseUrl`);
-  const opts: ProviderOptions = { apiKey, ...(baseUrl ? { baseUrl } : {}) };
+  const opts: ProviderOptions = { apiKey, ...(baseUrl ? { baseUrl } : {}), ...(onRetry ? { onRetry } : {}) };
   if (name === "anthropic") {
     return { provider: new AnthropicAdapter(ANTHROPIC_ENTRIES, opts), providerName: name, catalog: Object.keys(ANTHROPIC_ENTRIES) };
   }

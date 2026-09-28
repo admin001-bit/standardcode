@@ -143,6 +143,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     session = createSession({
       ...(sandboxInit ? { sandbox: sandboxInit } : {}),
       experimental, // M6-WP-07：teams 工具面装配消费同一份启动期门判定（DoD⑤ 默认关=零构造零触盘）
+      // F8（2026-09-28 真机实测）：重试可见化——默认 10 次指数退避（0.5s→32s，最长约 2 分钟）原为全静默，用户无反馈。
+      onProviderRetry: (n) => process.stdout.write(`\n[retry] attempt ${n.attempt}/${n.maxAttempts} — ${n.reason}（${n.delayMs}ms 后再试）\n`),
     });
     if (sandboxInit) process.stdout.write(`[sandbox] 已启用（档=${sandboxInit.tier}，执行面=Bash/写盘经 standardcode-sandbox；关=现状直通）\n`);
   } catch (err) {
@@ -218,11 +220,28 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // EXE-001 权限循环键（TTY；非 TTY 管道无键事件——终端兼容矩阵见 WP-11）。
   // WP-04（接缝㉔）：键位改由单源表驱动（apps/cli/src/keybindings.ts，缺省 shift+tab，可经 /keybindings 重绑定）。
   setKeybindings(keybindingsFromSettings(session.settings)); // 启动装配=重启恢复入口（非法设置 fail-closed）
+  // M7-WP-07：/loop·/batch 循环中断钩子的宿主判据源（Ctrl+C/SIGINT）。作用域=单条输入行——
+  // 每行输入交付 repl 前重置（见下方 io.lines 包装），故中断只作用于当条命令执行期，不跨命令残留。
+  let interrupted = false;
+  // F7（2026-09-28 真机实测）：readline 以 `createInterface({input, completer})`（无 output）创建 → terminal:false，
+  // TTY 下 \u0003 不进 readline 键处理、`rl.on("SIGINT")` 从不触发（死代码）——实测 Ctrl+C 既不中断进行中的 turn、
+  // 也不清行，字节被当普通字符进下一行输入（桩侧实证模型实收 "\u0003<消息>"）。中断语义改由 TTY keypress 路径
+  // 显式触发（与 shift+tab 同一监听）；rl.on("SIGINT") 保留（覆盖将来 terminal:true / 非 raw 宿主）。
+  const onInterrupt = (): void => {
+    // §8.4 中断：turn 进行中→停流；空闲→提示退出方式（M1 不做二次确认计数）
+    interrupted = true; // /loop·/batch 逐轮判据（repl.ts deps.isInterrupted）
+    if (session.activeAbort) session.activeAbort.abort();
+    else process.stdout.write("\n(输入 /exit 退出)\n");
+  };
   if (process.stdin.isTTY) {
     const { emitKeypressEvents } = await import("node:readline");
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
     process.stdin.on("keypress", (_s: string, key: { name?: string; shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean }) => {
+      if (key.ctrl === true && key.name === "c") {
+        onInterrupt();
+        return;
+      }
       if (matchKeyEvent(getKeybindings()["permission.cycle"], key)) {
         const next = session.broker.cycle();
         process.stdout.write(`\n[permission] ${PERMISSION_LABEL[next]} (${next})\n`);
@@ -230,15 +249,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
     });
   }
-  // M7-WP-07：/loop·/batch 循环中断钩子的宿主判据源（Ctrl+C/SIGINT）。作用域=单条输入行——
-  // 每行输入交付 repl 前重置（见下方 io.lines 包装），故中断只作用于当条命令执行期，不跨命令残留。
-  let interrupted = false;
-  rl.on("SIGINT", () => {
-    // §8.4 中断：turn 进行中→停流；空闲→提示退出方式（M1 不做二次确认计数）
-    interrupted = true; // /loop·/batch 逐轮判据（repl.ts deps.isInterrupted）
-    if (session.activeAbort) session.activeAbort.abort();
-    else process.stdout.write("\n(输入 /exit 退出)\n");
-  });
+  rl.on("SIGINT", onInterrupt);
   // M8-WP-02（附录 E 品牌资源）：产品标识位横幅在 REPL 前印出，仅 TTY（管道/CI 零打扰，见 brand.ts）。
   const brand = startupBrandBanner(process.stdout);
   if (brand) process.stdout.write(brand);

@@ -230,7 +230,7 @@ export class OpenAIChatAdapter implements ProviderAdapter {
         }),
       httpRetryJudge,
       retryPolicyOf(this.opts),
-      retryHooksOf(this.opts),
+      retryHooksOf(this.opts, req.signal),
     );
     yield* decodeOpenAIStream(res.body!, entry.reasoningDialect ?? "auto");
   }

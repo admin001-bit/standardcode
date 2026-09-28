@@ -23,4 +23,13 @@ describe("stripKeyResidue（F1 修复）", () => {
     expect(stripKeyResidue("请解释这段代码")).toBe("请解释这段代码");
     expect(stripKeyResidue("")).toBe("");
   });
+
+  // F7（2026-09-28 真机实测）：Ctrl+C（\u0003）在 TTY 下不进 readline SIGINT，被当普通字符随行提交
+  // （桩侧实证模型实收 "\u0003<消息>"）。派发点一并清洗。
+  it("F7：Ctrl+C 字节（\\u0003）任意位置清除", () => {
+    expect(stripKeyResidue("\u0003TEXT:hello")).toBe("TEXT:hello"); // 真机实测形（首消息被污染）
+    expect(stripKeyResidue("\u0003")).toBe("");
+    expect(stripKeyResidue("a\u0003b")).toBe("ab");
+    expect(stripKeyResidue("\u0003\u001b[Z/usage")).toBe("/usage"); // 与 F1 残片叠加
+  });
 });

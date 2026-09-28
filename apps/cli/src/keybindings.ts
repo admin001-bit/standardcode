@@ -117,7 +117,11 @@ export function matchKeyEvent(spec: KeySpec, key: KeyEventLike): boolean {
  * 故实现为"防御性清洗"：整段残片与丢 ESC 的残形（仅行首前缀）两种都清。
  */
 export function stripKeyResidue(line: string): string {
-  let out = line.replaceAll("\u001b[Z", "");
+  // F7（2026-09-28 真机实测）：TTY 下 Ctrl+C（\u0003）不触发 readline 的 SIGINT（createInterface 无 output →
+  // terminal:false，见 main.ts onInterrupt 头注），该字节被当普通字符落在行首并随行提交
+  // （桩侧实证模型实收 "\u0003<消息>"）。派发点一并清除（与 ESC[Z 同一位点；F1 已确立"派发前清洗是唯一强保证位"）。
+  let out = line.replaceAll("\u0003", "");
+  out = out.replaceAll("\u001b[Z", "");
   while (out.startsWith("[Z")) out = out.slice(2);
   return out;
 }

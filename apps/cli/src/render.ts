@@ -20,6 +20,14 @@ export async function renderTurn(
   while (true) {
     const r = await it.next();
     if (r.done) {
+      // F6（2026-09-28 真机实测）：OpenAI `stream_options.include_usage` 规范把 usage 放在 finish_reason **之后**的
+      // 空 choices 尾块——原实现只在 finish 结算 pendingUsage，该轮 usage 既不上屏也不入 meter（尾块被丢）。
+      // 流末兜底结算：仅当 finish 之后又到达过 usage（pendingUsage 非空）时触发，不与 finish 结算双计。
+      if (pendingUsage) {
+        write(`\n${formatRawUsage(pendingUsage, meter.observe(pendingUsage))}\n`);
+        pendingUsage = null;
+        sawText = false;
+      }
       if (sawText) write("\n");
       return r.value;
     }
