@@ -138,6 +138,9 @@ export interface Session {
   thinking: ThinkingSetting | undefined;
   /** AutoCompact 协调器（M2 WP-03：四道闸+重压缩链；执行体 runCompaction 在 repl 装配=WP-04）。 */
   autocompact: CompactionCoordinator;
+  /** F16（2026-09-29 实测）：会话级用户轮序数（runPromptTurn 每轮自增，跨 turn 单调）——
+   * 协调器 rapid-refill 的 turn 基准；原传 harness state.toolRounds（每轮 0 起）致"间隔≥3 turn 重置"永不触发。 */
+  turnIndex: number;
   /** 工作区信任门控（WP-07/S-8）：生效信任态+被门控剔除的共享设置登记（信任对话框消费）。 */
   trust: TrustGateResult;
   /** 家目录覆写（测试隔离用；"总是允许"落盘路径随之，未传=真实家目录）。 */
@@ -495,6 +498,7 @@ export function createSession(init: SessionInit = {}): Session {
     broker: createPermissionBroker({ ...(mergedRules ? { rules: mergedRules } : {}) }),
     exitRequested: false,
     activeAbort: null,
+    turnIndex: 0,
     settings,
     memory,
     thinking,

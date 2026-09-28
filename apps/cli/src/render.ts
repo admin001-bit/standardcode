@@ -67,7 +67,9 @@ export async function renderTurn(
         write(`\n${colorize("interrupted", `[interrupted: ${ev.phase}]`)}\n`);
         break;
       case "context_exhausted":
-        write("\n[context exhausted — start a new session (CTX-101)]\n");
+        // F16（2026-09-29 实测）：闸拒理由（熔断/rapid-refill 的"交还用户"指引）上屏；无理由（reactive 耗尽且
+        // 闸未给理由）＝原 CTX-101 文案。
+        write(ev.reason ? `\n[context exhausted — ${ev.reason}]\n` : "\n[context exhausted — start a new session (CTX-101)]\n");
         break;
       case "done":
         hooks?.onDone?.(ev.reason); // WP-10：终态入转录（resume 等价断言面）

@@ -303,7 +303,12 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         ...(partialIdx !== undefined ? { partial: { selectedIdx: partialIdx } } : {}),
       });
       s.messages = r.newMessages;
-      s.autocompact.recordCompactSuccess(r.postTokens, 0); // 手动压缩=独立轮次（工具轮计数不属于 turn 状态，Session 无 toolRounds）
+      s.autocompact.recordCompactSuccess(r.postTokens, s.turnIndex);
+      // F16（2026-09-29 实测）：手动通道=CTX-035 的手动解除路径（resetBreaker 文档语义"解除熔断与 rapid-refill
+      // blocked"）——原零生产调用方：/compact 成功后闸②/闸③ 状态原样保留，且 recordCompactSuccess 的
+      // refilledFast 判定在手动路径恒真（turn 基准恒 <3）→ 计数不降反升，被熔断的会话靠 /compact 解不开。
+      // 顺序在 recordCompactSuccess 之后=先记账后清位（清位放前面会被随后那次 refilledFast 自增抵消）。
+      s.autocompact.resetBreaker();
       // ADR-0038：压缩落盘 compact 记录（重建截断语义的历史起点；M2 偏差⑤清偿；keptCount=partial 保留尾部消息数）
       transcriptAppend(deps, { kind: "compact", mode: "manual", preTokens: r.preTokens, postTokens: r.postTokens, summary: r.summary, keptCount: r.newMessages.length - 1 });
       await s.hooks.gate("PostCompact", undefined, {}).catch(() => null); // M4-WP04：PostCompact 触发
@@ -1244,6 +1249,8 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   // 语义零变化：MCP 后台终态通知（<system-reminder>，SEC-010 载体同构；isMeta 注入不入转录=transcripts.ts:113 口径）
   // → workflow 完成通知（<task-notification>，M6-WP-05 DoD③）→ teammate→main 投递（M6-WP-07 DoD④），逐一作为
   // user turn 回灌主循环并触发 Notification 钩子。
+  // F16（2026-09-29 实测）：会话级用户轮序数自增（本 turn 的压缩协调器 turn 基准；UserPromptSubmit 阻断轮不计）。
+  const turnIndex = ++s.turnIndex;
   drainSessionNotes(s);
   // M4-WP05：skills 清单增量注入（meta user 消息追加，CTX-005 不动既有前缀字节；DoD③⑧）
   const listing = s.skills.listing();
@@ -1290,6 +1297,9 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
             return null; // auto-compact：交还协调器路由
           },
         },
+        // F16（2026-09-29 实测）：协调器 turn 基准=会话轮序（原缺此行 → harness 回落 toolRounds（每轮 0 起），
+        // rapid-refill 的"间隔 ≥3 turn 重置"跨轮永不触发、计数单调累积；闸③ blocked 后仅剩开新会话一条路）。
+        turnIndex,
         // WP-04：AutoCompact 执行体接线（协调器=WP-03 装配；CTX-101 交接终点）
         autocompact: {
           evaluate: (used, turn) => s.autocompact.evaluate(used, turn),

@@ -130,9 +130,12 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
             if (reactiveAttempts >= 8) exhausted = true; // 防御上限（decide 实现异常时兜底）
           }
           if (exhausted) {
-            const gate = opts.autocompact?.evaluate(usedTokens, state.toolRounds);
+            // F16（2026-09-29 实测）：协调器 turn 基准取会话级 turnIndex（缺省回落 toolRounds）——
+            // toolRounds 每轮从 0 起，跨轮距离恒 <3 使 rapid-refill 计数单调累积（慢节奏也永不重置）。
+            const turnNow = opts.turnIndex ?? state.toolRounds;
+            const gate = opts.autocompact?.evaluate(usedTokens, turnNow);
             if (gate?.shouldCompact && opts.autocompact?.perform) {
-              const r = await opts.autocompact.perform(state.toolRounds);
+              const r = await opts.autocompact.perform(turnNow);
               if (r.ok) {
                 yield { type: "compact_decided", level: gate.level, postCompactTokens: r.postCompactTokens };
                 // WP-04：摘要替换历史（perform 返回新消息；缺省清空=占位）
@@ -140,7 +143,8 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
                 continue; // 下轮重试原请求（压缩后仍超阈值→下轮再压，重压缩链在协调器侧）
               }
             }
-            yield { type: "context_exhausted" };
+            // F16：闸拒理由上抛（熔断/rapid-refill 的"交还用户"指引原被丢弃 → 用户只见"开新会话"）
+            yield { type: "context_exhausted", ...(gate && !gate.shouldCompact && gate.reason ? { reason: gate.reason } : {}) };
             yield { type: "done", reason: "context_exhausted" };
             return state;
           }

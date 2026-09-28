@@ -63,7 +63,8 @@ export type AgentEvent =
   | { type: "finish"; reason: ProviderFinishReason; raw: string | null }
   | { type: "recovery"; chain: "max_tokens_continue" | "stream_resume" | "malformed_retry"; round: number }
   | { type: "interrupted"; phase: "stream" | "tool" }
-  | { type: "context_exhausted" }
+  /** F16：reason=协调器闸拒理由（熔断/rapid-refill 的"交还用户"指引；无闸或闸放行失败时为缺省）。 */
+  | { type: "context_exhausted"; reason?: string }
   /** WP-03（CTX-101 交接）：压缩协调器放行且执行体成功（摘要替换历史）。 */
   | { type: "compact_decided"; level: string; postCompactTokens: number }
   /** WP-05（CTX-037）：reactive 瀑布步升级（tokenGap=used−window，报告 `gap=${tokenGap}` 口径）。 */
@@ -94,6 +95,12 @@ export interface LoopOptions {
     /** WP-04：压缩执行体（9 段摘要）；返回新历史（缺省=清空，WP-04 前占位）。 */
     perform?(turn: number): Promise<{ ok: boolean; postCompactTokens: number; messages?: LLMMessage[] }>;
   };
+  /**
+   * F16（2026-09-29 实测）：会话级用户轮序数（L0 自持，跨 turn 单调）。压缩协调器 rapid-refill 的 turn 基准=
+   * 本值；缺省回落 state.toolRounds（**每轮从 0 起**——"压缩后 3 turn 内又填满" 语义下跨轮距离恒 <3 →
+   * 计数单调累积、"正常节奏重置" 永不触发；见 autocompact.ts 闸③）。
+   */
+  turnIndex?: number;
   /**
    * WP-05（CTX-037）：reactive 兜底瀑布（prompt-too-long 触发；A 级报告 §2.4 锚点）。提供时先于
    * autocompact 路由执行：decide=步升级状态机（前一步未解决才升级，packages/context nextReactiveStep 同构）；
