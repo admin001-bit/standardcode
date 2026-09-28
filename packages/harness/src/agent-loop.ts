@@ -104,7 +104,11 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           // 恢复链②（CTX-101 交接，WP-03）× WP-05（CTX-037）：reactive 瀑布先走（prompt-too-long 触发，
           // tokenGap=used−window 记录于 reactive_step 事件）；每触发升一级（decide 状态机），前一步未解决
           // 才升级；auto-compact 级（exhausted）落下方既有压缩协调器路由（四道闸+perform）。
-          const usedTokens = state.usage?.inputTokens ?? 0;
+          // F11（2026-09-29 真机实测）：usedTokens 原取 state.usage（本回合**最后一次成功调用**的 usage）——
+          // 回合首个调用即超长时该值为 undefined → 0：reactive_step 打印 gap=-window 噪声，且
+          // autocompact.evaluate(0) 恒拒 → 直接 context_exhausted（不压缩、不重试；实测 1 次 400 即终止）。
+          // 回退链：本回合已有 usage → provider 本地估算（countTokens，超长请求里可用）。
+          const usedTokens = state.usage?.inputTokens ?? (await opts.provider.countTokens(req).catch(() => 0));
           let exhausted = !reactive;
           if (reactive) {
             for (let i = 0; i < 8; i++) {

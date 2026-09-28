@@ -438,18 +438,6 @@ export function createSession(init: SessionInit = {}): Session {
           ...(init.rules ?? {}),
         }
       : undefined;
-  // WP-03：协调器配置（env 逃逸舱+settings；模型窗口来源=UNKNOWN_MODEL_ASSUMED/auto——窗口解析链 WP-03 原文，模型目录窗口接线随 WP-05 /context）
-  const autocompact = createCompactionCoordinator(
-    resolveAutocompactConfig({
-      env,
-      settings: {
-        autocompactEnabled: settingsValue<boolean>(settings, "autocompact.enabled"),
-        autocompactWindow: settingsValue<unknown>(settings, "autocompact.window"),
-        autocompactPct: settingsValue<unknown>(settings, "autocompact.pct"),
-      },
-    }),
-  );
-
   const providerDefault = settingsValue<string>(settings, "providers.default");
   let providerName = (init.providerName ?? env.STANDARD_CODE_PROVIDER ?? providerDefault ?? "anthropic").toLowerCase();
   let provider: ProviderAdapter;
@@ -468,6 +456,27 @@ export function createSession(init: SessionInit = {}): Session {
   const modelDefault = settingsValue<string>(settings, "model.default");
   const model = init.model ?? env.STANDARD_CODE_MODEL ?? modelDefault ?? catalog[0];
   if (!model) throw new Error("no model available: pass model/catalog or set STANDARD_CODE_MODEL or settings model.default");
+  // WP-03 协调器装配（env 逃逸舱+settings）。F12（2026-09-29 真机实测）：原缺 modelDefault → 窗口落
+  // UNKNOWN_MODEL_ASSUMED_WINDOW(200k)，而上下文网格/模型能力用**真实**窗口（如 128k）——128k–192k 区间
+  // （真实模型已超限、协调器仍判未达阈）压缩门恒拒：长会话超限只会得到 "context exhausted"，自动压缩永不触发
+  // （原注释自认"模型目录窗口接线随 WP-05"，此处补接线）。未知模型（capabilities 抛错）=保持假定窗口兜底。
+  let modelContextWindow: number | undefined;
+  try {
+    modelContextWindow = provider.capabilities(model).contextWindow;
+  } catch {
+    modelContextWindow = undefined;
+  }
+  const autocompact = createCompactionCoordinator(
+    resolveAutocompactConfig({
+      env,
+      settings: {
+        autocompactEnabled: settingsValue<boolean>(settings, "autocompact.enabled"),
+        autocompactWindow: settingsValue<unknown>(settings, "autocompact.window"),
+        autocompactPct: settingsValue<unknown>(settings, "autocompact.pct"),
+      },
+      ...(modelContextWindow !== undefined ? { modelDefault: modelContextWindow } : {}),
+    }),
+  );
   // M5-WP-03：沙箱句柄装配（-sdb/settings/env 开启位已由装配层解析确认；构造 lazy=零进程，
   // 首次 Bash/写盘才拉起 server——DoD① 缺省态与本分支整体缺席同物）。
   const sandboxHandle = init.sandbox

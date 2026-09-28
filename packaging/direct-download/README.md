@@ -18,9 +18,9 @@
 
 | 资产 | 平台 | SHA-256 |
 |---|---|---|
-| `standardcode-windows-x64.exe` | Windows x64 | `cf230c85e1563bfb088761aebd6106d2a8088e1adf4c4f3363391bd97bee8544` |
-| `standardcode-linux-x64` | Linux x64 | `e5ac7bda55c42c9d91c0366622c82e1069bddc24953e39f7c49edee5d48f1226` |
-| `standardcode-darwin-arm64` | macOS arm64 | `02f30a32ca66c025cf1494e048570c7ea2587b5276680de5c2ab42d89b1b7095` |
+| `standardcode-windows-x64.exe` | Windows x64 | `49d8237fc8dc31db9dd48d816d31301302018bdd7960347f1cad583eb608ef99` |
+| `standardcode-linux-x64` | Linux x64 | `5dd068408961085e8bdcf24a4589475aca156d23524190f061001bcc6d6e50db` |
+| `standardcode-darwin-arm64` | macOS arm64 | `17938aee9e4782bd5d09296a40dbf7bd64a9c886dd62f6229e0e198c1621ae04` |
 
 **未签名**（Q-7 维持，ADR-0044 决策 2）：SHA-256 为唯一完整性通道；macOS/Windows 首次运行可能有系统安全提示，属预期。
 

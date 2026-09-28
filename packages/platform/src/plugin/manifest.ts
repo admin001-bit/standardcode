@@ -65,10 +65,14 @@ function strArray(v: unknown, key: string, warnings: string[]): string[] | undef
 /** 目录声明归一：去重+拒绝越出 pluginRoot（.. 上跳）。 */
 function normalizeDirs(raw: string[] | undefined, fallback: string | undefined, pluginRoot: string, key: string, warnings: string[]): string[] {
   const src = raw && raw.length > 0 ? raw : fallback ? [fallback] : [];
+  // F10（2026-09-29 真机实测）：pluginRoot 以**相对路径**给出（如 `/plugin install plugins/foo`）时，
+  // path.resolve 产出绝对路径而 pluginRoot 仍是相对串 → 前缀比较恒假 → 全部组件目录被误判"越界"静默丢弃
+  // （同 plugin 绝对路径安装 = 1 skill，相对路径安装 = 0 skill + 一条 warn）。根断言两侧同形（均取 resolve）。
+  const rootAbs = path.resolve(pluginRoot);
   const out: string[] = [];
   for (const rel of src) {
-    const abs = path.resolve(pluginRoot, rel);
-    if (abs !== pluginRoot && !abs.startsWith(pluginRoot + path.sep)) {
+    const abs = path.resolve(rootAbs, rel);
+    if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) {
       warnings.push(`${key} "${rel}" escapes plugin root (ignored)`);
       continue;
     }
