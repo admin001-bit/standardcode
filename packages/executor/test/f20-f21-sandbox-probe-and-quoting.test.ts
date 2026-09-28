@@ -36,7 +36,11 @@ describe("F20：探针路径的 URL 解码", () => {
   });
 
   it("对照：ASCII 路径两形同值（解码不改变常规情形）", () => {
-    expect(moduleDirFromUrl("file:///D:/plain/x/dist/a.mjs")).toBe(path.dirname(path.join("D:/plain/x/dist/a.mjs")));
+    // 平台无关断言（CI linux/macos gate 曾判红：fileURLToPath 在 POSIX 保前导 "/"，直接与
+    // `path.join("D:/…")` 比较会平台分裂——此处只断"末尾段与无百分号"）。
+    const dir = moduleDirFromUrl("file:///D:/plain/x/dist/a.mjs").replaceAll("\\", "/");
+    expect(dir).toMatch(/\/?D:\/plain\/x\/dist$/);
+    expect(dir).not.toContain("%");
   });
 
   it("显式路径缺位仍 fail-closed（不回退探针；B-12 语义不回归）", () => {
@@ -57,6 +61,9 @@ describe("F21：沙箱臂命令入参为裸命令（不带 cmd 引号包装）",
     expect(out.trim()).toBe("ok");
     const last = rec.at(-1)!;
     expect(last.args.at(-1)).toBe(cmd); // 修复前（win32）＝`"echo AB-A> ab_a.txt"`（预包引号 → Rust 侧再引号化）
-    expect(last.args.slice(0, 3)).toEqual(process.platform === "win32" ? ["/d", "/s", "/c"] : ["-c"]);
+    // 平台无关：只断 shell 前缀段（POSIX 臂为 ["-c", cmd] 两元素——CI linux/macos gate 曾判红：
+    // 原 slice(0,3) 恒取满 3 段与 ["-c"] 比较而平台分裂）。
+    const prefix = process.platform === "win32" ? ["/d", "/s", "/c"] : ["-c"];
+    expect(last.args.slice(0, prefix.length)).toEqual(prefix);
   });
 });
