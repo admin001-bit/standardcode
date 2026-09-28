@@ -14,7 +14,7 @@ describe("withRetry 通知与中断（F8 修复）", () => {
     const out = await withRetry(
       async () => {
         calls++;
-        if (calls < 3) throw new ProviderError("http", "boom");
+        if (calls < 3) throw new ProviderError("overloaded", "boom");
         return "ok";
       },
       retryableJudge,
@@ -36,7 +36,7 @@ describe("withRetry 通知与中断（F8 修复）", () => {
         async () => {
           calls++;
           ac.abort(); // 首试内中断（模拟 Ctrl+C 落在请求期）
-          throw new ProviderError("http", "boom");
+          throw new ProviderError("overloaded", "boom");
         },
         retryableJudge,
         { maxAttempts: 10, baseDelayMs: 60_000, factor: 2, jitterFactor: 0 },
@@ -55,7 +55,7 @@ describe("withRetry 通知与中断（F8 修复）", () => {
       withRetry(
         async () => {
           calls++;
-          throw new ProviderError("http", "boom");
+          throw new ProviderError("overloaded", "boom");
         },
         retryableJudge,
         { maxAttempts: 10, baseDelayMs: 60_000, factor: 2, jitterFactor: 0 },
@@ -73,7 +73,7 @@ describe("withRetry 通知与中断（F8 修复）", () => {
     const out = await withRetry(
       async () => {
         calls++;
-        if (calls < 2) throw new ProviderError("http", "boom");
+        if (calls < 2) throw new ProviderError("overloaded", "boom");
         return 7;
       },
       retryableJudge,

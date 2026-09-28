@@ -26,7 +26,7 @@ describe("renderTurn usage 结算（F6 修复）", () => {
   it("OpenAI 尾块序（usage 在 finish 之后）：仍上屏且计入 meter", async () => {
     const { out, meter } = await run([
       { type: "text_delta", text: "hi" },
-      { type: "finish", reason: "end_turn", raw: null },
+      { type: "finish", reason: "completed", raw: null },
       { type: "usage", usage: USAGE },
     ]);
     expect(meter.snapshot()).toMatchObject(USAGE);
@@ -38,7 +38,7 @@ describe("renderTurn usage 结算（F6 修复）", () => {
     const { out, meter } = await run([
       { type: "text_delta", text: "hi" },
       { type: "usage", usage: USAGE },
-      { type: "finish", reason: "end_turn", raw: null },
+      { type: "finish", reason: "completed", raw: null },
     ]);
     expect(meter.snapshot()).toMatchObject(USAGE);
     expect((out.match(/usage: input=1234/g) ?? []).length).toBe(1);
@@ -48,10 +48,10 @@ describe("renderTurn usage 结算（F6 修复）", () => {
     const { meter } = await run([
       { type: "tool_start", id: "t1", name: "Write" },
       { type: "tool_result", id: "t1", name: "Write", content: "ok", isError: false },
-      { type: "finish", reason: "tool_use", raw: null }, // 调用①的 finish（usage 尾块尚未到）
+      { type: "finish", reason: "tool_calls", raw: null }, // 调用①的 finish（usage 尾块尚未到）
       { type: "usage", usage: USAGE }, // 调用①的尾块 usage
       { type: "text_delta", text: "done" },
-      { type: "finish", reason: "end_turn", raw: null }, // 调用②的 finish
+      { type: "finish", reason: "completed", raw: null }, // 调用②的 finish
       { type: "usage", usage: USAGE }, // 调用②的尾块 usage（流末兜底）
     ]);
     expect(meter.snapshot().inputTokens).toBe(2468);
@@ -61,7 +61,7 @@ describe("renderTurn usage 结算（F6 修复）", () => {
   it("无 usage 事件（纯文本流）：不动 meter、不打印 usage 行", async () => {
     const { out, meter } = await run([
       { type: "text_delta", text: "hi" },
-      { type: "finish", reason: "end_turn", raw: null },
+      { type: "finish", reason: "completed", raw: null },
     ]);
     expect(meter.snapshot().inputTokens).toBe(0);
     expect(meter.turns).toBe(0);
