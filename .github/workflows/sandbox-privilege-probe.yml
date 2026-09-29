@@ -73,12 +73,13 @@ jobs:
           $exe = '${{ steps.build.outputs.exe }}'
           $repo = $env:GITHUB_WORKSPACE
           $taskName = "sc-sbx-probe-$env:GITHUB_RUN_ID"
-          $wrapper = Join-Path $repo 'b5-sbx-system-wrapper.cmd'
-          $enablePs1 = Join-Path $repo 'b5-sbx-enable-priv.ps1'
+          $probePs1 = Join-Path $repo 'b5-sbx-system-probe.ps1'
+          $csPath = Join-Path $repo 'b5-sbx-priv.cs'
           $logWhoPre = Join-Path $repo 'b5-sbx-system-whoami-pre.txt'
           $logWhoPost = Join-Path $repo 'b5-sbx-system-whoami-post.txt'
           $logTest = Join-Path $repo 'b5-sbx-system-testlog.txt'
 
+          # (1) C# 特权 enabler（纯 ASCII；本地已 Add-Type 预编译验证通过）
           $src = @'
           using System;
           using System.Runtime.InteropServices;
@@ -120,29 +121,48 @@ jobs:
             }
           }
           '@
-          Set-Content -Path $enablePs1 -Value $src -Encoding utf8
+          Set-Content -Path $csPath -Value $src -Encoding ascii
 
-          $w = @"
-          @echo off
-          setlocal
-          set GITHUB_ACTIONS=true
-          if "%USERNAME%"=="" set USERNAME=SYSTEM
-          if "%SystemRoot%"=="" set SystemRoot=C:\Windows
-          if "%PATH%"=="" set PATH=%SystemRoot%\System32;%SystemRoot%
-          if "%TEMP%"=="" set TEMP=%SystemRoot%\TEMP
-          if "%TMP%"=="" set TMP=%SystemRoot%\TEMP
-          whoami /priv > "$logWhoPre" 2>&1
-          "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$enablePs1" > "$logWhoPost" 2>&1
-          "$exe" --ignored --nocapture > "$logTest" 2>&1
-          echo EXITCODE=%ERRORLEVEL% >> "$logTest"
-          echo WRAPPER-DONE >> "$logTest"
-          "@
-          $w = $w.Replace("`r`n","`n").Replace("`n","`r`n")   # cmd 批处理须 CRLF
-          Set-Content -Path $wrapper -Value $w -Encoding ascii
-          Write-Host '=== wrapper ==='
-          Write-Host $w
+          # (2) probe.ps1 = 完整载荷：同一 PS 进程内 AdjustTokenPrivileges 启用两项特权后，
+          #     由该进程派生 cmd 再跑 test exe（子进程令牌复制自父进程，enabled 态随之继承；
+          #     run1 实测：enable 若只在兄弟进程做，对 exe 无效）。纯 ASCII（PS5.1 无 BOM 按 ANSI 读）；
+          #     USERNAME 强制 SYSTEM——run1 实测 Task Scheduler 注入 USERNAME=runnervm99s1a$ 无法被
+          #     icacls 解析（No mapping ...），scratch() windows.rs:627 断言红。
+          $probe = @'
+          param($Exe)
+          $ErrorActionPreference = 'Continue'
+          $repo = $PSScriptRoot
+          $logWhoPre = Join-Path $repo 'b5-sbx-system-whoami-pre.txt'
+          $logWhoPost = Join-Path $repo 'b5-sbx-system-whoami-post.txt'
+          $logTest = Join-Path $repo 'b5-sbx-system-testlog.txt'
+          $env:USERNAME = 'SYSTEM'
+          $env:GITHUB_ACTIONS = 'true'
+          if (-not $env:TEMP) { $env:TEMP = Join-Path $env:SystemRoot 'TEMP' }
+          try {
+            $whoami = Join-Path $env:SystemRoot 'System32\whoami.exe'
+            & $whoami /priv | Out-File -FilePath $logWhoPre -Encoding utf8
+            $cs = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'b5-sbx-priv.cs')
+            Add-Type -TypeDefinition $cs
+            $r1 = [PrivEnabler]::Enable('SeAssignPrimaryTokenPrivilege')
+            $r2 = [PrivEnabler]::Enable('SeIncreaseQuotaPrivilege')
+            $who = (& $whoami /priv | Out-String)
+            Set-Content -Path $logWhoPost -Value ($r1 + [Environment]::NewLine + $r2 + [Environment]::NewLine + $who) -Encoding utf8
+            cmd /c "$Exe --ignored --nocapture > $logTest 2>&1"
+            Add-Content -Path $logTest -Value ("EXITCODE=" + $LASTEXITCODE)
+          } catch {
+            Add-Content -Path $logTest -Value ("PROBE-ERROR: " + $_.Exception.Message)
+          } finally {
+            Add-Content -Path $logTest -Value 'WRAPPER-DONE'
+          }
+          '@
+          $probe = $probe.Replace("`r`n","`n").Replace("`n","`r`n")
+          Set-Content -Path $probePs1 -Value $probe -Encoding ascii
+          Write-Host '=== probe.ps1 ==='
+          Write-Host $probe
 
-          $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$wrapper`"" -WorkingDirectory $repo
+          $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $argLine = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$probePs1`" -Exe `"$exe`""
+          $action = New-ScheduledTaskAction -Execute $psExe -Argument $argLine -WorkingDirectory $repo
           $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
           Write-Host "TASK_REGISTERED $taskName"
@@ -216,6 +236,13 @@ jobs:
             if ($st.Contains('panicked at')) { $fails += 'B: panic present in SYSTEM test log' }
             if ($st.Contains('R1 门禁')) { $fails += 'B: R1 gate panic in SYSTEM log (CPAU still unavailable under SYSTEM)' }
             if ($st.Contains('NOTE[w-new]')) { $fails += 'B: NOTE[w-new] skip in SYSTEM log (Privilege-skip path taken)' }
+            if ($st.Contains('PROBE-ERROR')) { $fails += 'B: probe script error (see PROBE-ERROR in SYSTEM log)' }
+          }
+          # 特权启用态（信息行，不作硬断言——硬判据=CHILD-RAN）
+          $privState = 'n/a'
+          if ($whoPost) {
+            $m = [regex]::Match($whoPost, 'SeAssignPrimaryTokenPrivilege\s+.*\s+(Enabled|Disabled)')
+            if ($m.Success) { $privState = $m.Groups[1].Value }
           }
 
           # ---- 原始输出打进 step log ----
@@ -239,7 +266,7 @@ jobs:
           $sum += "| A runner 对照 | exit=$cexit · R1 门禁=$cR1 · CHILD-RAN=$cChild |"
           $sum += "| B SYSTEM | CHILD-RAN $($childHits.Count)/$($cases.Count) $(if($missing){'(缺: '+($missing -join ',')+')'}) · test-log=$(if($st){'有'}else{'无'}) |"
           $sum += "| 特权探针 pre | SeAssignPrimaryToken=$preHas |"
-          $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas |"
+          $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas · state=$privState |"
           $sum += ''
           if ($fails.Count -eq 0) { $sum += '**结论：两臂均符合预期（CPAU 真特权臂在 CI 打通）**' } else { $sum += '**失败项**：'; foreach ($f in $fails) { $sum += "- $f" } }
           ($sum -join "`n") | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
