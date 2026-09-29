@@ -32,10 +32,34 @@ jobs:
           $cnt = ([regex]::Matches($c, [regex]::Escape($needle))).Count
           if ($cnt -ne 1) { throw "DIAG-PATCH: needle count=$cnt (expect 1); aborting" }
           $ins = 'let code = GetLastError();
-            eprintln!("DIAG-CPAU-GLE={code}");'
+            eprintln!("DIAG-CPAU-GLE={code}");
+            {
+                let mut bp: PROCESS_INFORMATION = std::mem::zeroed();
+                let a = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 0, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, cwd.as_ptr(), &si, &mut bp);
+                eprintln!("DIAG-BIS-A-noinherit={}", if a != 0 { 0u32 } else { GetLastError() });
+                if a != 0 { WaitForSingleObject(bp.hProcess, 10000); CloseHandle(bp.hProcess); CloseHandle(bp.hThread); }
+                let mut bp2: PROCESS_INFORMATION = std::mem::zeroed();
+                let b = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, std::ptr::null(), &si, &mut bp2);
+                eprintln!("DIAG-BIS-B-cwdnull={}", if b != 0 { 0u32 } else { GetLastError() });
+                if b != 0 { WaitForSingleObject(bp2.hProcess, 10000); CloseHandle(bp2.hProcess); CloseHandle(bp2.hThread); }
+                let mut bp3: PROCESS_INFORMATION = std::mem::zeroed();
+                let c = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, 0, std::ptr::null(), cwd.as_ptr(), &si, &mut bp3);
+                eprintln!("DIAG-BIS-C-envnull={}", if c != 0 { 0u32 } else { GetLastError() });
+                if c != 0 { WaitForSingleObject(bp3.hProcess, 10000); CloseHandle(bp3.hProcess); CloseHandle(bp3.hThread); }
+                let mut bp4: PROCESS_INFORMATION = std::mem::zeroed();
+                let d = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 0, 0, std::ptr::null(), std::ptr::null(), &si, &mut bp4);
+                eprintln!("DIAG-BIS-D-alldefault={}", if d != 0 { 0u32 } else { GetLastError() });
+                if d != 0 { WaitForSingleObject(bp4.hProcess, 10000); CloseHandle(bp4.hProcess); CloseHandle(bp4.hThread); }
+                let mut si2 = si;
+                si2.dwFlags = 0;
+                let mut bp5: PROCESS_INFORMATION = std::mem::zeroed();
+                let e2 = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, cwd.as_ptr(), &si2, &mut bp5);
+                eprintln!("DIAG-BIS-E-nostdhandles={}", if e2 != 0 { 0u32 } else { GetLastError() });
+                if e2 != 0 { WaitForSingleObject(bp5.hProcess, 10000); CloseHandle(bp5.hProcess); CloseHandle(bp5.hThread); }
+            }'
           $c = $c.Replace($needle, $ins)
           Set-Content -Path $rs -Value $c -Encoding utf8 -NoNewline
-          Write-Host 'DIAG-PATCH applied: DIAG-CPAU-GLE eprintln after GetLastError (workspace-only, not committed)'
+          Write-Host 'DIAG-PATCH applied: GLE + 5-axis bisect (workspace-only, not committed)'
           $p = Start-Process cargo -ArgumentList 'test','-p','standardcode-sandbox','--no-run','--message-format=json' -RedirectStandardOutput cargo-json.log -RedirectStandardError cargo-json-stderr.log -NoNewWindow -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content cargo-json-stderr.log | Select-Object -Last 80; throw "cargo test --no-run failed rc=$($p.ExitCode)" }
           $exePath = $null
@@ -500,6 +524,10 @@ jobs:
           if ($whoPos) { $pm = [regex]::Match($whoPos, 'SeAssignPrimaryTokenPrivilege\s+.*?\s+(Enabled|Disabled)'); if ($pm.Success) { $posState = $pm.Groups[1].Value } }
           $sum += "| 产品 run() CPAU gle（CI 临时补丁） | $gle |"
           $sum += "| exe 位置令牌态（兄弟 whoami） | SeAssignPrimaryToken=$posState |"
+          $bis = ''
+          if ($st) { $bms = [regex]::Matches($st, 'DIAG-BIS-[A-E]-[a-z]+=\d+'); if ($bms.Count -gt 0) { $bis = (($bms | ForEach-Object { $_.Value }) -join ' · ') } }
+          if (-not $bis) { $bis = 'n/a' }
+          $sum += "| bisect（单轴翻转） | $bis |"
           $sum += ''
           if ($diag) { $sum += 'CPAU 诊断 d1（probe 内 depth1）：'; $sum += '```'; $sum += $diag.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d1 缺失' }
           if ($diag2) { $sum += 'CPAU 诊断 d2（cmd 子进程 depth2，与 exe 同深度）：'; $sum += '```'; $sum += $diag2.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d2 缺失' }
