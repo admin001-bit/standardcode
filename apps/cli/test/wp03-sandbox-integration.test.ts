@@ -44,8 +44,16 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
   it("DoD②：Bash 工作区内写成功；越界写失败且错误可诊断（exec 拒绝非绕过）", async () => {
     const env = { cwd: root, env: {} as NodeJS.ProcessEnv, sandbox: handle! };
     if (process.platform === "win32") {
-      // windows 非提权=privilege fail-closed（DoD⑥ 正向形；全链=实机回归 BLK-04=①）
-      await expect(execBash({ command: "echo hi" }, env)).rejects.toThrow(/privilege|Privilege/i);
+      // 【勘误 2026-09-29】原断言"windows 非提权=privilege fail-closed"前提被 F22/F25 实测证伪
+      // （历史错误帧=句柄掩码缺 TOKEN_ASSIGN_PRIMARY＋CreateRestrictedToken 旗标错位，非特权
+      // 缺失）；修复后 windows workspace-write 真执行。cmd 语法分支（cat→type；&& 链依赖 /d
+      // 跳过本机 AutoRun 的 errorlevel 污染——bash.ts 生产参数恒带 /d /s /c）。
+      const wout = await execBash({ command: "echo inside > made.txt && type made.txt" }, env);
+      expect(wout.trim()).toContain("inside");
+      const werr = await execBash({ command: `echo x > ${path.join(outside, "smuggle.txt")}`, timeout: 30_000 }, env).catch((e: unknown) => e);
+      expect(werr).toBeInstanceOf(Error);
+      expect(String((werr as Error).message)).toMatch(/exit code/i);
+      expect(fs.existsSync(path.join(outside, "smuggle.txt"))).toBe(false);
       return;
     }
     const out = await execBash({ command: "echo inside > made.txt && cat made.txt" }, env);
@@ -57,7 +65,17 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
   }, 90_000);
 
   it("DoD④：.git/hooks 与 .standardcode 元数据默认禁写经 serve 通道兑现（EXE-011 行 427 清单）", async () => {
-    if (process.platform === "win32") return; // 同上 privilege 形；正判据面=linux/mac 真隔离
+    if (process.platform === "win32") {
+      // 【勘误 2026-09-29】原 return（privilege 形）撤销——修复后 windows 可真判据：写族 deny
+      // （protect 集 .git/.standardcode）经 serve 通道兑现（cmd 语法；相对路径 + 正斜杠）。
+      const envw = { cwd: root, env: {} as NodeJS.ProcessEnv, sandbox: handle! };
+      // 路径用正斜杠（cmd 重定向/mkdir 接受；TS 反斜杠字面量会被转义吞掉——实测教训）。
+      await expect(execBash({ command: "echo x > .git/hooks/probe" }, envw)).rejects.toThrow(/exit code/);
+      await expect(execBash({ command: "mkdir .standardcode/sub" }, envw)).rejects.toThrow(/exit code/);
+      expect(fs.existsSync(path.join(root, ".git", "hooks", "probe"))).toBe(false);
+      expect(fs.existsSync(path.join(root, ".standardcode", "sub"))).toBe(false);
+      return;
+    }
     const env = { cwd: root, env: {} as NodeJS.ProcessEnv, sandbox: handle! };
     await expect(execBash({ command: "touch .git/hooks/probe" }, env)).rejects.toThrow(/exit code/);
     await expect(execBash({ command: "mkdir -p .standardcode && touch .standardcode/probe" }, env)).rejects.toThrow(/exit code/);
@@ -67,10 +85,8 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
 
   it("DoD② 文件写面：execWrite root 内成/外拒（fsWrite 帧→沙箱内 --fs-write）", async () => {
     const env = { cwd: root, env: {} as NodeJS.ProcessEnv, sandbox: handle! };
-    if (process.platform === "win32") {
-      await expect(execWrite({ file_path: path.join(root, "w.txt"), content: "x" }, env)).rejects.toThrow(/privilege|Privilege/i);
-      return;
-    }
+    // 【勘误 2026-09-29】windows 早返回（privilege 形）撤销：修复后三平台共享同一真判据
+    //（root 内成/外拒——外拒在 windows 走 WR 限制 SID 写闸）。
     await execWrite({ file_path: path.join(root, "sub", "w.txt"), content: "沙箱写 ✓" }, env);
     expect(fs.readFileSync(path.join(root, "sub", "w.txt"), "utf8")).toBe("沙箱写 ✓");
     const target = path.join(outside, "escape.txt");
@@ -79,7 +95,7 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
   }, 90_000);
 
   it("DoD⑤ 面（子进程输出经沙箱零截断）：>64KB 多 event 帧重组逐字节一致", async () => {
-    if (process.platform === "win32") return; // 非提权 privilege 形（上面已锁该断言）
+    if (process.platform === "win32") return; // 载荷程序为 /bin/sh（windows 不可用）；windows 侧 >64KB 分帧面未覆盖【登记】（原 privilege 理由随 F22/F25 证伪作废）
     const h = createSandboxHandle({ tier: "workspace-write", workspaceRoot: root, binaryPath: BIN! });
     try {
       // 生成逻辑放沙箱内（单 argv 128KB 上限实证 CI E2BIG=os error 7；本机栈小恰好过关=

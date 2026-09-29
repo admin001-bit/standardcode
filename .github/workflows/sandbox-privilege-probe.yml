@@ -1,9 +1,10 @@
 name: sandbox-privilege-probe
 
 # B5 沙箱 CPAU 真特权臂实验（BLK-04；独立 workflow，仅 workflow_dispatch——不改 ci.yml 任何门）。
-# A 臂 = runner 用户直跑 test exe（预期 R1 门禁 panic，对照，复现 run 35051971812 形态）；
-# B 臂 = 计划任务以 NT AUTHORITY\SYSTEM 身份跑同一 test exe（SYSTEM 天然持
-#        SeAssignPrimaryToken/SeIncreaseQuota，enable 后执行）——预期 CHILD-RAN[全 7 case]。
+# 【勘误 2026-09-29】F22/F25 修复后本实验的前提翻转：历史 R1 panic/privilege_missing 的真因=
+# 句柄掩码缺 TOKEN_ASSIGN_PRIMARY＋CreateRestrictedToken 旗标错位（真 WRITE_RESTRICTED 从未传），
+# **非特权缺失**——修复后普通环境即可执行。现两臂预期皆为 CHILD-RAN[全 7 case]+test result ok：
+# A 臂 = runner 用户直跑（无任何特权操作）；B 臂 = SYSTEM 计划任务（特权存在性作信息探针）。
 # 断言统一在末步：任何一臂不符预期即判红（失败本身就是实验结论，不粉饰）。
 
 on:
@@ -24,42 +25,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # CI 临时诊断补丁（仅本 run 工作副本，绝不提交）：在 spawn_restricted 的 CPAU 失败
-          # 分支打印 gle——产品 Privilege 错误消息是静态文案，拿不到返回码（run2-4 卡点）。
-          $rs = Join-Path $env:GITHUB_WORKSPACE 'crates/sandbox/src/windows.rs'
-          $c = Get-Content -Raw -Encoding utf8 $rs
-          $needle = 'let code = GetLastError();'
-          $cnt = ([regex]::Matches($c, [regex]::Escape($needle))).Count
-          if ($cnt -ne 1) { throw "DIAG-PATCH: needle count=$cnt (expect 1); aborting" }
-          $ins = 'let code = GetLastError();
-            eprintln!("DIAG-CPAU-GLE={code}");
-            {
-                let mut bp: PROCESS_INFORMATION = std::mem::zeroed();
-                let a = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 0, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, cwd.as_ptr(), &si, &mut bp);
-                eprintln!("DIAG-BIS-A-noinherit={}", if a != 0 { 0u32 } else { GetLastError() });
-                if a != 0 { WaitForSingleObject(bp.hProcess, 10000); CloseHandle(bp.hProcess); CloseHandle(bp.hThread); }
-                let mut bp2: PROCESS_INFORMATION = std::mem::zeroed();
-                let b = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, std::ptr::null(), &si, &mut bp2);
-                eprintln!("DIAG-BIS-B-cwdnull={}", if b != 0 { 0u32 } else { GetLastError() });
-                if b != 0 { WaitForSingleObject(bp2.hProcess, 10000); CloseHandle(bp2.hProcess); CloseHandle(bp2.hThread); }
-                let mut bp3: PROCESS_INFORMATION = std::mem::zeroed();
-                let c = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, 0, std::ptr::null(), cwd.as_ptr(), &si, &mut bp3);
-                eprintln!("DIAG-BIS-C-envnull={}", if c != 0 { 0u32 } else { GetLastError() });
-                if c != 0 { WaitForSingleObject(bp3.hProcess, 10000); CloseHandle(bp3.hProcess); CloseHandle(bp3.hThread); }
-                let mut bp4: PROCESS_INFORMATION = std::mem::zeroed();
-                let d = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 0, 0, std::ptr::null(), std::ptr::null(), &si, &mut bp4);
-                eprintln!("DIAG-BIS-D-alldefault={}", if d != 0 { 0u32 } else { GetLastError() });
-                if d != 0 { WaitForSingleObject(bp4.hProcess, 10000); CloseHandle(bp4.hProcess); CloseHandle(bp4.hThread); }
-                let mut si2 = si;
-                si2.dwFlags = 0;
-                let mut bp5: PROCESS_INFORMATION = std::mem::zeroed();
-                let e2 = CreateProcessAsUserW(token, std::ptr::null(), cmdline.as_ptr() as *mut u16, std::ptr::null(), std::ptr::null(), 1, CREATE_UNICODE_ENVIRONMENT, env.as_ptr() as *const c_void, cwd.as_ptr(), &si2, &mut bp5);
-                eprintln!("DIAG-BIS-E-nostdhandles={}", if e2 != 0 { 0u32 } else { GetLastError() });
-                if e2 != 0 { WaitForSingleObject(bp5.hProcess, 10000); CloseHandle(bp5.hProcess); CloseHandle(bp5.hThread); }
-            }'
-          $c = $c.Replace($needle, $ins)
-          Set-Content -Path $rs -Value $c -Encoding utf8 -NoNewline
-          Write-Host 'DIAG-PATCH applied: GLE + 5-axis bisect (workspace-only, not committed)'
+          # （原 CI 临时诊断补丁已随 F22/F25 修复移除——gle=5 根因已定位，不再需要工作副本改码。）
           $p = Start-Process cargo -ArgumentList 'test','-p','standardcode-sandbox','--no-run','--message-format=json' -RedirectStandardOutput cargo-json.log -RedirectStandardError cargo-json-stderr.log -NoNewWindow -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content cargo-json-stderr.log | Select-Object -Last 80; throw "cargo test --no-run failed rc=$($p.ExitCode)" }
           $exePath = $null
@@ -72,7 +38,7 @@ jobs:
           "exe=$exePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "TEST_EXE=$exePath"
 
-      - name: A control arm (runner user, expect R1 gate panic)
+      - name: A arm (runner user, expect CHILD-RAN 7/7 — F22/F25 后普通环境即可执行)
         id: ctrl
         continue-on-error: true
         shell: pwsh
@@ -82,7 +48,7 @@ jobs:
           $w = @"
           @echo off
           set GITHUB_ACTIONS=true
-          "$exe" --ignored --nocapture > "b5-sbx-ci-control-arm.txt" 2>&1
+          "$exe" windows_child_isolation_suite --nocapture > "b5-sbx-ci-control-arm.txt" 2>&1
           set RC=%ERRORLEVEL%
           echo EXITCODE=%RC% >> "b5-sbx-ci-control-arm.txt"
           exit /b %RC%
@@ -389,7 +355,7 @@ jobs:
             cmd /c "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -Diag2 >> $diag2Log 2>&1"
             $whoamiPos = Join-Path $repo 'b5-sbx-system-whoami-pos.txt'
             # whoami and exe are siblings under the same cmd: whoami = exe-position token state
-            cmd /c "$whoami /priv > $whoamiPos 2>&1 & $Exe --ignored --nocapture > $logTest 2>&1"
+            cmd /c "$whoami /priv > $whoamiPos 2>&1 & $Exe windows_child_isolation_suite --nocapture > $logTest 2>&1"
             Add-Content -Path $logTest -Value ("EXITCODE=" + $LASTEXITCODE)
           } catch {
             Add-Content -Path $logTest -Value ("PROBE-ERROR: " + $_.Exception.Message)
@@ -444,16 +410,21 @@ jobs:
           $fails = @()
           $cases = @('w-new','w-exist','w-out','w-git','r-git','w-hooks','w-sc')
 
-          # ---- A 臂：runner 用户对照（预期 = R1 门禁 panic，非 0 退出）----
+          # ---- A 臂：runner 用户（【翻转 2026-09-29】F22/F25 后预期=普通环境真跑全 7 case）----
           $clog = $null
           if (Test-Path b5-sbx-ci-control-arm.txt) { $clog = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-arm.txt }
           $cexit = '${{ steps.ctrl.outputs.exit }}'
-          $cR1 = $false; $cChild = $false
-          if ($clog) { $cR1 = $clog.Contains('R1 门禁') -and $clog.Contains('Privilege-skip'); $cChild = $clog.Contains('CHILD-RAN[') }
+          $cR1 = $false; $cChild = $false; $cHits = @()
+          if ($clog) {
+            $cR1 = $clog.Contains('R1 门禁') -or $clog.Contains('NOTE[w-new]')
+            foreach ($c in $cases) { if ($clog.Contains("CHILD-RAN[$c]")) { $cHits += $c } }
+            $cChild = $cHits.Count -eq $cases.Count
+          }
           if (-not $clog) { $fails += 'A: control log missing' }
-          if ($cexit -eq '' -or $cexit -eq '0') { $fails += "A: control exit=$cexit (expected non-zero R1 panic)" }
-          if (-not $cR1) { $fails += 'A: R1 gate text (R1 门禁 / Privilege-skip) NOT in control log' }
-          if ($cChild) { $fails += 'A: CHILD-RAN present in control arm (runner unexpectedly holds CPAU privilege)' }
+          if ($cexit -ne '0') { $fails += "A: exit=$cexit (expected 0 — suite must pass without any privilege)" }
+          if (-not $cChild) { $fails += "A: CHILD-RAN missing for: $(($cases | Where-Object { $cHits -notcontains $_ }) -join ',')" }
+          if ($clog -and -not $clog.Contains('test result: ok.')) { $fails += "A: 'test result: ok.' missing in A log" }
+          if ($cR1) { $fails += 'A: R1/Privilege-skip path taken (F22/F25 regression?)' }
           $whoCtl = $null
           if (Test-Path b5-sbx-ci-control-whoami.txt) { $whoCtl = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-whoami.txt }
 
@@ -514,7 +485,7 @@ jobs:
           $sum += ''
           $sum += "| 臂 | 结果 |"
           $sum += "|---|---|"
-          $sum += "| A runner 对照 | exit=$cexit · R1 门禁=$cR1 · CHILD-RAN=$cChild |"
+          $sum += "| A runner（普通环境真跑） | exit=$cexit · CHILD-RAN $($cHits.Count)/$($cases.Count) · R1/跳过=$cR1 |"
           $sum += "| B SYSTEM | CHILD-RAN $($childHits.Count)/$($cases.Count) $(if($missing){'(缺: '+($missing -join ',')+')'}) · test-log=$(if($st){'有'}else{'无'}) |"
           $sum += "| 特权探针 pre | SeAssignPrimaryToken=$preHas |"
           $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas · state=$privState |"
@@ -531,7 +502,7 @@ jobs:
           $sum += ''
           if ($diag) { $sum += 'CPAU 诊断 d1（probe 内 depth1）：'; $sum += '```'; $sum += $diag.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d1 缺失' }
           if ($diag2) { $sum += 'CPAU 诊断 d2（cmd 子进程 depth2，与 exe 同深度）：'; $sum += '```'; $sum += $diag2.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d2 缺失' }
-          if ($fails.Count -eq 0) { $sum += '**结论：两臂均符合预期（CPAU 真特权臂在 CI 打通）**' } else { $sum += '**失败项**：'; foreach ($f in $fails) { $sum += "- $f" } }
+          if ($fails.Count -eq 0) { $sum += '**结论：两臂均 7/7 CHILD-RAN（F22/F25 后普通环境即可执行；SYSTEM 臂特权探针为信息面）**' } else { $sum += '**失败项**：'; foreach ($f in $fails) { $sum += "- $f" } }
           ($sum -join "`n") | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
           $sum | ForEach-Object { Write-Host $_ }
 

@@ -1,8 +1,10 @@
 //! WP-03 serve 帧协议端到端集成测（真 `--serve` 子进程=宿主同形通道）。
 //! 判据分层：握手/danger 直通 fsWrite/EOF 退出=三平台可跑；windows workspace-write
-//! =privilege_missing 错误帧（fail-closed 正向断言承 BLK-04=① 实证——runner/本机皆无
-//! CPAU 特权，此处"报错而非静默放行"就是要判的形状）；linux workspace-write 真隔离
-//! （bwrap 在位才跑，同 wp02 集成 skip-guard 形制）。
+//! =真执行 response 帧（【勘误 2026-09-29】原断言"非提权必得 privilege_missing 错误帧"的
+//! 前提被 F22/F25 实测证伪：历史错误帧=句柄掩码缺 TOKEN_ASSIGN_PRIMARY＋CreateRestrictedToken
+//! 旗标错位（真 WRITE_RESTRICTED 从未传）所致，**非特权缺失**——修复后同用户派生令牌无
+//! SeAssignPrimaryToken 亦可执行；privilege_missing 码位保留给真特权错误）；linux
+//! workspace-write 真隔离（bwrap 在位才跑，同 wp02 集成 skip-guard 形制）。
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -142,9 +144,11 @@ fn serve_unknown_method_and_bad_frame_do_not_kill_channel() {
 
 #[cfg(windows)]
 #[test]
-fn serve_workspace_write_run_fails_closed_privilege() {
-    // 非提权环境（本机 Medium IL/GH runner 实证=BLK-04 语境）：run 必得 privilege_missing
-    // 错误帧且**通道不终止**（fail-closed=报错非静默非放行）；提权实机若改判成功=回归清单注。
+fn serve_workspace_write_run_executes_with_isolation() {
+    // 【勘误 2026-09-29】原名 fails_closed_privilege：断言非提权 run 必得 privilege_missing——
+    // 前提证伪（F22 掩码/F25 旗标 = 真根因，非特权缺失；修复后无特权环境即可执行）。
+    // 现判据：run 必得 **response 帧（真执行）**＋stdout 捕获 "hi"（执行+捕获链）＋通道不终止。
+    // exitCode 不钉值：本机 HKCU AutoRun（zoxide-init）污染 errorlevel，CI 无 AutoRun。
     let dir = std::env::temp_dir().join(format!("wp03-win-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("ws")).unwrap();
@@ -164,12 +168,21 @@ fn serve_workspace_write_run_fails_closed_privilege() {
         "run",
         json!({"exec": exec, "policy": policy}),
     ));
-    let (term, _events) = srv.settle(31);
+    let (term, events) = srv.settle(31);
     assert_eq!(
-        term["kind"], "error",
-        "非提权 windows run 必须错误帧：{term}"
+        term["kind"], "response",
+        "windows workspace-write run 必须真执行（response 帧）：{term}"
     );
-    assert_eq!(term["payload"]["code"], "privilege_missing");
+    // stdout 走 event 帧分块回传（serve.rs 头注：≤64KB/帧），不在 response payload 内。
+    let out: String = events
+        .iter()
+        .filter(|e| e["payload"]["name"] == "output" && e["payload"]["data"]["stream"] == "stdout")
+        .filter_map(|e| e["payload"]["data"]["data"].as_str())
+        .collect();
+    assert!(
+        out.contains("hi"),
+        "stdout 事件帧必须含命令输出（执行+捕获链）：{events:?}"
+    );
     // 通道不终止：再来一请求正常响应
     srv.send(&Frame::request(32, "nope", json!({})));
     let (t2, _) = srv.settle(32);

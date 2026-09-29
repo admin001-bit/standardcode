@@ -10,9 +10,12 @@
 //! deny ACE 压过继承 allow（元数据保护形）。restricting=[cap,logon,everyone]（Codex 行 461
 //! 序硬约定；三员为 everyone/logon 授权对象读权限恢复之必要形）。
 //! 子进程 CreateProcessAsUserW 需 SeAssignPrimaryToken/SeIncreaseQuota：实证 GH runner 与本地
-//! Medium IL 皆无此特权（run 35051971812 R1 门禁 panic）——子进程 suite #[ignore]（BLK-04=①）；
+//! Medium IL 皆无此特权（run 35051971812 R1 门禁 panic）——子进程 suite 曾 #[ignore]（BLK-04=①）；
 //! 同模块**线程探针**（SetThreadToken）本地覆盖写闸双向与 ACL 语义判据，子进程全链交
 //! 提权环境 `--ignored` 补跑（CHILD-RAN 后补形制）/WP-03 宿主接线首触实机。
+//! 【勘误 2026-09-29 F22/F25】"CPAU 特权依赖"前提证伪：历史 panic/错误帧真因=句柄掩码缺
+//! TOKEN_ASSIGN_PRIMARY＋CreateRestrictedToken 旗标错位（真 WRITE_RESTRICTED 从未传）——修复后
+//! **无特权环境即可执行**（本机非提权实测 CHILD-RAN 全绿）；suite 已去 #[ignore] 入常规门。
 //! capability SID 不落盘持久（Codex cap_sid 持久化=多会话复用面；本卡每 run 临时、
 //! AclGuard drop 还原原显式 DACL 即无痕——[自定] 登记）。
 
@@ -30,7 +33,7 @@ use windows_sys::Win32::Security::Cryptography::BCryptGenRandom;
 use windows_sys::Win32::Security::{
     AllocateAndInitializeSid, CreateRestrictedToken, FreeSid, GetTokenInformation, TokenGroups,
     ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES,
-    SID_IDENTIFIER_AUTHORITY, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
+    SID_IDENTIFIER_AUTHORITY, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
@@ -52,15 +55,24 @@ use windows_sys::Win32::Security::{
 
 // winterns ABI 常量（windows-sys 未导出者）
 const DISABLE_MAX_PRIVILEGE: u32 = 0x0000_0001;
-const LUA_TOKEN: u32 = 0x0000_0002;
-const WRITE_RESTRICTED: u32 = 0x0000_0004;
+// F25（2026-09-29 实测订正）：原手写 LUA_TOKEN=0x2、WRITE_RESTRICTED=0x4 皆错位——
+// 真值见 windows-sys Win32::Security：SANDBOX_INERT=2、LUA_TOKEN=4、WRITE_RESTRICTED=8。
+// 错位后果=实际只传了 DMP|SANDBOX_INERT|LUA，**真 WRITE_RESTRICTED 从未传过**：受限令牌
+// 对**读**也执行 restrict-SID 交集（write-restricted 才豁免读）→ 子进程读 System32 DLL 被拒
+// → 全部子命令 0xC0000135/exit=1（whoami/cmd 无一幸免；ws 因 cap SID 显式 grant 未暴露——
+// 线程探针只碰 ws 故 CI 常绿）。修＝按真值传 DMP|LUA|WRITE_RESTRICTED。
+const LUA_TOKEN: u32 = 0x0000_0004;
+const WRITE_RESTRICTED: u32 = 0x0000_0008;
 const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 /// deny 掩码=写族位（WRITE_RESTRICTED 只管写，deny ACE 亦只管写族——含读位会误伤
 /// "全盘可读"档：FILE_WRITE_DATA|APPEND|WRITE_EA|WRITE_ATTRIBUTES|DELETE|WRITE_DAC|WRITE_OWNER）
 const WRITE_FAMILY_MASK: u32 = 0x2 | 0x4 | 0x10 | 0x100 | 0x1_0000 | 0x4_0000 | 0x8_0000;
 const OBJECT_INHERIT_ACE: u32 = 0x1;
 const CONTAINER_INHERIT_ACE: u32 = 0x2;
-const ERROR_PRIVILEGE_NOT_HELD: WIN32_ERROR = 1312;
+/// F23（2026-09-29 实测订正）：原手写 1312 实为 ERROR_NO_SUCH_LOGON_SESSION；真
+/// ERROR_PRIVILEGE_NOT_HELD=1314（windows-sys Win32::Foundation 同值；Win32Exception(1314)
+/// =「客户端没有所需的特权」亲测）——原值令真实特权缺失永不命中本分支。
+const ERROR_PRIVILEGE_NOT_HELD: WIN32_ERROR = 1314;
 const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
 
 fn wide(s: &str) -> Vec<u16> {
@@ -201,7 +213,12 @@ impl Drop for TokenSids {
 fn build_restricted_token(ids: &TokenSids) -> Result<HANDLE, RunError> {
     unsafe {
         let mut cur: HANDLE = std::ptr::null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY, &mut cur) == 0 {
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
+            &mut cur,
+        ) == 0
+        {
             return Err(RunError::Spawn(format!(
                 "OpenProcessToken gle={}",
                 GetLastError()
@@ -447,6 +464,12 @@ fn env_block(env: &BTreeMap<String, String>) -> Vec<u16> {
         v.extend(wide(&format!("{k}={val}")));
     }
     v.push(0);
+    // F24（2026-09-29 实测）：API 要求块双 NUL 终止——空 map 此前只落单个 0，
+    // CreateProcessAsUserW 读过界，结果随堆运气在 gle=87 与 gle=0 间漂移
+    // （同码修复两跑不同果的实测解释；C# 复刻 2 字节空块恒 gle=0 对照）。
+    if env.is_empty() {
+        v.push(0);
+    }
     v
 }
 
@@ -551,9 +574,10 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput
         );
         if ok == 0 {
             let code = GetLastError();
-            // 1312=特权缺失原文码；5=ACCESS_DENIED（本地非提权 shell 的 CPAU 实际表现——
-            // 两者同归"持 SeAssignPrimaryToken 特权之环境"依赖——实证 GH runner 与本地
-            // Medium IL 皆无（run 35051971812），子进程 suite #[ignore]+BLK-04=①，登记回归清单）
+            // F22/F23（2026-09-29 实测订正）：1314=真特权缺失（原手写 1312 实为
+            // NO_SUCH_LOGON_SESSION，见常量处 F23）；5=ACCESS_DENIED 曾被误归特权——
+            // 真因是 build_restricted_token 句柄掩码缺 TOKEN_ASSIGN_PRIMARY（F22 修复后
+            // 本机非提权实测 spawn 成功）；5 现保留作防御性归类。
             if code == ERROR_PRIVILEGE_NOT_HELD || code == 5 {
                 close_all(&[out_r, out_w, err_r, err_w]);
                 return Err(RunError::Privilege(
@@ -576,11 +600,15 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput
             use std::io::Read;
             use std::os::windows::io::{FromRawHandle, IntoRawHandle};
             let mut f = std::fs::File::from_raw_handle(h as _);
-            let mut s = String::new();
-            let _ = f.read_to_string(&mut s);
+            // F27（2026-09-29 实测）：原 read_to_string 遇非 UTF-8 字节（中文 Windows 下 cmd 的
+            // CP936/GBK 输出——ver/dir-full/错误提示等）报 InvalidData 且 std 把本次缓冲截回
+            // 入口长度 → **整段输出静默归零**（合并命令连 ASCII 段一并丢）；plain 臂
+            // （run.rs plain_exec）用 from_utf8_lossy 无此病。改与 plain 同口径：读字节 + lossy。
+            let mut buf = Vec::new();
+            let _ = f.read_to_end(&mut buf);
             let raw = f.into_raw_handle();
             CloseHandle(raw as HANDLE);
-            s
+            String::from_utf8_lossy(&buf).into_owned()
         };
         let stdout = read_all(out_r);
         let stderr = read_all(err_r);
@@ -596,8 +624,25 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput
 }
 
 fn quote_cmdline(req: &ExecRequest) -> String {
-    let mut parts = vec![format!("\"{}\"", req.program.to_string_lossy())];
-    parts.extend(req.args.iter().map(|a| format!("\"{a}\"")));
+    // F26（2026-09-29 实测订正）：原「无差别给每个参数包引号」——cmd.exe **不认带引号的开关**
+    // （`"/C"` 被误解析：实测报"文件名、目录名或卷标语法不正确"/`'"echo hi' 不是内部或外部命令`、
+    // exit=1 零落盘；裸开关形 exit=0 落盘）。且 Windows 侧宿主（bash.ts）对命令体已按 verbatim
+    // 预包装引号（`"cmd"`），二次包裹同样致坏。现形制＝MSVCRT 常规三则：
+    //   ①入参已带成对引号 → 原样透传（宿主预包装，不二次包裹）；②含空白（空格/Tab）或空串 → 包引号；
+    //   ③其余（含 `/d` `/C` 类开关、裸名、单词路径）→ 不包。
+    let quote = |a: &str| -> String {
+        if a.len() >= 2 && a.starts_with('"') && a.ends_with('"') {
+            a.to_string()
+        } else if a.is_empty() {
+            "\"\"".to_string()
+        } else if a.contains(' ') || a.contains('\t') {
+            format!("\"{a}\"")
+        } else {
+            a.to_string()
+        }
+    };
+    let mut parts = vec![quote(&req.program.to_string_lossy())];
+    parts.extend(req.args.iter().map(|a| quote(a)));
     parts.join(" ")
 }
 
@@ -735,7 +780,10 @@ mod tests {
     fn child(t: &Path, name: &str, cmd: &str) -> Option<(bool, String)> {
         let _ = name;
         let pol = SandboxPolicy::workspace_write(vec![RootPath::real(t.join("ws"))]);
-        let req = ExecRequest::new("cmd.exe", vec!["/C".into(), cmd.to_string()], t.join("ws"));
+        let mut req = ExecRequest::new("cmd.exe", vec!["/C".into(), cmd.to_string()], t.join("ws"));
+        // 镜像生产面（TS 侧恒传 sanitize 后的进程 env）：空 env 下子进程 cmd 无
+        // SystemRoot/ComSpec 等基本变量（实测 exit=1 空输出）——原空 env 属测试构造失真。
+        req.env = std::env::vars().collect();
         match run(&req, &pol, &PolicyFacts::default()) {
             Ok((_pid, o)) => {
                 eprintln!("CHILD-RAN[{name}] exit={:?}", o.exit_code);
@@ -755,11 +803,9 @@ mod tests {
 
     /// Windows 全链真隔离探针套件（DoD①④⑤ 之 windows 面；线程探针废弃原因登记结果页：
     /// SetThreadToken 模拟级别混入匿名判定，非生产形）。
-    /// BLK-04 待用户裁决（R1 门禁实证 CI runner 无 SeAssignPrimaryToken，run 35051971812
-    /// windows job 红=门禁触发非缺陷回归）：CPAU 子进程全链=提权环境依赖（self-hosted
-    /// runner/本地 UAC 提权 `cargo test -- --ignored`）；本面现由 token 结构+ACL 直查+
-    /// 线程探针三段无特权断言覆盖；提权渠道选定后实跑，R1 门禁保留。
-    #[ignore = "CPAU 特权环境依赖——BLK-04 用户裁决后以 --ignored 实跑"]
+    /// 原 BLK-04"CPAU=提权环境依赖"前提经 F22/F25 证伪（真因=句柄掩码/旗标缺陷非特权缺失；
+    /// 【勘误 2026-09-29】）——修复后无特权环境即实跑，suite 去 #[ignore] 入常规测试门；
+    /// child() 内 R1 门禁保留：若真特权缺失（1314/5）在 CI 出现仍 panic（fail-closed 不静默）。
     #[test]
     fn windows_child_isolation_suite() {
         let t = scratch("suite");
@@ -805,7 +851,10 @@ mod tests {
         let (ok, o) = child(
             &t,
             "r-git",
-            &format!("type {}", t.join("ws/.git/config").display()),
+            &format!(
+                "type {}",
+                t.join("ws").join(".git").join("config").display()
+            ),
         )
         .unwrap();
         assert!(ok, ".git read must work: {o}");
@@ -823,6 +872,14 @@ mod tests {
         )
         .unwrap();
         assert!(!ok, ".standardcode/sub mkdir must be denied");
+        // F27 回归：本地化（CP936/GBK）输出不得整体丢弃——ver 输出含非 ASCII 字节，
+        // read_to_string 遇之截断归零（本机中文 Windows 下修复前 o 为 ""）。ASCII 机器（CI
+        // en-US）上为恒绿的无害面，中文环境为判别针。
+        let Some((_, o)) = child(&t, "ver-capture", "ver") else {
+            let _ = std::fs::remove_dir_all(&t);
+            return;
+        };
+        assert!(o.contains("Microsoft"), "本地化输出被丢弃（F27）: {o:?}");
         let _ = std::fs::remove_dir_all(&t);
     }
 
@@ -956,6 +1013,35 @@ mod tests {
         let b = env_block(&env);
         let text = String::from_utf16_lossy(&b);
         assert!(text.starts_with("A=1\0B=2\0\0"), "{text:?}");
+    }
+
+    #[test]
+    fn env_block_empty_double_null_f24() {
+        // F24：空 map 必须双 NUL（API 契约；单 NUL 会读过界 → gle=87 与 gle=0 随堆运气漂移）。
+        let b = env_block(&std::collections::BTreeMap::new());
+        assert_eq!(b, vec![0u16, 0]);
+    }
+
+    #[test]
+    fn quote_cmdline_rules_f26() {
+        // F26：开关不包引号（cmd.exe 不认 "/C"）；宿主预包装的成对引号原样透传；空白才包裹。
+        let mk = |program: &str, args: &[&str]| {
+            quote_cmdline(&ExecRequest::new(
+                program,
+                args.iter().map(|s| s.to_string()).collect(),
+                "C:/x",
+            ))
+        };
+        assert_eq!(
+            mk("cmd.exe", &["/C", "echo hi> a.txt"]),
+            r#"cmd.exe /C "echo hi> a.txt""#
+        );
+        assert_eq!(
+            mk("cmd.exe", &["/d", "/s", "/c", r#""echo x> y.txt""#]),
+            r#"cmd.exe /d /s /c "echo x> y.txt""#
+        );
+        assert_eq!(mk("whoami.exe", &[]), "whoami.exe");
+        assert_eq!(mk("p.exe", &[""]), r#"p.exe """#);
     }
 
     #[test]
