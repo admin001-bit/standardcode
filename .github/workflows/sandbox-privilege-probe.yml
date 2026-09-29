@@ -147,10 +147,22 @@ jobs:
               CloseHandle(tok);
               return priv + " AdjustTokenPrivileges ok=" + ok + " gle=" + gle + " (1300=NOT_ALL_ASSIGNED)";
             }
-            // CPAU tiered diagnostic: restricted=DISABLE_MAX|LUA|WRITE_RESTRICTED with empty
-            // SidsToRestrict (first pass); envMode: null=inherit / empty=4-byte double-NUL block;
-            // withHandles=mirror product shape (inherit pipe handles).
-            public static string Cpau(string label, bool restricted, string envMode, bool withHandles, string repoDir) {
+            // CPAU product-shape diagnostic. restrictMode: none | empty | sids
+            // (sids = product's SidsToRestrict = [cap S-1-15-rand, logon, everyone], Attributes=0);
+            // envMode: null=inherit | empty=4-byte double-NUL | prod=2-byte single wide NUL
+            // (product env_block for empty map = one u16 0); cmdlineStyle: plain | quoted
+            // (product quote_cmdline = "\"cmd.exe\" \"/C\" \"...\""); withHandles mirrors product pipes.
+            [StructLayout(LayoutKind.Sequential)]
+            public struct SID_IDENTIFIER_AUTHORITY {
+              public byte b0, b1, b2, b3, b4, b5;
+            }
+            [DllImport("advapi32.dll")]
+            public static extern bool AllocateAndInitializeSid(ref SID_IDENTIFIER_AUTHORITY pSidAuthority, byte nSubAuthorityCount, uint nSubAuthority0, uint nSubAuthority1, uint nSubAuthority2, uint nSubAuthority3, uint nSubAuthority4, uint nSubAuthority5, uint nSubAuthority6, uint nSubAuthority7, uint nSubAuthority8, out IntPtr pSid);
+            [DllImport("advapi32.dll")]
+            public static extern IntPtr FreeSid(IntPtr pSid);
+            [DllImport("advapi32.dll", SetLastError = true)]
+            public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+            public static string Cpau(string label, string restrictMode, string envMode, bool withHandles, string cmdlineStyle, string cwd, string repoDir) {
               IntPtr hTok;
               if (!OpenProcessToken(GetCurrentProcess(), 0x2 | 0x8, out hTok)) return label + " OpenProcessToken gle=" + Marshal.GetLastWin32Error();
               IntPtr hDup;
@@ -160,18 +172,75 @@ jobs:
               CloseHandle(hTok);
               IntPtr hUse = hDup;
               IntPtr hRes = IntPtr.Zero;
-              if (restricted) {
-                if (!CreateRestrictedToken(hDup, 0x1 | 0x2 | 0x4, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out hRes)) {
-                  int g1 = Marshal.GetLastWin32Error(); CloseHandle(hDup); return label + " CreateRestrictedToken gle=" + g1;
+              IntPtr capSid = IntPtr.Zero, everyoneSid = IntPtr.Zero;
+              IntPtr pList = IntPtr.Zero;
+              if (restrictMode != "none") {
+                int sidCount = 0;
+                IntPtr[] sids = new IntPtr[3];
+                if (restrictMode == "sids") {
+                  // Manual well-formed SID buffers (AllocateAndInitializeSid P/Invoke AVs under
+                  // PS5.1 CodeDom in every tested signature -- locally reproduced; avoided).
+                  // everyone = S-1-1-0; cap = S-1-15-rand; logon = S-1-5-5-LOW-HIGH from
+                  // TokenStatistics.AuthenticationId (LUID at offset 8).
+                  everyoneSid = Marshal.AllocHGlobal(12);
+                  byte[] ev = new byte[] { 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0 };
+                  for (int i = 0; i < 12; i++) Marshal.WriteByte(everyoneSid, i, ev[i]);
+                  capSid = Marshal.AllocHGlobal(12);
+                  byte[] cp = new byte[] { 1, 1, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0 };
+                  uint rnd = unchecked((uint)Environment.TickCount * 2654435761u + 1013904223u);
+                  cp[8] = (byte)rnd; cp[9] = (byte)(rnd >> 8); cp[10] = (byte)(rnd >> 16); cp[11] = (byte)(rnd >> 24);
+                  for (int i = 0; i < 12; i++) Marshal.WriteByte(capSid, i, cp[i]);
+                  IntPtr hQ;
+                  if (!OpenProcessToken(GetCurrentProcess(), 0x8, out hQ)) return label + " OpenQ gle=" + Marshal.GetLastWin32Error();
+                  int need;
+                  GetTokenInformation(hQ, 10, IntPtr.Zero, 0, out need);
+                  IntPtr sbuf = Marshal.AllocHGlobal(need < 64 ? 64 : need);
+                  if (!GetTokenInformation(hQ, 10, sbuf, need < 64 ? 64 : need, out need)) {
+                    int g9 = Marshal.GetLastWin32Error(); Marshal.FreeHGlobal(sbuf); CloseHandle(hQ); return label + " GetTokenInfo gle=" + g9;
+                  }
+                  CloseHandle(hQ);
+                  uint authLow = unchecked((uint)Marshal.ReadInt32(sbuf, 8));
+                  uint authHigh = unchecked((uint)Marshal.ReadInt32(sbuf, 12));
+                  Marshal.FreeHGlobal(sbuf);
+                  IntPtr logonSid = Marshal.AllocHGlobal(20);
+                  byte[] lg = new byte[20];
+                  lg[0] = 1; lg[1] = 3; lg[7] = 5; lg[8] = 5;
+                  lg[12] = (byte)authLow; lg[13] = (byte)(authLow >> 8); lg[14] = (byte)(authLow >> 16); lg[15] = (byte)(authLow >> 24);
+                  lg[16] = (byte)authHigh; lg[17] = (byte)(authHigh >> 8); lg[18] = (byte)(authHigh >> 16); lg[19] = (byte)(authHigh >> 24);
+                  for (int i = 0; i < 20; i++) Marshal.WriteByte(logonSid, i, lg[i]);
+                  sids[0] = capSid; sids[1] = logonSid; sids[2] = everyoneSid;
+                  sidCount = 3;
+                  pList = Marshal.AllocHGlobal(sidCount * 16);
+                  for (int i = 0; i < sidCount; i++) {
+                    Marshal.WriteIntPtr(pList, i * 16, sids[i]);
+                    Marshal.WriteInt32(pList, i * 16 + 8, 0);
+                  }
+                  if (!CreateRestrictedToken(hDup, 0x1 | 0x2 | 0x4, 0, IntPtr.Zero, 0, IntPtr.Zero, sidCount, pList, out hRes)) {
+                    int g1 = Marshal.GetLastWin32Error();
+                    Marshal.FreeHGlobal(pList); pList = IntPtr.Zero;
+                    Marshal.FreeHGlobal(logonSid);
+                    Marshal.FreeHGlobal(capSid); capSid = IntPtr.Zero;
+                    Marshal.FreeHGlobal(everyoneSid); everyoneSid = IntPtr.Zero;
+                    CloseHandle(hDup);
+                    return label + " CreateRestrictedToken(sids) gle=" + g1;
+                  }
+                  Marshal.FreeHGlobal(pList); pList = IntPtr.Zero;
+                  Marshal.FreeHGlobal(logonSid);
+                } else {
+                  if (!CreateRestrictedToken(hDup, 0x1 | 0x2 | 0x4, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out hRes)) {
+                    int g1 = Marshal.GetLastWin32Error(); CloseHandle(hDup); return label + " CreateRestrictedToken gle=" + g1;
+                  }
                 }
                 hUse = hRes;
               }
+              if (capSid != IntPtr.Zero) { Marshal.FreeHGlobal(capSid); capSid = IntPtr.Zero; }
+              if (everyoneSid != IntPtr.Zero) { Marshal.FreeHGlobal(everyoneSid); everyoneSid = IntPtr.Zero; }
               IntPtr env = IntPtr.Zero;
               uint flags = 0;
               GCHandle envPin = new GCHandle();
               bool envAlloc = false;
-              if (envMode == "empty") {
-                byte[] block = new byte[4];
+              if (envMode == "empty" || envMode == "prod") {
+                byte[] block = envMode == "prod" ? new byte[2] : new byte[4];
                 envPin = GCHandle.Alloc(block, GCHandleType.Pinned);
                 env = envPin.AddrOfPinnedObject();
                 flags = 0x800;
@@ -197,9 +266,16 @@ jobs:
                 si.hStdError = ew;
               }
               string outFile = System.IO.Path.Combine(repoDir, "b5-sbx-cpau-" + label + ".txt");
-              StringBuilder cl = new StringBuilder("cmd.exe /c echo " + label + "-ran > " + outFile);
+              string inner = "echo " + label + "-ran > " + outFile;
+              string cmdText = cmdlineStyle == "quoted"
+                ? "\"cmd.exe\" \"/C\" \"" + inner + "\""
+                : "cmd.exe /c " + inner;
+              StringBuilder cl = new StringBuilder(cmdText);
+              // PS binder turns $null [string] into "" -- lpCurrentDirectory="" fails with
+              // ERROR_INVALID_NAME(123); normalize empty back to null (local repro).
+              string cwdArg = string.IsNullOrEmpty(cwd) ? null : cwd;
               PROCESS_INFORMATION pi;
-              bool ok = CreateProcessAsUserW(hUse, null, cl, IntPtr.Zero, IntPtr.Zero, withHandles, flags, env, null, si, out pi);
+              bool ok = CreateProcessAsUserW(hUse, null, cl, IntPtr.Zero, IntPtr.Zero, withHandles, flags, env, cwdArg, si, out pi);
               int gle = ok ? 0 : Marshal.GetLastWin32Error();
               if (ok) {
                 WaitForSingleObject(pi.hProcess, 60000);
@@ -241,10 +317,13 @@ jobs:
           function Run-Diag([string]$tag, [string]$target) {
             $lines = @()
             $lines += (Get-PrivState $tag)
-            $lines += [PrivEnabler]::Cpau($tag + '-plain-null', $false, 'null', $false, $repo)
-            $lines += [PrivEnabler]::Cpau($tag + '-restr-null', $true, 'null', $false, $repo)
-            $lines += [PrivEnabler]::Cpau($tag + '-restr-empty', $true, 'empty', $false, $repo)
-            $lines += [PrivEnabler]::Cpau($tag + '-restr-handles', $true, 'empty', $true, $repo)
+            $cwdDir = Join-Path $repo 'b5-sbx-cpau-cwd\ws'
+            $lines += [PrivEnabler]::Cpau($tag + '-plain', 'none', 'null', $false, 'plain', $null, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-restr-empty', 'empty', 'empty', $false, 'plain', $null, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-sids-empty', 'sids', 'empty', $false, 'plain', $null, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-sids-quoted', 'sids', 'empty', $false, 'quoted', $null, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-sids-prodenv', 'sids', 'prod', $false, 'quoted', $null, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-prod-shape', 'sids', 'prod', $true, 'quoted', $cwdDir, $repo)
             Add-Content -Path $target -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
           }
           if ($Diag2) {
@@ -263,6 +342,9 @@ jobs:
             $r2 = [PrivEnabler]::Enable('SeIncreaseQuotaPrivilege')
             $who = (& $whoami /priv | Out-String)
             Set-Content -Path $logWhoPost -Value ($r1 + [Environment]::NewLine + $r2 + [Environment]::NewLine + $who) -Encoding utf8
+            $cwdRoot = Join-Path $repo 'b5-sbx-cpau-cwd'
+            New-Item -ItemType Directory -Force -Path (Join-Path $cwdRoot 'ws') | Out-Null
+            cmd /c "icacls $cwdRoot /inheritance:r /grant:r SYSTEM:(OI)(CI)F > nul 2>&1"
             Run-Diag 'd1' $diagMain
             $diag2Log = Join-Path $repo 'b5-sbx-system-probe-d2.log'
             cmd /c "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -Diag2 >> $diag2Log 2>&1"
