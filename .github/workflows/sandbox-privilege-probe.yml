@@ -24,6 +24,18 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # CI 临时诊断补丁（仅本 run 工作副本，绝不提交）：在 spawn_restricted 的 CPAU 失败
+          # 分支打印 gle——产品 Privilege 错误消息是静态文案，拿不到返回码（run2-4 卡点）。
+          $rs = Join-Path $env:GITHUB_WORKSPACE 'crates/sandbox/src/windows.rs'
+          $c = Get-Content -Raw -Encoding utf8 $rs
+          $needle = 'let code = GetLastError();'
+          $cnt = ([regex]::Matches($c, [regex]::Escape($needle))).Count
+          if ($cnt -ne 1) { throw "DIAG-PATCH: needle count=$cnt (expect 1); aborting" }
+          $ins = 'let code = GetLastError();
+            eprintln!("DIAG-CPAU-GLE={code}");'
+          $c = $c.Replace($needle, $ins)
+          Set-Content -Path $rs -Value $c -Encoding utf8 -NoNewline
+          Write-Host 'DIAG-PATCH applied: DIAG-CPAU-GLE eprintln after GetLastError (workspace-only, not committed)'
           $p = Start-Process cargo -ArgumentList 'test','-p','standardcode-sandbox','--no-run','--message-format=json' -RedirectStandardOutput cargo-json.log -RedirectStandardError cargo-json-stderr.log -NoNewWindow -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content cargo-json-stderr.log | Select-Object -Last 80; throw "cargo test --no-run failed rc=$($p.ExitCode)" }
           $exePath = $null
@@ -81,6 +93,7 @@ jobs:
           $diagFile = Join-Path $repo 'b5-sbx-system-cpau-diag.txt'
           $diagD2 = Join-Path $repo 'b5-sbx-system-cpau-diag-d2.txt'
           $diag2Log = Join-Path $repo 'b5-sbx-system-probe-d2.log'
+          $whoamiPos = Join-Path $repo 'b5-sbx-system-whoami-pos.txt'
 
           # (1) C# 特权 enabler + CPAU 分层诊断（纯 ASCII；本地已 Add-Type 预编译验证 Enable 部分）
           $src = @'
@@ -239,11 +252,13 @@ jobs:
               uint flags = 0;
               GCHandle envPin = new GCHandle();
               bool envAlloc = false;
-              if (envMode == "empty" || envMode == "prod") {
-                byte[] block = envMode == "prod" ? new byte[2] : new byte[4];
+              if (envMode == "empty" || envMode == "prod" || envMode == "empty400" || envMode == "prod400") {
+                byte[] block = (envMode == "prod" || envMode == "prod400") ? new byte[2] : new byte[4];
                 envPin = GCHandle.Alloc(block, GCHandleType.Pinned);
                 env = envPin.AddrOfPinnedObject();
-                flags = 0x800;
+                // 0x400 = CREATE_UNICODE_ENVIRONMENT (product value); 0x800 = legacy no-op flag
+                // used by earlier variants (ANSI-parsed env). 400-variants test the product combo.
+                flags = (envMode == "empty400" || envMode == "prod400") ? 0x400u : 0x800u;
                 envAlloc = true;
               }
               IntPtr pr = IntPtr.Zero, pw = IntPtr.Zero, er = IntPtr.Zero, ew = IntPtr.Zero;
@@ -323,7 +338,7 @@ jobs:
             $lines += [PrivEnabler]::Cpau($tag + '-sids-empty', 'sids', 'empty', $false, 'plain', $null, $repo)
             $lines += [PrivEnabler]::Cpau($tag + '-sids-quoted', 'sids', 'empty', $false, 'quoted', $null, $repo)
             $lines += [PrivEnabler]::Cpau($tag + '-sids-prodenv', 'sids', 'prod', $false, 'quoted', $null, $repo)
-            $lines += [PrivEnabler]::Cpau($tag + '-prod-shape', 'sids', 'prod', $true, 'quoted', $cwdDir, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-prod-shape', 'sids', 'prod400', $true, 'quoted', $cwdDir, $repo)
             Add-Content -Path $target -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
           }
           if ($Diag2) {
@@ -348,7 +363,9 @@ jobs:
             Run-Diag 'd1' $diagMain
             $diag2Log = Join-Path $repo 'b5-sbx-system-probe-d2.log'
             cmd /c "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -Diag2 >> $diag2Log 2>&1"
-            cmd /c "$Exe --ignored --nocapture > $logTest 2>&1"
+            $whoamiPos = Join-Path $repo 'b5-sbx-system-whoami-pos.txt'
+            # whoami and exe are siblings under the same cmd: whoami = exe-position token state
+            cmd /c "$whoami /priv > $whoamiPos 2>&1 & $Exe --ignored --nocapture > $logTest 2>&1"
             Add-Content -Path $logTest -Value ("EXITCODE=" + $LASTEXITCODE)
           } catch {
             Add-Content -Path $logTest -Value ("PROBE-ERROR: " + $_.Exception.Message)
@@ -390,7 +407,7 @@ jobs:
           try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
           try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false } catch { Write-Host "UNREGISTER_FAIL $_" }
           "done=$done" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          foreach ($f in @($logWhoPre, $logWhoPost, $diagFile, $diagD2, $diag2Log, $logTest)) {
+          foreach ($f in @($logWhoPre, $logWhoPost, $whoamiPos, $diagFile, $diagD2, $diag2Log, $logTest)) {
             Write-Host "=== $f ==="
             if (Test-Path $f) { Get-Content -Encoding utf8 $f } else { Write-Host '(missing)' }
           }
@@ -417,9 +434,10 @@ jobs:
           if (Test-Path b5-sbx-ci-control-whoami.txt) { $whoCtl = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-whoami.txt }
 
           # ---- B 臂：SYSTEM（预期 = whoami 含特权 + CHILD-RAN 全 7 case + test result ok 无 panic）----
-          $whoPre = $null; $whoPost = $null; $st = $null; $diag = $null; $diag2 = $null
+          $whoPre = $null; $whoPost = $null; $st = $null; $diag = $null; $diag2 = $null; $whoPos = $null
           if (Test-Path b5-sbx-system-whoami-pre.txt) { $whoPre = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-pre.txt }
           if (Test-Path b5-sbx-system-whoami-post.txt) { $whoPost = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-post.txt }
+          if (Test-Path b5-sbx-system-whoami-pos.txt) { $whoPos = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-pos.txt }
           if (Test-Path b5-sbx-system-cpau-diag.txt) { $diag = Get-Content -Raw -Encoding utf8 b5-sbx-system-cpau-diag.txt }
           if (Test-Path b5-sbx-system-cpau-diag-d2.txt) { $diag2 = Get-Content -Raw -Encoding utf8 b5-sbx-system-cpau-diag-d2.txt }
           if (Test-Path b5-sbx-system-testlog.txt) { $st = Get-Content -Raw -Encoding utf8 b5-sbx-system-testlog.txt }
@@ -457,6 +475,8 @@ jobs:
           if ($whoPre) { Write-Host $whoPre } else { Write-Host '(missing)' }
           Write-Host '=== B whoami /priv (post-enable) ==='
           if ($whoPost) { Write-Host $whoPost } else { Write-Host '(missing)' }
+          Write-Host '=== B whoami /priv (exe-position sibling) ==='
+          if ($whoPos) { Write-Host $whoPos } else { Write-Host '(missing)' }
           Write-Host '=== B CPAU diag d1 (in probe, depth1) ==='
           if ($diag) { Write-Host $diag } else { Write-Host '(missing)' }
           Write-Host '=== B CPAU diag d2 (cmd child powershell, depth2 = same as exe) ==='
@@ -474,6 +494,12 @@ jobs:
           $sum += "| B SYSTEM | CHILD-RAN $($childHits.Count)/$($cases.Count) $(if($missing){'(缺: '+($missing -join ',')+')'}) · test-log=$(if($st){'有'}else{'无'}) |"
           $sum += "| 特权探针 pre | SeAssignPrimaryToken=$preHas |"
           $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas · state=$privState |"
+          $gle = 'n/a'
+          if ($st) { $gm = [regex]::Match($st, 'DIAG-CPAU-GLE=\d+'); if ($gm.Success) { $gle = $gm.Value } }
+          $posState = 'n/a'
+          if ($whoPos) { $pm = [regex]::Match($whoPos, 'SeAssignPrimaryTokenPrivilege\s+.*?\s+(Enabled|Disabled)'); if ($pm.Success) { $posState = $pm.Groups[1].Value } }
+          $sum += "| 产品 run() CPAU gle（CI 临时补丁） | $gle |"
+          $sum += "| exe 位置令牌态（兄弟 whoami） | SeAssignPrimaryToken=$posState |"
           $sum += ''
           if ($diag) { $sum += 'CPAU 诊断 d1（probe 内 depth1）：'; $sum += '```'; $sum += $diag.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d1 缺失' }
           if ($diag2) { $sum += 'CPAU 诊断 d2（cmd 子进程 depth2，与 exe 同深度）：'; $sum += '```'; $sum += $diag2.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d2 缺失' }
