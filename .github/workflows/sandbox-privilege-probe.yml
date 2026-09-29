@@ -1,0 +1,252 @@
+name: sandbox-privilege-probe
+
+# B5 沙箱 CPAU 真特权臂实验（BLK-04；独立 workflow，仅 workflow_dispatch——不改 ci.yml 任何门）。
+# A 臂 = runner 用户直跑 test exe（预期 R1 门禁 panic，对照，复现 run 35051971812 形态）；
+# B 臂 = 计划任务以 NT AUTHORITY\SYSTEM 身份跑同一 test exe（SYSTEM 天然持
+#        SeAssignPrimaryToken/SeIncreaseQuota，enable 后执行）——预期 CHILD-RAN[全 7 case]。
+# 断言统一在末步：任何一臂不符预期即判红（失败本身就是实验结论，不粉饰）。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: cpau privilege probe (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: build test exe (cargo json executable field)
+        id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Start-Process cargo -ArgumentList 'test','-p','standardcode-sandbox','--no-run','--message-format=json' -RedirectStandardOutput cargo-json.log -RedirectStandardError cargo-json-stderr.log -NoNewWindow -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content cargo-json-stderr.log | Select-Object -Last 80; throw "cargo test --no-run failed rc=$($p.ExitCode)" }
+          $exePath = $null
+          foreach ($line in (Get-Content cargo-json.log)) {
+            $j = $null
+            try { $j = $line | ConvertFrom-Json } catch { continue }
+            if ($j.reason -eq 'compiler-artifact' -and $j.target -and $j.target.name -eq 'standardcode_sandbox' -and $j.executable) { $exePath = $j.executable }
+          }
+          if (-not $exePath) { throw 'test exe (target.name=standardcode_sandbox) not found in cargo --message-format=json' }
+          "exe=$exePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "TEST_EXE=$exePath"
+
+      - name: A control arm (runner user, expect R1 gate panic)
+        id: ctrl
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = '${{ steps.build.outputs.exe }}'
+          $w = @"
+          @echo off
+          set GITHUB_ACTIONS=true
+          "$exe" --ignored --nocapture > "b5-sbx-ci-control-arm.txt" 2>&1
+          set RC=%ERRORLEVEL%
+          echo EXITCODE=%RC% >> "b5-sbx-ci-control-arm.txt"
+          exit /b %RC%
+          "@
+          $w = $w.Replace("`r`n","`n").Replace("`n","`r`n")   # cmd 批处理须 CRLF
+          Set-Content -Path b5-sbx-control-wrapper.cmd -Value $w -Encoding ascii
+          cmd /c b5-sbx-control-wrapper.cmd
+          $code = $LASTEXITCODE
+          Write-Host "CONTROL_EXIT=$code"
+          whoami /priv | Out-File b5-sbx-ci-control-whoami.txt -Encoding utf8
+          "exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host '=== control arm raw (b5-sbx-ci-control-arm.txt) ==='
+          if (Test-Path b5-sbx-ci-control-arm.txt) { Get-Content -Encoding utf8 b5-sbx-ci-control-arm.txt } else { Write-Host '(missing)' }
+          Write-Host '=== control arm whoami /priv ==='
+          Get-Content b5-sbx-ci-control-whoami.txt
+          exit $code
+
+      - name: B SYSTEM arm (scheduled task as NT AUTHORITY\SYSTEM)
+        id: sys
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = '${{ steps.build.outputs.exe }}'
+          $repo = $env:GITHUB_WORKSPACE
+          $taskName = "sc-sbx-probe-$env:GITHUB_RUN_ID"
+          $wrapper = Join-Path $repo 'b5-sbx-system-wrapper.cmd'
+          $enablePs1 = Join-Path $repo 'b5-sbx-enable-priv.ps1'
+          $logWhoPre = Join-Path $repo 'b5-sbx-system-whoami-pre.txt'
+          $logWhoPost = Join-Path $repo 'b5-sbx-system-whoami-post.txt'
+          $logTest = Join-Path $repo 'b5-sbx-system-testlog.txt'
+
+          $src = @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class PrivEnabler {
+            [StructLayout(LayoutKind.Sequential)]
+            public struct LUID { public uint LowPart; public int HighPart; }
+            [StructLayout(LayoutKind.Sequential)]
+            public struct LUID_AND_ATTRIBUTES { public LUID Luid; public uint Attributes; }
+            [StructLayout(LayoutKind.Sequential)]
+            public struct TOKEN_PRIVILEGES {
+              public uint PrivilegeCount;
+              [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
+              public LUID_AND_ATTRIBUTES[] Privileges;
+            }
+            [DllImport("advapi32.dll", SetLastError = true)]
+            public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+            [DllImport("kernel32.dll")]
+            public static extern IntPtr GetCurrentProcess();
+            [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out LUID lpLuid);
+            [DllImport("advapi32.dll", SetLastError = true)]
+            public static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, bool disableAllPrivileges, ref TOKEN_PRIVILEGES newState, int bufferLength, IntPtr previousState, IntPtr returnLength);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern bool CloseHandle(IntPtr hObject);
+            public static string Enable(string priv) {
+              IntPtr tok;
+              if (!OpenProcessToken(GetCurrentProcess(), 0x20 | 0x8, out tok)) return priv + " OpenProcessToken fail gle=" + Marshal.GetLastWin32Error();
+              LUID luid;
+              if (!LookupPrivilegeValue(null, priv, out luid)) { CloseHandle(tok); return priv + " LookupPrivilegeValue fail gle=" + Marshal.GetLastWin32Error(); }
+              var tp = new TOKEN_PRIVILEGES();
+              tp.PrivilegeCount = 1;
+              tp.Privileges = new LUID_AND_ATTRIBUTES[1];
+              tp.Privileges[0].Luid = luid;
+              tp.Privileges[0].Attributes = 0x2;
+              bool ok = AdjustTokenPrivileges(tok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+              int gle = Marshal.GetLastWin32Error();
+              CloseHandle(tok);
+              return priv + " AdjustTokenPrivileges ok=" + ok + " gle=" + gle + " (1300=NOT_ALL_ASSIGNED)";
+            }
+          }
+          '@
+          Set-Content -Path $enablePs1 -Value $src -Encoding utf8
+
+          $w = @"
+          @echo off
+          setlocal
+          set GITHUB_ACTIONS=true
+          if "%USERNAME%"=="" set USERNAME=SYSTEM
+          if "%SystemRoot%"=="" set SystemRoot=C:\Windows
+          if "%PATH%"=="" set PATH=%SystemRoot%\System32;%SystemRoot%
+          if "%TEMP%"=="" set TEMP=%SystemRoot%\TEMP
+          if "%TMP%"=="" set TMP=%SystemRoot%\TEMP
+          whoami /priv > "$logWhoPre" 2>&1
+          "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$enablePs1" > "$logWhoPost" 2>&1
+          "$exe" --ignored --nocapture > "$logTest" 2>&1
+          echo EXITCODE=%ERRORLEVEL% >> "$logTest"
+          echo WRAPPER-DONE >> "$logTest"
+          "@
+          $w = $w.Replace("`r`n","`n").Replace("`n","`r`n")   # cmd 批处理须 CRLF
+          Set-Content -Path $wrapper -Value $w -Encoding ascii
+          Write-Host '=== wrapper ==='
+          Write-Host $w
+
+          $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$wrapper`"" -WorkingDirectory $repo
+          $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+          Write-Host "TASK_REGISTERED $taskName"
+          $started = Get-Date
+          Start-ScheduledTask -TaskName $taskName
+          $deadline = $started.AddMinutes(10)
+          $done = $false
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+            $txt = $null
+            try { if (Test-Path $logTest) { $txt = Get-Content -Raw -Encoding utf8 $logTest -ErrorAction Stop } } catch { $txt = $null }
+            if ($txt -and $txt.Contains('WRAPPER-DONE')) { $done = $true; break }
+            $t = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            if ($t -and $t.State -eq 'Ready') {
+              $inf = Get-ScheduledTaskInfo -TaskName $taskName
+              $ran = $inf.LastRunTime -ge $started.AddSeconds(-10)
+              if ($ran -and $inf.LastTaskResult -ne 267009) { Write-Host "TASK_FINISHED_WITHOUT_MARKER lastResult=$($inf.LastTaskResult)"; break }
+              if (-not $ran -and ((Get-Date) - $started).TotalSeconds -gt 45) { Write-Host 'TASK_NEVER_STARTED'; break }
+            }
+          }
+          $info = Get-ScheduledTaskInfo -TaskName $taskName
+          $state = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
+          Write-Host "TASK_STATE=$state LAST_RESULT=$($info.LastTaskResult) LAST_RUN=$($info.LastRunTime) DONE=$done"
+          try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
+          try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false } catch { Write-Host "UNREGISTER_FAIL $_" }
+          "done=$done" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          foreach ($f in @($logWhoPre, $logWhoPost, $logTest)) {
+            Write-Host "=== $f ==="
+            if (Test-Path $f) { Get-Content -Encoding utf8 $f } else { Write-Host '(missing)' }
+          }
+          if (-not $done) { Write-Host 'SYSTEM wrapper did not complete (see above); assertions will decide' }
+
+      - name: assert both arms + step summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fails = @()
+          $cases = @('w-new','w-exist','w-out','w-git','r-git','w-hooks','w-sc')
+
+          # ---- A 臂：runner 用户对照（预期 = R1 门禁 panic，非 0 退出）----
+          $clog = $null
+          if (Test-Path b5-sbx-ci-control-arm.txt) { $clog = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-arm.txt }
+          $cexit = '${{ steps.ctrl.outputs.exit }}'
+          $cR1 = $false; $cChild = $false
+          if ($clog) { $cR1 = $clog.Contains('R1 门禁') -and $clog.Contains('Privilege-skip'); $cChild = $clog.Contains('CHILD-RAN[') }
+          if (-not $clog) { $fails += 'A: control log missing' }
+          if ($cexit -eq '' -or $cexit -eq '0') { $fails += "A: control exit=$cexit (expected non-zero R1 panic)" }
+          if (-not $cR1) { $fails += 'A: R1 gate text (R1 门禁 / Privilege-skip) NOT in control log' }
+          if ($cChild) { $fails += 'A: CHILD-RAN present in control arm (runner unexpectedly holds CPAU privilege)' }
+          $whoCtl = $null
+          if (Test-Path b5-sbx-ci-control-whoami.txt) { $whoCtl = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-whoami.txt }
+
+          # ---- B 臂：SYSTEM（预期 = whoami 含特权 + CHILD-RAN 全 7 case + test result ok 无 panic）----
+          $whoPre = $null; $whoPost = $null; $st = $null
+          if (Test-Path b5-sbx-system-whoami-pre.txt) { $whoPre = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-pre.txt }
+          if (Test-Path b5-sbx-system-whoami-post.txt) { $whoPost = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-post.txt }
+          if (Test-Path b5-sbx-system-testlog.txt) { $st = Get-Content -Raw -Encoding utf8 b5-sbx-system-testlog.txt }
+          $preHas = $whoPre -and $whoPre.Contains('SeAssignPrimaryTokenPrivilege')
+          $postHas = $whoPost -and $whoPost.Contains('SeAssignPrimaryTokenPrivilege')
+          if (-not $preHas) { $fails += 'B: whoami(pre) missing SeAssignPrimaryTokenPrivilege' }
+          if (-not $postHas) { $fails += 'B: whoami(post-enable) missing SeAssignPrimaryTokenPrivilege' }
+          $childHits = @()
+          if (-not $st) {
+            $fails += 'B: SYSTEM test log missing (wrapper never produced it)'
+          } else {
+            foreach ($c in $cases) { if ($st.Contains("CHILD-RAN[$c]")) { $childHits += $c } }
+            $missing = $cases | Where-Object { $childHits -notcontains $_ }
+            if ($missing) { $fails += "B: CHILD-RAN missing for: $($missing -join ',')" }
+            if (-not $st.Contains('test result: ok.')) { $fails += "B: 'test result: ok.' missing" }
+            if (-not $st.Contains('1 passed')) { $fails += "B: '1 passed' missing" }
+            if ($st.Contains('panicked at')) { $fails += 'B: panic present in SYSTEM test log' }
+            if ($st.Contains('R1 门禁')) { $fails += 'B: R1 gate panic in SYSTEM log (CPAU still unavailable under SYSTEM)' }
+            if ($st.Contains('NOTE[w-new]')) { $fails += 'B: NOTE[w-new] skip in SYSTEM log (Privilege-skip path taken)' }
+          }
+
+          # ---- 原始输出打进 step log ----
+          Write-Host '=== A control raw ==='
+          if ($clog) { Write-Host $clog } else { Write-Host '(missing)' }
+          Write-Host '=== A control whoami /priv ==='
+          if ($whoCtl) { Write-Host $whoCtl }
+          Write-Host '=== B whoami /priv (pre) ==='
+          if ($whoPre) { Write-Host $whoPre } else { Write-Host '(missing)' }
+          Write-Host '=== B whoami /priv (post-enable) ==='
+          if ($whoPost) { Write-Host $whoPost } else { Write-Host '(missing)' }
+          Write-Host '=== B SYSTEM test log ==='
+          if ($st) { Write-Host $st } else { Write-Host '(missing)' }
+
+          # ---- step summary ----
+          $sum = @()
+          $sum += '## sandbox-privilege-probe'
+          $sum += ''
+          $sum += "| 臂 | 结果 |"
+          $sum += "|---|---|"
+          $sum += "| A runner 对照 | exit=$cexit · R1 门禁=$cR1 · CHILD-RAN=$cChild |"
+          $sum += "| B SYSTEM | CHILD-RAN $($childHits.Count)/$($cases.Count) $(if($missing){'(缺: '+($missing -join ',')+')'}) · test-log=$(if($st){'有'}else{'无'}) |"
+          $sum += "| 特权探针 pre | SeAssignPrimaryToken=$preHas |"
+          $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas |"
+          $sum += ''
+          if ($fails.Count -eq 0) { $sum += '**结论：两臂均符合预期（CPAU 真特权臂在 CI 打通）**' } else { $sum += '**失败项**：'; foreach ($f in $fails) { $sum += "- $f" } }
+          ($sum -join "`n") | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $sum | ForEach-Object { Write-Host $_ }
+
+          if ($fails.Count -gt 0) {
+            foreach ($f in $fails) { Write-Host "FAIL: $f" }
+            throw "assert failed ($($fails.Count) items)"
+          }
+          Write-Host 'ALL ASSERTIONS PASSED'
