@@ -79,9 +79,9 @@ describe("DoD① /status 各字段实时", () => {
     const provider = scriptedProvider([turnUsage({ inputTokens: 100, outputTokens: 10, cacheCreationTokens: 0, cacheReadTokens: 50 })]);
     const { out } = await runLines(repo, home, baseDir, ["/status", "/exit"], provider);
     expect(out).toContain("[status]");
-    expect(out).toContain("model: m-a（provider: anthropic");
+    expect(out).toContain("model: m-a (provider: anthropic");
     expect(out).toContain("permission: default");
-    expect(out).toMatch(/context: \d+\/200000 tokens（[\d.]+%/);
+    expect(out).toMatch(/context: \d+\/200000 tokens \([\d.]+%/);
     expect(out).toContain("tasks: 0 active / 0 total");
     // 实时面：模型切换+权限循环+任务注册后逐字段变化（同一次 run 内改盘态——经 io 生成器注入）
     const provider2 = scriptedProvider([turnUsage({ inputTokens: 100, outputTokens: 10, cacheCreationTokens: 0, cacheReadTokens: 50 })]);
@@ -120,7 +120,7 @@ describe("DoD② /usage 四列+命中率口径（M1 WP-05 同源）", () => {
     ]);
     const { out } = await runLines(repo, home, baseDir, ["q1", "q2", "/usage", "/exit"], provider);
     expect(out).toContain("input=2000 output=100 cache_creation=200 cache_read=1000");
-    expect(out).toContain("cache hit rate（会话内实时，M1 WP-05 同源=cache_read/input）: 50.0%");
+    expect(out).toContain("cache hit rate (in-session real time, M1 WP-05 source = cache_read/input): 50.0%");
     expect(out).toContain("ADR-0027"); // 权威口径声明（DP-4：API usage 显式、本地估算不位移）
   });
 
@@ -128,7 +128,7 @@ describe("DoD② /usage 四列+命中率口径（M1 WP-05 同源）", () => {
     const { repo, home, baseDir } = newRepo("u2");
     const { out } = await runLines(repo, home, baseDir, ["/usage", "/exit"], scriptedProvider([]));
     expect(out).toContain("input=0 output=0 cache_creation=0 cache_read=0");
-    expect(out).toContain("n/a（no input usage yet）");
+    expect(out).toContain("n/a (no input usage yet)");
   });
 });
 
@@ -156,12 +156,12 @@ describe("DoD③ 价格表行合计（内置固定表 [自定] 占位）", () =>
     const priced = ctx.usage().text;
     expect(priced).toContain("cost estimate: $");
     expect(priced).toContain("in=$3/M out=$15/M cacheW=$3.75/M cacheR=$0.3/M"); // 行合计单价在位
-    expect(priced).toContain("官方标定缺位");
+    expect(priced).toContain("official calibration open");
     // 500000*3 + 100000*15 + 200000*3.75 + 1000000*0.3 = 1.5e6+1.5e6+0.75e6+0.3e6 → 4.05 USD
     expect(priced).toContain("$4.050000");
     const s2 = createSession({ provider, catalog: ["m-x"], model: "m-x", cwd: repo, home });
     const ctx2 = createCommandContext({ session: s2, io: { lines: (async function* () {})(), write: () => {}, close: () => {} } });
-    expect(ctx2.usage().text).toContain("cost estimate: n/a（m-x 不在内置价格表");
+    expect(ctx2.usage().text).toContain("cost estimate: n/a (m-x not in built-in price table");
   });
 });
 

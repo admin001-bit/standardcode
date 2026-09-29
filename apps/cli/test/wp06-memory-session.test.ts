@@ -114,10 +114,10 @@ describe("DoD⑥ /memory 双轨可视化", () => {
   it("list：用户轨来源与顺序+自动轨索引摘要", async () => {
     const { session } = makeSession();
     const out = await runReplWith(session, ["/memory", "/exit"]);
-    expect(out).toContain("[memory] 用户编写轨");
-    expect(out).toContain("[memory] 自动轨（§9.1 ②；enabled）");
-    expect(out).toContain("1 行 / ");
-    expect(out).toContain("记忆文件: 1 个");
+    expect(out).toContain("[memory] user-authored track");
+    expect(out).toContain("[memory] auto track (§9.1 ②; enabled)");
+    expect(out).toContain("1 lines / ");
+    expect(out).toContain("memory files: 1");
   });
 
   it("命令清单恰 35【勘误链至 33；M7-WP-06 /sandbox 33→34；M7-WP-08 /release-notes 34→35】", () => {

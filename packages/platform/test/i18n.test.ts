@@ -136,3 +136,14 @@ describe("DoD⑤ 装配面（i18n 只触 L0；prompt 装配零涉及）", () => 
     for (const v of Object.values(EN)) expect(v.length).toBeLessThan(220);
   });
 });
+
+// 纯英纪律（2026-09-30 用户裁决策略：en 包纯英零 CJK；zh 包中文为主、术语保留英文——进度.md §3.1）。
+// 面=EN 值（键/注释不涉）；区间=全角符号/注音假名/汉字/扩展A/兼容汉字/全角形（码点区间，非书写形）。
+describe("纯英纪律：EN 值零 CJK", () => {
+  it("EN 全部值不含 CJK 字符（任意 CJK 区间命中即红）", () => {
+    const cjk = /[　-〿぀-ヿ一-鿿㐀-䶿豈-﫿＀-￯]/;
+    for (const [k, v] of Object.entries(EN)) {
+      expect(cjk.test(v), `EN[${k}] contains CJK: ${v}`).toBe(false);
+    }
+  });
+});

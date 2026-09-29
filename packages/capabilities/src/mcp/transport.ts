@@ -74,6 +74,10 @@ export class StdioTransport implements McpTransport {
       windowsHide: true,
     });
     const child = this.child;
+    // EPIPE 面（2026-09-30 O 项清偿；CI 教训 2026-09-23）：对已关/濒死子进程写 → stdin 流级
+    // 'error'；无接收者=进程级未捕获（用例全过仍 exit 1）。send() 回调面拒绝已在此前覆盖，
+    // 此处只负责收流级事件（诊断吞掉——错误经 send 回调如实拒绝，不静默吞业务失败）。
+    child.stdin.on("error", () => {});
     child.stdout.on("data", (chunk: Buffer) => {
       const frames = this.framer.push(chunk);
       for (const f of frames) this.messageCb?.(f as JsonRpcMessage);
