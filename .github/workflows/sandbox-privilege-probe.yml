@@ -78,11 +78,15 @@ jobs:
           $logWhoPre = Join-Path $repo 'b5-sbx-system-whoami-pre.txt'
           $logWhoPost = Join-Path $repo 'b5-sbx-system-whoami-post.txt'
           $logTest = Join-Path $repo 'b5-sbx-system-testlog.txt'
+          $diagFile = Join-Path $repo 'b5-sbx-system-cpau-diag.txt'
+          $diagD2 = Join-Path $repo 'b5-sbx-system-cpau-diag-d2.txt'
+          $diag2Log = Join-Path $repo 'b5-sbx-system-probe-d2.log'
 
-          # (1) C# 特权 enabler（纯 ASCII；本地已 Add-Type 预编译验证通过）
+          # (1) C# 特权 enabler + CPAU 分层诊断（纯 ASCII；本地已 Add-Type 预编译验证 Enable 部分）
           $src = @'
           using System;
           using System.Runtime.InteropServices;
+          using System.Text;
           public class PrivEnabler {
             [StructLayout(LayoutKind.Sequential)]
             public struct LUID { public uint LowPart; public int HighPart; }
@@ -94,6 +98,20 @@ jobs:
               [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
               public LUID_AND_ATTRIBUTES[] Privileges;
             }
+            [StructLayout(LayoutKind.Sequential)]
+            public struct SECURITY_ATTRIBUTES { public int nLength; public IntPtr lpSecurityDescriptor; public int bInheritHandle; }
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            public struct STARTUPINFOW {
+              public int cb;
+              public string lpReserved;
+              public string lpDesktop;
+              public string lpTitle;
+              public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+              public short wShowWindow, cbReserved2;
+              public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+            }
+            [StructLayout(LayoutKind.Sequential)]
+            public struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
             [DllImport("advapi32.dll", SetLastError = true)]
             public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
             [DllImport("kernel32.dll")]
@@ -104,6 +122,16 @@ jobs:
             public static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, bool disableAllPrivileges, ref TOKEN_PRIVILEGES newState, int bufferLength, IntPtr previousState, IntPtr returnLength);
             [DllImport("kernel32.dll", SetLastError = true)]
             public static extern bool CloseHandle(IntPtr hObject);
+            [DllImport("advapi32.dll", SetLastError = true)]
+            public static extern bool DuplicateTokenEx(IntPtr hExistingToken, uint dwDesiredAccess, IntPtr lpTokenAttributes, int dwImpersonationLevel, int dwTokenType, out IntPtr phNewToken);
+            [DllImport("advapi32.dll", SetLastError = true)]
+            public static extern bool CreateRestrictedToken(IntPtr hExistingToken, uint dwFlags, int disableSidCount, IntPtr sidsToDisable, int deletePrivilegeCount, IntPtr privilegesToDelete, int restrictedSidCount, IntPtr sidsToRestrict, out IntPtr phNewToken);
+            [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern bool CreateProcessAsUserW(IntPtr hToken, string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
+            [DllImport("kernel32.dll")]
+            public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
             public static string Enable(string priv) {
               IntPtr tok;
               if (!OpenProcessToken(GetCurrentProcess(), 0x20 | 0x8, out tok)) return priv + " OpenProcessToken fail gle=" + Marshal.GetLastWin32Error();
@@ -119,19 +147,110 @@ jobs:
               CloseHandle(tok);
               return priv + " AdjustTokenPrivileges ok=" + ok + " gle=" + gle + " (1300=NOT_ALL_ASSIGNED)";
             }
+            // CPAU tiered diagnostic: restricted=DISABLE_MAX|LUA|WRITE_RESTRICTED with empty
+            // SidsToRestrict (first pass); envMode: null=inherit / empty=4-byte double-NUL block;
+            // withHandles=mirror product shape (inherit pipe handles).
+            public static string Cpau(string label, bool restricted, string envMode, bool withHandles, string repoDir) {
+              IntPtr hTok;
+              if (!OpenProcessToken(GetCurrentProcess(), 0x2 | 0x8, out hTok)) return label + " OpenProcessToken gle=" + Marshal.GetLastWin32Error();
+              IntPtr hDup;
+              if (!DuplicateTokenEx(hTok, 0x02000000, IntPtr.Zero, 2, 1, out hDup)) {
+                int g0 = Marshal.GetLastWin32Error(); CloseHandle(hTok); return label + " DuplicateTokenEx gle=" + g0;
+              }
+              CloseHandle(hTok);
+              IntPtr hUse = hDup;
+              IntPtr hRes = IntPtr.Zero;
+              if (restricted) {
+                if (!CreateRestrictedToken(hDup, 0x1 | 0x2 | 0x4, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out hRes)) {
+                  int g1 = Marshal.GetLastWin32Error(); CloseHandle(hDup); return label + " CreateRestrictedToken gle=" + g1;
+                }
+                hUse = hRes;
+              }
+              IntPtr env = IntPtr.Zero;
+              uint flags = 0;
+              GCHandle envPin = new GCHandle();
+              bool envAlloc = false;
+              if (envMode == "empty") {
+                byte[] block = new byte[4];
+                envPin = GCHandle.Alloc(block, GCHandleType.Pinned);
+                env = envPin.AddrOfPinnedObject();
+                flags = 0x800;
+                envAlloc = true;
+              }
+              IntPtr pr = IntPtr.Zero, pw = IntPtr.Zero, er = IntPtr.Zero, ew = IntPtr.Zero;
+              STARTUPINFOW si = new STARTUPINFOW();
+              si.cb = Marshal.SizeOf(typeof(STARTUPINFOW));
+              if (withHandles) {
+                SECURITY_ATTRIBUTES sa = new SECURITY_ATTRIBUTES();
+                sa.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
+                sa.bInheritHandle = 1;
+                if (!CreatePipe(out pr, out pw, ref sa, 0) || !CreatePipe(out er, out ew, ref sa, 0)) {
+                  int g2 = Marshal.GetLastWin32Error();
+                  if (envAlloc) envPin.Free();
+                  if (hRes != IntPtr.Zero) CloseHandle(hRes);
+                  CloseHandle(hDup);
+                  return label + " CreatePipe gle=" + g2;
+                }
+                si.dwFlags = 0x100;
+                si.hStdInput = IntPtr.Zero;
+                si.hStdOutput = pw;
+                si.hStdError = ew;
+              }
+              string outFile = System.IO.Path.Combine(repoDir, "b5-sbx-cpau-" + label + ".txt");
+              StringBuilder cl = new StringBuilder("cmd.exe /c echo " + label + "-ran > " + outFile);
+              PROCESS_INFORMATION pi;
+              bool ok = CreateProcessAsUserW(hUse, null, cl, IntPtr.Zero, IntPtr.Zero, withHandles, flags, env, null, si, out pi);
+              int gle = ok ? 0 : Marshal.GetLastWin32Error();
+              if (ok) {
+                WaitForSingleObject(pi.hProcess, 60000);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+              }
+              if (withHandles) { CloseHandle(pw); CloseHandle(ew); CloseHandle(pr); CloseHandle(er); }
+              if (envAlloc) envPin.Free();
+              if (hRes != IntPtr.Zero) CloseHandle(hRes);
+              CloseHandle(hDup);
+              string ran = "no";
+              try { if (ok && System.IO.File.Exists(outFile)) ran = "yes"; } catch { ran = "?"; }
+              return label + " ok=" + ok + " gle=" + gle + " file=" + ran;
+            }
           }
           '@
           Set-Content -Path $csPath -Value $src -Encoding ascii
 
-          # (2) probe.ps1 = 完整载荷：同一 PS 进程内 AdjustTokenPrivileges 启用两项特权后，
-          #     由该进程派生 cmd 再跑 test exe（子进程令牌复制自父进程，enabled 态随之继承；
-          #     run1 实测：enable 若只在兄弟进程做，对 exe 无效）。纯 ASCII（PS5.1 无 BOM 按 ANSI 读）；
-          #     USERNAME 强制 SYSTEM——run1 实测 Task Scheduler 注入 USERNAME=runnervm99s1a$ 无法被
-          #     icacls 解析（No mapping ...），scratch() windows.rs:627 断言红。
+          # (2) probe.ps1 = 完整载荷 + CPAU 分层诊断。主进程（depth1）enable 后自测 d1-*，
+          #     再经 cmd 派生 -Diag2 powershell（depth2，与 test exe 同深度，只继承不重 enable）
+          #     自测 d2-*——run2 实测 exe 内仍 R1（特权已 Enabled 仍拒），此诊断定位 gle 与层级。
+          #     纯 ASCII（PS5.1 无 BOM 按 ANSI 读）；USERNAME 强制 SYSTEM——run1 实测 Task Scheduler
+          #     注入 USERNAME=host$ 无法被 icacls 解析（No mapping ...），scratch() 627 断言红。
           $probe = @'
-          param($Exe)
+          param($Exe, [switch]$Diag2)
           $ErrorActionPreference = 'Continue'
           $repo = $PSScriptRoot
+          $whoami = Join-Path $env:SystemRoot 'System32\whoami.exe'
+          $diagMain = Join-Path $repo 'b5-sbx-system-cpau-diag.txt'
+          $diagD2 = Join-Path $repo 'b5-sbx-system-cpau-diag-d2.txt'
+          $cs = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'b5-sbx-priv.cs')
+          Add-Type -TypeDefinition $cs
+          function Get-PrivState([string]$tag) {
+            $w = (& $whoami /priv | Out-String)
+            $s = 'unknown'
+            if ($w -match 'SeAssignPrimaryTokenPrivilege\s+.*?\s+(Enabled|Disabled)') { $s = $Matches[1] }
+            return ($tag + '-state=' + $s)
+          }
+          function Run-Diag([string]$tag, [string]$target) {
+            $lines = @()
+            $lines += (Get-PrivState $tag)
+            $lines += [PrivEnabler]::Cpau($tag + '-plain-null', $false, 'null', $false, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-restr-null', $true, 'null', $false, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-restr-empty', $true, 'empty', $false, $repo)
+            $lines += [PrivEnabler]::Cpau($tag + '-restr-handles', $true, 'empty', $true, $repo)
+            Add-Content -Path $target -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+          }
+          if ($Diag2) {
+            Run-Diag 'd2' $diagD2
+            exit 0
+          }
           $logWhoPre = Join-Path $repo 'b5-sbx-system-whoami-pre.txt'
           $logWhoPost = Join-Path $repo 'b5-sbx-system-whoami-post.txt'
           $logTest = Join-Path $repo 'b5-sbx-system-testlog.txt'
@@ -139,14 +258,14 @@ jobs:
           $env:GITHUB_ACTIONS = 'true'
           if (-not $env:TEMP) { $env:TEMP = Join-Path $env:SystemRoot 'TEMP' }
           try {
-            $whoami = Join-Path $env:SystemRoot 'System32\whoami.exe'
             & $whoami /priv | Out-File -FilePath $logWhoPre -Encoding utf8
-            $cs = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'b5-sbx-priv.cs')
-            Add-Type -TypeDefinition $cs
             $r1 = [PrivEnabler]::Enable('SeAssignPrimaryTokenPrivilege')
             $r2 = [PrivEnabler]::Enable('SeIncreaseQuotaPrivilege')
             $who = (& $whoami /priv | Out-String)
             Set-Content -Path $logWhoPost -Value ($r1 + [Environment]::NewLine + $r2 + [Environment]::NewLine + $who) -Encoding utf8
+            Run-Diag 'd1' $diagMain
+            $diag2Log = Join-Path $repo 'b5-sbx-system-probe-d2.log'
+            cmd /c "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -Diag2 >> $diag2Log 2>&1"
             cmd /c "$Exe --ignored --nocapture > $logTest 2>&1"
             Add-Content -Path $logTest -Value ("EXITCODE=" + $LASTEXITCODE)
           } catch {
@@ -189,7 +308,7 @@ jobs:
           try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch {}
           try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false } catch { Write-Host "UNREGISTER_FAIL $_" }
           "done=$done" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          foreach ($f in @($logWhoPre, $logWhoPost, $logTest)) {
+          foreach ($f in @($logWhoPre, $logWhoPost, $diagFile, $diagD2, $diag2Log, $logTest)) {
             Write-Host "=== $f ==="
             if (Test-Path $f) { Get-Content -Encoding utf8 $f } else { Write-Host '(missing)' }
           }
@@ -216,9 +335,11 @@ jobs:
           if (Test-Path b5-sbx-ci-control-whoami.txt) { $whoCtl = Get-Content -Raw -Encoding utf8 b5-sbx-ci-control-whoami.txt }
 
           # ---- B 臂：SYSTEM（预期 = whoami 含特权 + CHILD-RAN 全 7 case + test result ok 无 panic）----
-          $whoPre = $null; $whoPost = $null; $st = $null
+          $whoPre = $null; $whoPost = $null; $st = $null; $diag = $null; $diag2 = $null
           if (Test-Path b5-sbx-system-whoami-pre.txt) { $whoPre = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-pre.txt }
           if (Test-Path b5-sbx-system-whoami-post.txt) { $whoPost = Get-Content -Raw -Encoding utf8 b5-sbx-system-whoami-post.txt }
+          if (Test-Path b5-sbx-system-cpau-diag.txt) { $diag = Get-Content -Raw -Encoding utf8 b5-sbx-system-cpau-diag.txt }
+          if (Test-Path b5-sbx-system-cpau-diag-d2.txt) { $diag2 = Get-Content -Raw -Encoding utf8 b5-sbx-system-cpau-diag-d2.txt }
           if (Test-Path b5-sbx-system-testlog.txt) { $st = Get-Content -Raw -Encoding utf8 b5-sbx-system-testlog.txt }
           $preHas = $whoPre -and $whoPre.Contains('SeAssignPrimaryTokenPrivilege')
           $postHas = $whoPost -and $whoPost.Contains('SeAssignPrimaryTokenPrivilege')
@@ -254,6 +375,10 @@ jobs:
           if ($whoPre) { Write-Host $whoPre } else { Write-Host '(missing)' }
           Write-Host '=== B whoami /priv (post-enable) ==='
           if ($whoPost) { Write-Host $whoPost } else { Write-Host '(missing)' }
+          Write-Host '=== B CPAU diag d1 (in probe, depth1) ==='
+          if ($diag) { Write-Host $diag } else { Write-Host '(missing)' }
+          Write-Host '=== B CPAU diag d2 (cmd child powershell, depth2 = same as exe) ==='
+          if ($diag2) { Write-Host $diag2 } else { Write-Host '(missing)' }
           Write-Host '=== B SYSTEM test log ==='
           if ($st) { Write-Host $st } else { Write-Host '(missing)' }
 
@@ -268,6 +393,8 @@ jobs:
           $sum += "| 特权探针 pre | SeAssignPrimaryToken=$preHas |"
           $sum += "| 特权探针 post | SeAssignPrimaryToken=$postHas · state=$privState |"
           $sum += ''
+          if ($diag) { $sum += 'CPAU 诊断 d1（probe 内 depth1）：'; $sum += '```'; $sum += $diag.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d1 缺失' }
+          if ($diag2) { $sum += 'CPAU 诊断 d2（cmd 子进程 depth2，与 exe 同深度）：'; $sum += '```'; $sum += $diag2.TrimEnd(); $sum += '```' } else { $sum += 'CPAU 诊断 d2 缺失' }
           if ($fails.Count -eq 0) { $sum += '**结论：两臂均符合预期（CPAU 真特权臂在 CI 打通）**' } else { $sum += '**失败项**：'; foreach ($f in $fails) { $sum += "- $f" } }
           ($sum -join "`n") | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
           $sum | ForEach-Object { Write-Host $_ }
