@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sanitizeToolEnv, type ToolEnvSnapshot } from "./env.ts";
+import { ExecError, sanitizeToolEnv, type ToolEnvSnapshot } from "./env.ts";
 
 export interface RunProcessOptions {
   command: string;
@@ -61,6 +61,10 @@ export function killTree(child: ChildProcess): void {
 }
 
 export async function runProcess(opts: RunProcessOptions): Promise<RunProcessResult> {
+  // S4-3（全仓审查 2026-10-01）：spawn 前 signal.aborted 前置检查——已 abort 的 signal 上下方
+  // addEventListener 永不触发，子进程会照跑满时长（树杀空转）。前置拒=不 spawn、按中断文案上抛
+  //（与 bash.ts 直通臂事后检查同文案；retry.ts:77 同形判据）。
+  if (opts.signal?.aborted) throw new ExecError("interrupted");
   // env 清洗（SEC-080）：显式下发项按其现状做快照归因；隐式缺省现场清洗 process.env（fail-closed）。
   const envSnapshot: ToolEnvSnapshot = opts.env !== undefined ? { env: opts.env, removed: [], strippedBy: [] } : sanitizeToolEnv();
   const child = spawn(opts.command, opts.args, {

@@ -183,12 +183,23 @@ async function drainSessionAssets(deps: ReplDeps): Promise<void> {
 /**
  * 单轮 provider 直连（M7-WP-07 /loop /batch 的"执行"语义）：以单条 user 消息问模型、拼接 text_delta 为答案。
  * 非完整 agent 循环（不触工具/校验序列）——计数制循环与批量执行的"执行"取可测的最小单轮语义（见 mini-ADR-0049 与 /loop 计数制差异登记）。
+ * S5-9（全仓审查 2026-10-01）：收 AbortSignal——原不传 signal，/loop /batch 执行中 Ctrl+C 只能轮间
+ * 生效（当前流跑完才停）；现按 §8.4 中断不变量停流、保留已生成 partial 文本。
  */
-async function runProviderTurn(s: Session, prompt: string): Promise<string> {
+async function runProviderTurn(s: Session, prompt: string, signal?: AbortSignal): Promise<string> {
   let out = "";
-  const events = s.provider.stream({ model: s.model, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] });
-  for await (const ev of events) {
-    if (ev.type === "text_delta") out += ev.text;
+  const events = s.provider.stream({
+    model: s.model,
+    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+    ...(signal ? { signal } : {}),
+  });
+  try {
+    for await (const ev of events) {
+      if (ev.type === "text_delta") out += ev.text;
+      if (signal?.aborted) break; // 先计入已收事件再停（§8.4 停流保留已生成；适配器多数经 signal 直接抛错结束）
+    }
+  } catch (err) {
+    if (!signal?.aborted) throw err; // 非中断错误照抛；中断=停流保留已生成（partial 落返回值）
   }
   return out;
 }
@@ -862,16 +873,26 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const prompt = m[2]!;
       if (!Number.isInteger(n) || n < 1 || n > LOOP_MAX_ROUNDS) throw new Error(s.i18n.t("repl.loop.err.usage", { max: LOOP_MAX_ROUNDS, value: raw }));
       let done = 0;
-      for (let i = 0; i < n; i++) {
-        if (deps.isInterrupted?.()) break; // REPL 中断路径（Esc/Ctrl+C 语义）
-        const turn = { role: "user" as const, content: [{ type: "text" as const, text: prompt }] };
-        s.messages.push(turn);
-        transcriptAppend(deps, { kind: "user_message", message: turn });
-        const answer = await runProviderTurn(s, prompt);
-        const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
-        s.messages.push(ast);
-        transcriptAppend(deps, { kind: "assistant_message", message: ast });
-        done++;
+      // S5-9：/loop 执行期接管 session.activeAbort——命令派发在 runPromptTurn 之外（activeAbort 恒 null），
+      // 原 Ctrl+C 只置 interrupted 标志（轮间生效）且 main 走 else 提示「(输入 /exit 退出)」误导；
+      // 现执行期挂本作用域控制器：onInterrupt 真 abort → 当前流停（partial 保留）、下一轮 break。
+      const prevAbort = s.activeAbort;
+      const scope = new AbortController();
+      s.activeAbort = scope;
+      try {
+        for (let i = 0; i < n; i++) {
+          if (deps.isInterrupted?.() || scope.signal.aborted) break; // REPL 中断路径（Esc/Ctrl+C 语义）
+          const turn = { role: "user" as const, content: [{ type: "text" as const, text: prompt }] };
+          s.messages.push(turn);
+          transcriptAppend(deps, { kind: "user_message", message: turn });
+          const answer = await runProviderTurn(s, prompt, scope.signal);
+          const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
+          s.messages.push(ast);
+          transcriptAppend(deps, { kind: "assistant_message", message: ast });
+          done++;
+        }
+      } finally {
+        s.activeAbort = prevAbort;
       }
       return { text: s.i18n.t("repl.loop.done", { n: done, prompt }) };
     },
@@ -884,16 +905,24 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const lines = (await readFile(file, "utf8")).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
       if (lines.length > BATCH_LINE_CAP) throw new Error(s.i18n.t("repl.batch.err.limit", { value: lines.length, cap: BATCH_LINE_CAP }));
       let n = 0;
-      for (const line of lines) {
-        if (deps.isInterrupted?.()) break;
-        const turn = { role: "user" as const, content: [{ type: "text" as const, text: line }] };
-        s.messages.push(turn);
-        transcriptAppend(deps, { kind: "user_message", message: turn });
-        const answer = await runProviderTurn(s, line);
-        const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
-        s.messages.push(ast);
-        transcriptAppend(deps, { kind: "assistant_message", message: ast });
-        n++;
+      // S5-9：同 /loop——执行期接管 activeAbort（停流保留 partial；中断即止）
+      const prevAbort = s.activeAbort;
+      const scope = new AbortController();
+      s.activeAbort = scope;
+      try {
+        for (const line of lines) {
+          if (deps.isInterrupted?.() || scope.signal.aborted) break;
+          const turn = { role: "user" as const, content: [{ type: "text" as const, text: line }] };
+          s.messages.push(turn);
+          transcriptAppend(deps, { kind: "user_message", message: turn });
+          const answer = await runProviderTurn(s, line, scope.signal);
+          const ast = { role: "assistant" as const, content: [{ type: "text" as const, text: answer }] };
+          s.messages.push(ast);
+          transcriptAppend(deps, { kind: "assistant_message", message: ast });
+          n++;
+        }
+      } finally {
+        s.activeAbort = prevAbort;
       }
       return { text: s.i18n.t("repl.batch.done", { n, file }) };
     },

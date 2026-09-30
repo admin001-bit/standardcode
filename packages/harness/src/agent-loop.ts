@@ -92,12 +92,22 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       if (signal?.aborted) break;
       let r: IteratorResult<LLMEvent> | null;
       try {
-        r = signal
-          ? await Promise.race([
-              it.next(),
-              new Promise<null>((res) => signal.addEventListener("abort", () => res(null), { once: true })),
-            ])
-          : await it.next();
+        if (signal) {
+          // S3-6（全仓审查 2026-10-01）：abort 监听器与 it.next() 成对收束——原 {once:true} 在 next()
+          // 胜出后不摘，单 turn 监听器数＝流事件数（数千 text_delta 堆同一 signal 至泄漏告警）。
+          let onAbort: (() => void) | null = null;
+          const abortRace = new Promise<null>((res) => {
+            onAbort = () => res(null);
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+          try {
+            r = await Promise.race([it.next(), abortRace]);
+          } finally {
+            if (onAbort) signal.removeEventListener("abort", onAbort);
+          }
+        } else {
+          r = await it.next();
+        }
       } catch (err) {
         if (signal?.aborted) break;
         if (isContextLength(err)) {
@@ -145,6 +155,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
             }
             // F16：闸拒理由上抛（熔断/rapid-refill 的"交还用户"指引原被丢弃 → 用户只见"开新会话"）
             yield { type: "context_exhausted", ...(gate && !gate.shouldCompact && gate.reason ? { reason: gate.reason } : {}) };
+            if (opts.stateRef) opts.stateRef.current = state; // S3-4：全部终态回填（原仅中断/end）
             yield { type: "done", reason: "context_exhausted" };
             return state;
           }
@@ -264,6 +275,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
       if (isContextLength(streamError)) {
         // 流级路径：无条件 context_exhausted（闸门在 catch 路径；流级接闸随 WP-04 执行体一并处理）【勘误 2026-09-08：原注释称"同恢复链②"失实】
         yield { type: "context_exhausted" };
+        if (opts.stateRef) opts.stateRef.current = state; // S3-4
         yield { type: "done", reason: "context_exhausted" };
         return state;
       }
@@ -283,6 +295,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           yield { type: "recovery", chain: "malformed_retry", round: state.malformedRounds };
           continue;
         }
+        if (opts.stateRef) opts.stateRef.current = state; // S3-4
         yield { type: "done", reason: "malformed_fail_closed" };
         return state;
       }
@@ -293,6 +306,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           yield { type: "recovery", chain: "max_tokens_continue", round: state.continuations };
           continue;
         }
+        if (opts.stateRef) opts.stateRef.current = state; // S3-4
         yield { type: "done", reason: "truncated_gave_up" };
         return state;
       }
@@ -303,10 +317,12 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
           yield { type: "recovery", chain: "stream_resume", round: state.continuations };
           continue;
         }
+        if (opts.stateRef) opts.stateRef.current = state; // S3-4
         yield { type: "done", reason: "truncated_gave_up" };
         return state;
       }
       if (finish?.reason === "filtered") {
+        if (opts.stateRef) opts.stateRef.current = state; // S3-4
         yield { type: "done", reason: "filtered" };
         return state;
       }
@@ -323,6 +339,7 @@ export async function* runAgentLoop(opts: LoopOptions): AsyncGenerator<AgentEven
         .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use")
         .map((b) => ({ type: "tool_result", toolUseId: b.id, content: "max tool rounds reached", isError: true }));
       state.messages.push({ role: "user", content: resultBlocks });
+      if (opts.stateRef) opts.stateRef.current = state; // S3-4
       yield { type: "done", reason: "max_turns" };
       return state;
     }

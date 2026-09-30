@@ -16,6 +16,9 @@ export interface BashInput {
 
 export async function execBash(input: BashInput, env: ExecEnv): Promise<string> {
   if (typeof input.command !== "string" || input.command.length === 0) throw new ExecError("command must be a non-empty string");
+  // S4-3：spawn/沙箱请求前 signal.aborted 前置拒（直通臂由 runProcess 同检覆盖；沙箱臂不经
+  // runProcess，须在此自检——已 abort 的 signal 上监听器永不触发，命令会照跑满时长）。
+  if (env.signal?.aborted) throw new ExecError("interrupted");
   const timeout = clampTimeout(input.timeout);
   const shell = resolveShell();
   if (env.sandbox) return execBashSandboxed(input, env, shell, timeout);
@@ -103,6 +106,8 @@ async function execBashSandboxed(input: BashInput, env: ExecEnv, shell: { comman
     : null;
   try {
     const result = await Promise.race(interrupted ? [run, timeouts, interrupted] : [run, timeouts]);
+    // S4-3：成功路径事后检查（与直通臂 :40 同形；retry.ts:77 正确形——race 胜出不等于未中断）
+    if (env.signal?.aborted) throw new ExecError("interrupted");
     let output = result.stdout + (result.stderr ? (result.stdout ? "\n[stderr]\n" : "") + result.stderr : "");
     let truncated = false;
     if (output.length > BASH_OUTPUT_TRUNCATE_CHARS) {

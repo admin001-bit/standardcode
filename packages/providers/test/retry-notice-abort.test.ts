@@ -1,5 +1,6 @@
 // F8（2026-09-28 真机实测）修复回归：重试通知（UI 可见化）＋可中断退避。
 // 背景：默认 10 次指数退避（0.5s→32s，最长约 2 分钟）原为全静默；实测 Ctrl+C 亦无效（F7），用户无路可走。
+import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
 import { withRetry, type RetryNotice } from "../src/retry.ts";
 import { ProviderError } from "../src/errors.ts";
@@ -82,5 +83,23 @@ describe("withRetry 通知与中断（F8 修复）", () => {
     );
     expect(out).toBe(7);
     expect(slept).toEqual([5]);
+  });
+
+  it("S4-7：退避正常到点也成对摘 abort 监听——连续重试成功后 signal 上零残留（原 {once} 只在 abort 自回收）", async () => {
+    const ac = new AbortController();
+    let calls = 0;
+    const out = await withRetry(
+      async () => {
+        calls++;
+        if (calls < 4) throw new ProviderError("overloaded", "storm");
+        return "ok";
+      },
+      retryableJudge,
+      { maxAttempts: 6, baseDelayMs: 1, factor: 1, jitterFactor: 0 },
+      { signal: ac.signal, rng: () => 0 },
+    );
+    expect(out).toBe("ok");
+    expect(calls).toBe(4);
+    expect(getEventListeners(ac.signal, "abort")).toHaveLength(0); // 修复前：3 个退避期监听残留
   });
 });

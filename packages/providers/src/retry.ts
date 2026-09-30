@@ -70,19 +70,22 @@ export async function withRetry<T>(
   throw lastErr; // unreachable
 }
 
-/** F8b：可中断退避（signal 在场时以计时器实现；abort 立即唤醒，调用方凭 signal.aborted 决定是否续跑）。 */
+/** F8b：可中断退避（signal 在场时以计时器实现；abort 立即唤醒，调用方凭 signal.aborted 决定是否续跑）。
+ *  S4-7（全仓审查 2026-10-01）：两路收束均成对摘监听——原正常到点只 resolve 不摘（{once} 只在 abort
+ *  触发时自回收），429 风暴下同一 signal 监听器堆积至 MaxListenersExceededWarning（mcp/client 同款成对形）。 */
 function sleepAbortable(ms: number, signal: AbortSignal | undefined, customSleep: (ms: number) => Promise<void>): Promise<void> {
   if (!signal) return customSleep(ms);
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(t);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }

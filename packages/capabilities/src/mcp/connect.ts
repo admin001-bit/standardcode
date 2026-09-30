@@ -81,6 +81,10 @@ export async function connectServer(entry: McpServerEntry, opts: ConnectOptions)
     const client = new McpClient(transport, {
       clientInfo: { name: "standardcode", version: opts.version ?? "0.1.0" },
       listRoots: () => [{ uri: pathToFileURL(opts.cwd).href }],
+      // S2-1（全仓审查 2026-10-01）：生产路径原不传 requestTimeoutMs → client 内部 ??30_000 硬兜底——
+      // per-server "timeout"、STANDARD_CODE_MCP_TIMEOUT（ADR-0040 决策 7）对 >30s 配置全部架空，
+      // tools/call 第 31 秒必死于内部 timer。优先级：per-server timeout > env/connect 解析值（0=不设）。
+      requestTimeoutMs: entry.config.timeout ?? timeoutMs,
     });
     const record = (r: InitializeResult): void => {
       conn.serverInfo = r.serverInfo;
