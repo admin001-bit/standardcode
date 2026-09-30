@@ -82,10 +82,12 @@ pub fn build_program(net_allow: bool) -> Vec<libc::sock_filter> {
     deny_syscall(&mut p, libc::SYS_io_uring_setup);
     deny_syscall(&mut p, libc::SYS_io_uring_enter);
     deny_syscall(&mut p, libc::SYS_io_uring_register);
-    // socket 族：AF_UNIX-only
-    deny_non_unix_sockets(&mut p, libc::SYS_socket);
-    deny_non_unix_sockets(&mut p, libc::SYS_socketpair);
     if !net_allow {
+        // S8-7（全仓审查 2026-10-01）：socket 族 AF_UNIX-only 拒集随 net 拒绝档安装——原在本块
+        // **之外**无条件安装 ⇒ allow_network 策略下 socket(AF_INET) 恒 EPERM，curl 等联网工具全挂，
+        // 与 macOS（allow network* 正常）跨平台语义相反。
+        deny_non_unix_sockets(&mut p, libc::SYS_socket);
+        deny_non_unix_sockets(&mut p, libc::SYS_socketpair);
         for nr in [
             libc::SYS_connect,
             libc::SYS_accept,
@@ -256,13 +258,15 @@ mod tests {
         assert!(ks.contains(&(libc::SYS_bind as u32)));
         let ka: Vec<u32> = build_program(true).iter().map(|f| f.k).collect();
         assert!(!ka.contains(&(libc::SYS_connect as u32)));
-        // 无条件拒集两形都在（ptrace/io_uring/AF_UNIX-only socket）
-        for k in [
-            libc::SYS_ptrace as u32,
-            libc::SYS_io_uring_setup as u32,
-            libc::SYS_socket as u32,
-        ] {
+        // 无条件拒集两形都在（ptrace/io_uring——跨进程内存读+io_uring 旁路）
+        for k in [libc::SYS_ptrace as u32, libc::SYS_io_uring_setup as u32] {
             assert!(ks.contains(&k) && ka.contains(&k), "missing {k}");
+        }
+        // S8-7（全仓审查 2026-10-01）：socket/socketpair 的 AF_UNIX-only 拒集随 net 拒绝档安装——
+        // allow 形必须缺席（原两形都在＝allow_network 下 socket(AF_INET) 恒 EPERM，与 macOS 相反）。
+        for k in [libc::SYS_socket as u32, libc::SYS_socketpair as u32] {
+            assert!(ks.contains(&k), "deny 档应含 socket 族拒集 {k}");
+            assert!(!ka.contains(&k), "S8-7: allow 档不得含 socket 族拒集 {k}");
         }
         // recvfrom 刻意放行（codex socketpair/clippy 例外，报告 §1.5 行 329-331）
         assert!(!ks.contains(&(libc::SYS_recvfrom as u32)));

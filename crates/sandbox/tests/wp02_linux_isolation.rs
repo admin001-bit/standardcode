@@ -236,3 +236,58 @@ fn compile_shape_has_inner_splice_source() {
     // compile 层不含内层——内层由 run 注入（职责分层断言）
     assert!(!compiled.argv.iter().any(|a| a == "--inner-seccomp"));
 }
+
+/// S8-1（全仓审查 2026-10-01）：用户 argv 含裸 `--` 时 inner 阶段仍在链上——原 rposition 切错位，
+/// bwrap 以原命令直跑（inner 自调用变用户参数）⇒ seccomp/caps 全跳过，`$2` 读到自调用路径而非 DDMARK。
+#[test]
+fn linux_user_dash_dash_keeps_inner_stage() {
+    if !bwrap_available() {
+        eprintln!("SKIP: bwrap 非特权不可用（同 suite 口径）");
+        return;
+    }
+    let tr = Tree::new("userdd");
+    // sh -c SCRIPT arg0 -- DDMARK → $0=arg0 $1=-- $2=DDMARK（修后经 inner 保真透传）
+    let req = ExecRequest::new(
+        "/bin/sh",
+        vec![
+            "-c".into(),
+            "printf %s \"$2\"".into(),
+            "arg0".into(),
+            "--".into(),
+            "DDMARK".into(),
+        ],
+        tr.ws(),
+    );
+    let o = linux::run(&req, &tr.pol(), &tr.facts(), Path::new(SANDBOX_BIN))
+        .expect("run")
+        .1;
+    assert_eq!(o.exit_code, Some(0), "stderr: {}", o.stderr);
+    assert_eq!(
+        o.stdout, "DDMARK",
+        "inner 阶段被跳过（rposition 形）时此处=自调用路径"
+    );
+}
+
+/// S8-7（全仓审查 2026-10-01）：allow_network 档 socket(AF_INET) 不得被 seccomp 误拒——
+/// 原 deny_non_unix_sockets 在 `if !net_allow` 之外无条件安装 ⇒ allow 档恒 EPERM（probe 退 0），
+/// 与 macOS（allow network* 正常）跨平台语义相反。修后 probe 退 1（AF_INET 成功、AF_UNIX 亦通）。
+#[test]
+fn linux_allow_network_keeps_af_inet_socket() {
+    if !bwrap_available() {
+        eprintln!("SKIP: bwrap 非特权不可用（同 suite 口径）");
+        return;
+    }
+    let tr = Tree::new("netallow");
+    let pol = tr.pol().allow_network();
+    let req = ExecRequest::new(SANDBOX_BIN, vec!["--probe-socket".into()], tr.ws());
+    let o = linux::run(&req, &pol, &tr.facts(), Path::new(SANDBOX_BIN))
+        .expect("run")
+        .1;
+    assert_eq!(
+        o.exit_code,
+        Some(1),
+        "allow 档 AF_INET 应成功(退1)：{} {}",
+        o.stdout,
+        o.stderr
+    );
+}

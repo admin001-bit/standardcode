@@ -108,10 +108,28 @@ pub fn compile(
         return Ok(passthrough); // danger-full-access 双轴全开=直通形
     }
 
-    // 2. Windows deny-read 能力闸（§5.3(3) 教训清单"deny-read 需 elevated"；legacy 后端 fail-closed）
+    // 2. Windows carveout 能力闸（§5.3(3) 教训清单"deny-read 需 elevated"；legacy 后端 fail-closed）
     if platform == Platform::Windows && !facts.elevated {
         if let Some((p, _)) = carveouts.iter().find(|(_, a)| *a == Access::DenyRead) {
             return Err(CompileError::DenyReadRequiresElevation(p.clone()));
+        }
+        // S8-2（全仓审查 2026-10-01）：DenyWrite/ReadOnly 同闸——compile 曾把两者原样写入
+        // policy_json 而 windows.rs 运行面**零消费点**（grep 证实；Linux/macOS 有独立拦截点
+        // compile_linux/compile_mac），Windows 细粒度禁写静默 fail-open。对照上方 deny-read 闸
+        // 证明是遗漏而非裁决：同在 legacy（!elevated）面 fail-closed；elevated 形与 deny-read
+        // 既有语义一致（is_ok，消费归 M9 后端实现）。
+        if let Some((p, a)) = carveouts
+            .iter()
+            .find(|(_, a)| matches!(*a, Access::ReadOnly | Access::DenyWrite))
+        {
+            return Err(CompileError::CarveoutUnsupportedOnWindows {
+                path: p.clone(),
+                access: if *a == Access::ReadOnly {
+                    "read-only"
+                } else {
+                    "deny-write"
+                },
+            });
         }
     }
 
@@ -898,6 +916,45 @@ mod tests {
             elevated: true,
         };
         assert!(compile(&req(), &pol, &f, Platform::Windows).is_ok());
+    }
+
+    #[test]
+    fn windows_carveout_deny_write_read_only_fail_closed() {
+        // S8-2（全仓审查 2026-10-01）：legacy 面 carveouts 运行时零消费（windows.rs 无消费点）
+        // ⇒ compile 不得再把 DenyWrite/ReadOnly 写进 policy_json（原静默 fail-open）。
+        let mut pol = SandboxPolicy::workspace_write(vec![root("C:/w")]);
+        pol.fs.carveouts = vec![(PathBuf::from("C:/w/out"), Access::ReadOnly)];
+        let err = compile(&req(), &pol, &PolicyFacts::default(), Platform::Windows).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CompileError::CarveoutUnsupportedOnWindows {
+                    access: "read-only",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        pol.fs.carveouts = vec![(PathBuf::from("C:/w/build"), Access::DenyWrite)];
+        let err = compile(&req(), &pol, &PolicyFacts::default(), Platform::Windows).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CompileError::CarveoutUnsupportedOnWindows {
+                    access: "deny-write",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        // elevated（M9 后端承载面）与 Linux/Mac 形保持编译通过——与 deny-read elevated 既有语义一致
+        let f = PolicyFacts {
+            exists: Default::default(),
+            elevated: true,
+        };
+        assert!(compile(&req(), &pol, &f, Platform::Windows).is_ok());
+        assert!(compile(&req(), &pol, &PolicyFacts::default(), Platform::Linux).is_ok());
+        assert!(compile(&req(), &pol, &PolicyFacts::default(), Platform::MacOS).is_ok());
     }
 
     #[test]

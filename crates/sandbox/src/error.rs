@@ -24,6 +24,8 @@ pub enum CompileError {
     Serialize(String),
     #[error("Windows legacy 受限令牌后端无法表达 deny-read（需 elevated 后端）：{0}")]
     DenyReadRequiresElevation(PathBuf),
+    #[error("Windows legacy 后端无法表达细粒度 carveout {access}（{path}）：运行面零消费会静默 fail-open，fail-closed 拒绝——实现归 elevated 后端（M9）")]
+    CarveoutUnsupportedOnWindows { path: PathBuf, access: &'static str },
 }
 
 /// IPC 帧层错误（ARCH-008；坏帧/超长/版本不符 → Err，调用方关通道，不得跳帧续读）。

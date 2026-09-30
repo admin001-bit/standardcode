@@ -35,18 +35,7 @@ pub fn run(
     }
     let net_allow = policy.net == NetPolicy::Allowed;
     let filter_b64 = seccomp::encode_program(&seccomp::build_program(net_allow));
-    let sep = compiled
-        .argv
-        .iter()
-        .rposition(|a| a == "--")
-        .ok_or_else(|| RunError::Inner("compiled argv missing `--` separator".into()))?;
-    let mut argv: Vec<String> = compiled.argv[..=sep].to_vec();
-    argv.push(self_exe.to_string_lossy().into_owned());
-    argv.push("--inner-seccomp".to_string());
-    argv.push("--filter-b64".to_string());
-    argv.push(filter_b64);
-    argv.push("--".to_string());
-    argv.extend_from_slice(&compiled.argv[sep + 1..]);
+    let argv = splice_inner_stage(&compiled.argv, self_exe, &filter_b64)?;
 
     let child = std::process::Command::new(&argv[0])
         .args(&argv[1..])
@@ -134,6 +123,30 @@ pub fn inner_main(args: &[String]) -> i32 {
     127
 }
 
+/// S8-1（全仓审查 2026-10-01）阶段 1 argv 拼装（纯函数面）：分隔符取**首个** `--`（bwrap 选项
+/// 终止位，与 inner_main 的 position 首匹配同基），其后插入内层自调用；用户 argv（可含自己的裸
+/// `--`，如 `rg -- foo`）整体保真落在尾部。原 rposition 取最后一个 `--`：用户 argv 含 `--` 时
+/// 切错位，内层自调用被塞进用户参数表 ⇒ `--inner-seccomp` 阶段整体跳过（caps 清零＋seccomp
+/// 黑名单全不装，隔离降级纯 bwrap）。
+fn splice_inner_stage(
+    compiled: &[String],
+    self_exe: &Path,
+    filter_b64: &str,
+) -> Result<Vec<String>, RunError> {
+    let sep = compiled
+        .iter()
+        .position(|a| a == "--")
+        .ok_or_else(|| RunError::Inner("compiled argv missing `--` separator".into()))?;
+    let mut argv: Vec<String> = compiled[..=sep].to_vec();
+    argv.push(self_exe.to_string_lossy().into_owned());
+    argv.push("--inner-seccomp".to_string());
+    argv.push("--filter-b64".to_string());
+    argv.push(filter_b64.to_string());
+    argv.push("--".to_string());
+    argv.extend_from_slice(&compiled[sep + 1..]);
+    Ok(argv)
+}
+
 /// 测试探针：AF_INET socket 应被 seccomp 拒（EPERM），AF_UNIX 放行。
 /// 退出码：0=AF_INET 被拒（沙箱生效），1=AF_INET 成功（未拦），2=AF_UNIX 也被误拦。
 pub fn probe_socket() -> i32 {
@@ -192,4 +205,58 @@ fn assert_caps_zero() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod splice_tests {
+    use super::splice_inner_stage;
+    use std::path::Path;
+
+    /// S8-1：首个 `--` 为拼装边界——用户 argv 自带裸 `--` 时整体保真（原 rposition 切错位，
+    /// 内层自调用进用户参数表＝inner 阶段跳过）。
+    #[test]
+    fn splice_takes_first_dash_dash_and_keeps_user_tail() {
+        let compiled: Vec<String> = [
+            "bwrap",
+            "--ro-bind",
+            "/",
+            "/",
+            "--",
+            "/bin/sh",
+            "-c",
+            "x",
+            "--",
+            "DDMARK",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let out = splice_inner_stage(&compiled, Path::new("/sbx"), "B64").unwrap();
+        assert_eq!(
+            out,
+            [
+                "bwrap",
+                "--ro-bind",
+                "/",
+                "/",
+                "--",
+                "/sbx",
+                "--inner-seccomp",
+                "--filter-b64",
+                "B64",
+                "--",
+                "/bin/sh",
+                "-c",
+                "x",
+                "--",
+                "DDMARK",
+            ]
+        );
+    }
+
+    #[test]
+    fn splice_missing_separator_is_inner_error() {
+        let compiled: Vec<String> = vec!["bwrap".to_string()];
+        assert!(splice_inner_stage(&compiled, Path::new("/s"), "b").is_err());
+    }
 }

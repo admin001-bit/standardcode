@@ -37,9 +37,11 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
-    CreateProcessAsUserW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken,
-    WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOW,
+    CreateProcessAsUserW, DeleteProcThreadAttributeList, GetCurrentProcess, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, OpenProcessToken, UpdateProcThreadAttribute,
+    WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW,
 };
 
 use crate::compile::{compile, Platform, SandboxType};
@@ -473,6 +475,12 @@ fn env_block(env: &BTreeMap<String, String>) -> Vec<u16> {
     v
 }
 
+/// S8-6（全仓审查 2026-10-01）：ACL 全局互斥——「快照-整段替换-还原」（AclGuard）是进程级共享
+/// 状态，而 serve 每请求独立线程并发执行：交织时 B 的快照捕获 A 的中间态、A 还原抹掉 B 的
+/// grant（在飞命令随机全拒）、B 还原沉积 A 的残留 ACE（终致 SetEntriesInAclW 失败）。
+/// 全程串行化（apply→spawn 等待→还原）拿正确性换吞吐 [自定]；毒丸恢复=panic 后仍可继续。
+static ACL_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 真执行：令牌+ACL+CreateProcessAsUserW（同步等待，捕获双管道）。返回 (子进程 pid, 产物)。
 pub fn run(
     req: &ExecRequest,
@@ -486,6 +494,11 @@ pub fn run(
     if compiled.sandbox == SandboxType::None {
         return plain_exec(&req);
     }
+    // S8-6：ACL 临界区——覆盖 collect→set_deny/grant_allow→spawn 等待→drop(guards) 还原全程
+    //（声明先于 guards ⇒ 作用域结束时 guards 先还原、锁最后释放，顺序正确）。
+    let _acl_gate = ACL_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let ids = collect_sids()?;
     let token = build_restricted_token(&ids)?;
     let protected = protected_paths(policy);
@@ -538,25 +551,89 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput
         };
         let env = env_block(&req.env);
         let cwd = wide(&req.cwd.to_string_lossy());
-        let si = STARTUPINFOW {
-            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            lpReserved: std::ptr::null_mut(),
-            lpDesktop: std::ptr::null_mut(),
-            lpTitle: std::ptr::null_mut(),
-            dwX: 0,
-            dwY: 0,
-            dwXSize: 0,
-            dwYSize: 0,
-            dwXCountChars: 0,
-            dwYCountChars: 0,
-            dwFillAttribute: 0,
-            dwFlags: STARTF_USESTDHANDLES,
-            wShowWindow: 0,
-            cbReserved2: 0,
-            lpReserved2: std::ptr::null_mut(),
-            hStdInput: std::ptr::null_mut(),
-            hStdOutput: out_w,
-            hStdError: err_w,
+        // S8-3（全仓审查 2026-10-01）：句柄继承白名单——原裸 bInheritHandles=1 无名单：请求 A 的
+        // 管道可被请求 B 的沙箱命令继承（跨请求读/篡改他命令 stdout＝输出投毒），宿主 JSON IPC
+        // 管道句柄亦可泄入沙箱命令绕 ACL 读写帧。经 STARTUPINFOEX + PROC_THREAD_ATTRIBUTE_HANDLE_LIST
+        // 把继承集收敛为**仅本请求的两个写端**。
+        let mut attr_size: usize = 0;
+        InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size); // 期望 false+ERROR_INSUFFICIENT_BUFFER，回填 size
+        if attr_size == 0 {
+            let gle = GetLastError();
+            close_all(&[out_r, out_w, err_r, err_w]);
+            return Err(RunError::Spawn(format!(
+                "InitializeProcThreadAttributeList(sizing) 失败 gle={gle}"
+            )));
+        }
+        let attr_layout =
+            match std::alloc::Layout::from_size_align(attr_size, std::mem::align_of::<usize>()) {
+                Ok(l) => l,
+                Err(_) => {
+                    close_all(&[out_r, out_w, err_r, err_w]);
+                    return Err(RunError::Spawn("attribute list layout 不可表示".into()));
+                }
+            };
+        let attr_ptr = std::alloc::alloc(attr_layout);
+        if attr_ptr.is_null() {
+            close_all(&[out_r, out_w, err_r, err_w]);
+            return Err(RunError::Spawn("attribute list 分配失败".into()));
+        }
+        /// RAII：CreateProcess 完成（含其后早退）即析构属性表——防泄漏/悬垂 attribute list。
+        struct AttrListGuard(*mut u8, std::alloc::Layout);
+        impl Drop for AttrListGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    DeleteProcThreadAttributeList(self.0 as _);
+                    std::alloc::dealloc(self.0, self.1);
+                }
+            }
+        }
+        let _attr = AttrListGuard(attr_ptr, attr_layout);
+        if InitializeProcThreadAttributeList(attr_ptr as _, 1, 0, &mut attr_size) == 0 {
+            let gle = GetLastError();
+            close_all(&[out_r, out_w, err_r, err_w]);
+            return Err(RunError::Spawn(format!(
+                "InitializeProcThreadAttributeList 失败 gle={gle}"
+            )));
+        }
+        let inherit_list: [HANDLE; 2] = [out_w, err_w];
+        if UpdateProcThreadAttribute(
+            attr_ptr as _,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+            inherit_list.as_ptr() as *const c_void,
+            std::mem::size_of::<HANDLE>() * 2,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        ) == 0
+        {
+            let gle = GetLastError();
+            close_all(&[out_r, out_w, err_r, err_w]);
+            return Err(RunError::Spawn(format!(
+                "UpdateProcThreadAttribute 失败 gle={gle}"
+            )));
+        }
+        let si = STARTUPINFOEXW {
+            StartupInfo: STARTUPINFOW {
+                cb: std::mem::size_of::<STARTUPINFOEXW>() as u32,
+                lpReserved: std::ptr::null_mut(),
+                lpDesktop: std::ptr::null_mut(),
+                lpTitle: std::ptr::null_mut(),
+                dwX: 0,
+                dwY: 0,
+                dwXSize: 0,
+                dwYSize: 0,
+                dwXCountChars: 0,
+                dwYCountChars: 0,
+                dwFillAttribute: 0,
+                dwFlags: STARTF_USESTDHANDLES,
+                wShowWindow: 0,
+                cbReserved2: 0,
+                lpReserved2: std::ptr::null_mut(),
+                hStdInput: std::ptr::null_mut(),
+                hStdOutput: out_w,
+                hStdError: err_w,
+            },
+            lpAttributeList: attr_ptr as _,
         };
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
         let ok = CreateProcessAsUserW(
@@ -565,11 +642,11 @@ fn spawn_restricted(token: HANDLE, req: &ExecRequest) -> Result<(u32, ExecOutput
             cmdline.as_ptr() as *mut u16,
             std::ptr::null(),
             std::ptr::null(),
-            1,
-            CREATE_UNICODE_ENVIRONMENT,
+            1, // bInheritHandles：TRUE＋HANDLE_LIST 属性＝名单外句柄一律不继承
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
             env.as_ptr() as *const c_void,
             cwd.as_ptr(),
-            &si,
+            &si.StartupInfo,
             &mut pi,
         );
         if ok == 0 {
@@ -799,6 +876,37 @@ mod tests {
             }
             Err(e) => panic!("child run fail: {e}"),
         }
+    }
+
+    /// S8-6（全仓审查 2026-10-01）：run() 全程持 ACL_GATE——手动占锁后并发 run 必须阻塞
+    ///（原无互斥：serve 每请求一线程，AclGuard「快照-整段替换-还原」交织互踩——中途抹他人
+    /// grant=命令随机全拒、残留 ACE 沉积）。判别形：占锁 500ms 内 run 不得完成。
+    #[test]
+    fn s8_6_run_serialized_on_acl_gate() {
+        let t = scratch("s86");
+        let held = super::ACL_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let t2 = t.clone();
+        let h = std::thread::spawn(move || {
+            let pol = SandboxPolicy::workspace_write(vec![RootPath::real(t2.join("ws"))]);
+            let mut req = ExecRequest::new(
+                "cmd.exe",
+                vec!["/C".into(), "echo ok".into()],
+                t2.join("ws"),
+            );
+            req.env = std::env::vars().collect();
+            run(&req, &pol, &PolicyFacts::default())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(
+            !h.is_finished(),
+            "run 未被 ACL_GATE 串行化（并发 ACL 互踩回归）"
+        );
+        drop(held);
+        let r = h.join().expect("worker");
+        assert!(r.is_ok(), "gate 释放后 run 应成功: {r:?}");
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     /// Windows 全链真隔离探针套件（DoD①④⑤ 之 windows 面；线程探针废弃原因登记结果页：
