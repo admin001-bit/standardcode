@@ -60,22 +60,32 @@ export const HOOK_EVENT_DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
 const RANK: Record<"deny" | "ask" | "allow", number> = { deny: 3, ask: 2, allow: 1 }; // :60861 xgn 同构
 const PERMISSION_DECISION_SCHEMA = 'hookSpecificOutput.permissionDecision must be one of "allow", "deny", "ask", "defer" (optional)'; // :260365 schema 说明形状
 
-/** matcher 三态（dig-04 §3.2 vHt）：`*`/缺席=全配；`|`/`,` 列表=逐项全等；否则正则（非法=告警+false）。 */
+/** matcher 三态（dig-04 §3.2 vHt）：`*`/缺席=全配；`|`/`,` 列表=逐项全等；否则正则（非法=告警+false）。
+ *  S2-4（全仓审查 2026-10-01）：列表态原在全等失败后仍逐项 `new RegExp(part).test(query)` 子串回退——
+ *  与本注释「列表=逐项全等」矛盾：`matcher: "Read|Write"` 误配 `mcp__files__ReadDir`（deny 误拒／
+ *  approve 类 hook 误放行扩大权限面）。列表态现仅字面全等；正则只属单项态。 */
 export function matchHookMatcher(matcher: string | undefined, query: string | undefined, warnings: string[]): boolean {
   if (matcher === undefined || matcher === "*") return true;
   if (query === undefined) return true; // :261743 query 缺失=matcher 整体跳过（全执行——语义陷阱）
-  for (const part of matcher.split(/[|,]/)) {
-    const p = part.trim();
-    if (p === "*" || p === "") continue;
-    if (p === query) return true;
-    try {
-      if (new RegExp(p).test(query)) return true;
-    } catch {
-      if (!warnings.includes(`invalid hook matcher regex: ${matcher}`)) warnings.push(`invalid hook matcher regex: ${matcher}`);
-      return false;
+  if (matcher.includes("|") || matcher.includes(",")) {
+    // 列表态：逐项全等（`*`/空项跳过——原三态语义），零正则回退
+    for (const part of matcher.split(/[|,]/)) {
+      const p = part.trim();
+      if (p === "*" || p === "") continue;
+      if (p === query) return true;
     }
+    return false;
   }
-  return false;
+  // 单项态：全等或正则（非法正则=告警+false）
+  const p = matcher.trim();
+  if (p === "*" || p === "") return true;
+  if (p === query) return true;
+  try {
+    return new RegExp(p).test(query);
+  } catch {
+    if (!warnings.includes(`invalid hook matcher regex: ${matcher}`)) warnings.push(`invalid hook matcher regex: ${matcher}`);
+    return false;
+  }
 }
 
 interface HookExit {

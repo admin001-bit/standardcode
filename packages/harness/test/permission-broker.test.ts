@@ -157,6 +157,28 @@ describe("S3-1 复合 Bash 逐段检查（§8.3 防前缀伪装；全仓审查 2
   });
 });
 
+describe("S3-7 路径主体归一化（越锚回归；全仓审查 2026-10-01）", () => {
+  it("allow Edit(src/**) 不再被 src/../secrets.env 越过——归一化后回落 ask", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Edit(src/**)"] } });
+    expect(b.evaluate("Edit", { file_path: "src/a.ts" }).decision).toBe("allow");
+    expect(b.evaluate("Edit", { file_path: "src/../secrets.env" }).decision).toBe("ask"); // 修复前：** 匹配 .. 段 → allow
+    expect(b.evaluate("Edit", { file_path: "src/./a.ts" }).decision).toBe("allow"); // 等价路径仍放行（resolve 同语义）
+    expect(b.evaluate("Edit", { file_path: "src\\..\\secrets.env" }).decision).toBe("ask"); // 反斜杠形
+  });
+
+  it("反向一致：deny 锚定同样吃归一化（src/../src/a.ts 归一为 src/a.ts 命中 deny）", () => {
+    const b = createPermissionBroker({ mode: "bypassPermissions", rules: { deny: ["Edit(src/**)"] } });
+    expect(b.evaluate("Edit", { file_path: "src/../src/a.ts" }).decision).toBe("deny");
+    expect(b.evaluate("Edit", { file_path: "docs/a.md" }).decision).toBe("allow");
+  });
+
+  it("根位 .. 截顶与相对回退（与 path.resolve 同语义）", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Edit(secrets.env)"] } });
+    expect(b.evaluate("Edit", { file_path: "src/../secrets.env" }).decision).toBe("allow"); // 归一到字面锚
+    expect(b.evaluate("Edit", { file_path: "/etc/../etc/secrets.env" }).decision).toBe("ask"); // 绝对形不因 .. 洗入字面锚……归一=/etc/secrets.env≠secrets.env
+  });
+});
+
 describe("rules: parse & evaluation order (deny → ask → allow, first match wins)", () => {
   it("parseRule Tool(specifier) and bare tool", () => {
     expect(parseRule("Bash(git *)")).toEqual({ tool: "Bash", specifier: "git *" });

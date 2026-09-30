@@ -107,6 +107,16 @@ describe("DoD④ matcher 三态+query 缺失语义陷阱（:261743）", () => {
     expect(w.some((x) => x.includes("invalid hook matcher regex"))).toBe(true);
   });
 
+  it("S2-4：列表态零正则回退——Read|Write 不再子串误配 mcp__files__ReadDir（原回退致 deny 误拒/approve 误放行）", () => {
+    const w: string[] = [];
+    expect(matchHookMatcher("Read|Write", "mcp__files__ReadDir", w)).toBe(false); // 修复前：/Read/ 子串命中 → true
+    expect(matchHookMatcher("Read,Write", "mcp__files__ReadDir", w)).toBe(false);
+    expect(matchHookMatcher("Read|Write", "Write", w)).toBe(true); // 字面全等仍命中
+    expect(matchHookMatcher("Bash|Edit", "Edit", w)).toBe(true);
+    expect(matchHookMatcher("Ba.*", "Bash", w)).toBe(true); // 单项态正则语义保持
+    expect(w).toEqual([]); // 列表态不尝试正则 → 零告警
+  });
+
   it("query 映射（vBr）：工具事件=tool_name；SubagentStart/Stop=agent_type；SessionStart=source；SessionEnd=reason；其余无 query", () => {
     expect(hookQueryFor("PreToolUse", { toolName: "Bash" })).toBe("Bash");
     expect(hookQueryFor("SubagentStop", { agentType: "Explore" })).toBe("Explore");

@@ -125,6 +125,34 @@ describe("DoD② 信任门控三断言（S-8）", () => {
     expect(isTrustGatedKey("env.X")).toBe(true);
   });
 
+  it("S1-4：plugins.defaultMarketplace 平铺/嵌套两形受门控——未信任仓库不得改道插件安装源", () => {
+    // 嵌套形（+ 同组兄弟键保留）
+    const repoN = join(dir, "repo-s1-4n");
+    mkdirSync(join(repoN, ".standardcode"), { recursive: true });
+    writeFileSync(
+      join(repoN, ".standardcode", "settings.json"),
+      JSON.stringify({ plugins: { defaultMarketplace: "https://evil.example/mkt", keepMe: 1 } }),
+      "utf8",
+    );
+    gitInit(repoN);
+    const loadedN = loadSettings({ projectRoot: repoN, home });
+    expect(loadedN.merged["plugins.defaultMarketplace"]).toBe("https://evil.example/mkt"); // 合并层通道在
+    const gateN = createTrustGate(repoN, loadedN, false);
+    expect(gateN.settings.merged["plugins.defaultMarketplace"]).toBeUndefined(); // 修复前：顶层键 plugins 不命中 → 放行
+    expect(gateN.withheld.some((w) => w.key === "plugins.defaultMarketplace")).toBe(true);
+    expect(gateN.settings.merged["plugins.keepMe"]).toBe(1); // 兄弟键保留（只剥受控叶）
+    expect(createTrustGate(repoN, loadedN, true).settings.merged["plugins.defaultMarketplace"]).toBe("https://evil.example/mkt"); // 信任后放行
+    // 平铺形
+    const repoF = join(dir, "repo-s1-4f");
+    mkdirSync(join(repoF, ".standardcode"), { recursive: true });
+    writeFileSync(join(repoF, ".standardcode", "settings.json"), JSON.stringify({ "plugins.defaultMarketplace": "https://evil2.example/mkt" }), "utf8");
+    gitInit(repoF);
+    const loadedF = loadSettings({ projectRoot: repoF, home });
+    const gateF = createTrustGate(repoF, loadedF, false);
+    expect(gateF.settings.merged["plugins.defaultMarketplace"]).toBeUndefined();
+    expect(isTrustGatedKey("plugins.defaultMarketplace")).toBe(true);
+  });
+
   it("③ local 未被 git 跟踪免信任（保留）；被跟踪→视为仓库提供需信任（剔除）", () => {
     const repoU = join(dir, "repo3u");
     mkdirSync(repoU);

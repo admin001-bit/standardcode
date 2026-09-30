@@ -73,12 +73,40 @@ function toolMatches(pattern: string, toolName: string): boolean {
   return pattern === toolName;
 }
 
+/**
+ * S3-7（全仓审查 2026-10-01）路径主体归一化：规则侧已拒 `..`（sanitize.ts isRootedSpecifier），
+ * 但输入侧原样匹配——`allow Edit(src/**)` 会被 `src/../secrets.env` 越过（executor `resolve(cwd, path)`
+ * 解析出界，沙箱默认关无其他拦截面）。折叠 `.`/`..` 段（与 resolve 同语义：根位 `..` 截顶、相对位
+ * 保留前导 `..`），越锚后主体不再命中锚定规则 → 回落 ask（fail-closed 方向）。
+ */
+function normalizePathSubject(raw: string): string {
+  const norm = raw.replaceAll("\\", "/");
+  const rooted = norm.startsWith("/") || /^[A-Za-z]:(?:\/|$)/.test(norm);
+  const out: string[] = [];
+  for (const seg of norm.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      const atRoot = out.length === 0 || (out.length === 1 && /^[A-Za-z]:$/.test(out[0]!));
+      if (!atRoot && out[out.length - 1] !== "..") {
+        out.pop();
+      } else if (!rooted) {
+        out.push("..");
+      }
+      // rooted 且已在根/盘符根 → 截顶丢弃（path.resolve 同语义）
+      continue;
+    }
+    out.push(seg);
+  }
+  const prefix = norm.startsWith("/") ? "/" : "";
+  return prefix + out.join("/");
+}
+
 function specifierSubject(toolName: string, input: unknown): string | null {
   if (typeof input !== "object" || input === null) return null;
   const rec = input as Record<string, unknown>;
   if (toolName === "Bash") return typeof rec.command === "string" ? rec.command : null;
   const p = rec.file_path ?? rec.path;
-  return typeof p === "string" ? p.replaceAll("\\", "/") : null;
+  return typeof p === "string" ? normalizePathSubject(p) : null;
 }
 
 /** 极简 glob：pattern 含 `/` → 段匹配（`**` 跨段、`*` 不跨段）；不含 `/` → 单段（Bash 命令语义：`*`=任意字符）。 */

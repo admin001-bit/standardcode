@@ -96,6 +96,16 @@ describe("checkToolInput (工具层权威判定适配)", () => {
     expect(checkToolInput("Read", { file_path: "D:\\work\\.git\\config" }, CWD)).toMatchObject({ action: "pass" });
     expect(checkToolInput("Mcp__x__y", {}, CWD)).toMatchObject({ action: "pass" });
   });
+
+  it("S1-3：Bash token 扫描剥引号——引号形不再穿过双保险第二层（Auto 护栏一引号即穿回归）", () => {
+    // 修复前：`".git"` 不以 . 开头在过滤器被丢弃；`"C:\Windows\…"` 带引号后前缀判定失效
+    expect(checkToolInput("Bash", { command: 'cat ".git/config"' }, CWD)).toMatchObject({ action: "stop", rule: "protected-metadata" });
+    expect(checkToolInput("Bash", { command: "rm '.git/hooks/pre-commit'" }, CWD)).toMatchObject({ action: "stop", rule: "protected-metadata" });
+    expect(checkToolInput("Bash", { command: 'del "C:\\Windows\\Temp\\evil.txt"' }, CWD)).toMatchObject({ action: "stop", rule: "high-risk-path" });
+    expect(checkToolInput("Bash", { command: 'echo x >> "~/.bashrc"' }, CWD)).toMatchObject({ action: "confirm", rule: "persistence-path" });
+    // 无害引号形零误伤（路径特征但非受保护对象）
+    expect(checkToolInput("Bash", { command: 'grep "src/index.ts" README.md' }, CWD)).toMatchObject({ action: "pass" });
+  });
 });
 
 describe("independence (DoD④): no sandbox imports", () => {

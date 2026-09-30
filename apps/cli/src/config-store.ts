@@ -20,8 +20,14 @@ export function setLocalSetting(projectRoot: string, key: string, value: unknown
     }
     doc = parsed as Record<string, unknown>;
   }
-  // 点路径写入（叶子赋值；中间层为对象）
+  // 点路径写入（叶子赋值；中间层为对象）。
+  // S6-2（全仓审查 2026-10-01）原型污染拒写：`cur["__proto__"]` 读到 Object.prototype（非 null/对象）
+  // 不重置 → cur 下钻到原型对象后赋值即进程级污染；`constructor`/`prototype` 链同通。任一段命中即抛
+  //（/config 用户可控键是唯一非固定键来源——固定键 ui.theme 等不会含这些段，零误伤）。
   const segs = key.split(".");
+  if (segs.some((s) => s === "__proto__" || s === "constructor" || s === "prototype")) {
+    throw new Error(`unsafe settings key (prototype-chain segment): ${key}`);
+  }
   let cur = doc;
   for (let i = 0; i < segs.length - 1; i++) {
     const seg = segs[i]!;

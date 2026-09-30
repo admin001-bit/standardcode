@@ -162,7 +162,12 @@ export function checkToolInput(toolName: string, input: unknown, cwd: string): G
     return typeof p === "string" ? guardPath({ target: p, cwd, operation: "write" }) : { action: "pass" };
   }
   if (toolName === "Bash" && typeof rec.command === "string") {
-    const tokens = rec.command.split(/\s+/).filter((t) => /[\\/]/.test(t) || t.startsWith("."));
+    // S1-3（全仓审查 2026-10-01）：token 扫描先剥引号——原形 `".git"` 不以 `.` 开头在过滤器即被丢弃、
+    // `"C:\Windows\x"` 带引号后 isHighRiskPath/isPersistencePath 判定失效（Auto 护栏双保险第二层一引号即穿）。
+    const tokens = rec.command
+      .split(/\s+/)
+      .map((t) => t.replace(/["']/g, ""))
+      .filter((t) => t !== "" && (/[\\/]/.test(t) || t.startsWith(".")));
     for (const token of tokens) {
       if (ancestryContainsProtected(token)) {
         return { action: "stop", rule: "protected-metadata", detail: `command references protected metadata: ${token}` };

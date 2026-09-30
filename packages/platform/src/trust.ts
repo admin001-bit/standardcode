@@ -11,10 +11,14 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { mergeSettingsDocs, settingsSourcePaths, type LoadedSettings, type SettingsDoc, type SettingsSourceName } from "./settings.ts";
 
-/** 仓库内共享层键中受信任门控的键（§8.3 L380 清单；deny/ask 不在列=立即生效）。 */
+/** 仓库内共享层键中受信任门控的键（§8.3 L380 清单；deny/ask 不在列=立即生效）。
+ *  S1-4（全仓审查 2026-10-01）：头注自述清单含 marketplaces，此前键列缺位——未信任仓库可经
+ *  `plugins.defaultMarketplace`（repl.ts /plugin 读门后 settings）改道插件安装源；补列（平铺形），
+ *  嵌套形 `{"plugins":{"defaultMarketplace":…}}` 由 stripGatedKeys 内同样剥（见下）。 */
 export const TRUST_GATED_KEYS: readonly string[] = [
   "permissions.allow",
   "additionalDirectories",
+  "plugins.defaultMarketplace",
 ];
 
 /** env.* 键受门控（"多数 env"的可操作化：全部 env.* 注入需信任；凭据由用户自担 [自定]）。
@@ -123,6 +127,21 @@ function stripGatedKeys(doc: SettingsDoc, source: SettingsSourceName, withheld: 
         kept[pk] = pv; // deny/ask 等保留
       }
       filtered.permissions = kept;
+      continue;
+    }
+    // S1-4：嵌套形 {"plugins":{"defaultMarketplace":…}}——顶层键 plugins 不在受控清单，展平后归
+    // plugins.defaultMarketplace 供 /plugin 消费；与 permissions 同形逐叶剥离（其余 plugins.* 键保留）。
+    if (k === "plugins" && v !== null && typeof v === "object" && !Array.isArray(v)) {
+      const pl = v as Record<string, unknown>;
+      const kept: Record<string, unknown> = {};
+      for (const [pk, pv] of Object.entries(pl)) {
+        if (pk === "defaultMarketplace") {
+          withheld.push({ source, key: "plugins.defaultMarketplace" });
+          continue;
+        }
+        kept[pk] = pv;
+      }
+      if (Object.keys(kept).length > 0) filtered.plugins = kept;
       continue;
     }
     if (isTrustGatedKey(k)) {
