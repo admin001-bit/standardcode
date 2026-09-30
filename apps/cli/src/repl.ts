@@ -983,7 +983,9 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     theme: async (args) => {
       const s = deps.session;
       const raw = args.trim();
-      if (raw === "") {
+      // F29（2026-09-30 可用性实测）：usage 广告 `| list`（i18n cmd.theme.usage）——原实现只认空参，
+      // `/theme list` 落 resolveTheme fail-closed 抛错；归一化 list=无参列清单。
+      if (raw === "" || raw === "list") {
         const cur = themeFromSettings(s.settings);
         const opts = THEMES.map((t) => (t === cur ? `* ${t}` : `  ${t}`)).join("\n");
         return { text: `${s.i18n.t("repl.theme.current", { value: cur })}\n${opts}` };
@@ -1490,6 +1492,19 @@ async function runFileTurn(deps: ReplDeps, path: string, rest: string): Promise<
   await runPromptTurn(deps, `${rest ? `${rest}\n\n` : ""}[attached file: ${path}]\n\n${content}`);
 }
 
+// F28（2026-09-30 可用性实测）：CommandContext 按 deps 缓存复用——ctx 注释即约定"生命周期=会话生命周期"，
+// 但派发点原为每条命令新建，致 sessionGoal 等会话态即抛即弃（/goal status|clear|refine 生产路径恒失效）。
+// deps.session 经 switchSession 原地切换（identity 不变），故缓存安全；测试注入新 deps 仍得新 ctx（隔离不破）。
+const ctxCache = new WeakMap<ReplDeps, CommandContext>();
+function commandContext(deps: ReplDeps): CommandContext {
+  let ctx = ctxCache.get(deps);
+  if (!ctx) {
+    ctx = createCommandContext(deps);
+    ctxCache.set(deps, ctx);
+  }
+  return ctx;
+}
+
 async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, name: string, args: string): Promise<void> {
   if (name === "") {
     deps.io.write(`${deps.session.i18n.t("repl.command.usage")}\n`);
@@ -1506,7 +1521,7 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
     }
     if (name === "btw") {
       try {
-        const r = await createCommandContext(deps).btw(args);
+        const r = await commandContext(deps).btw(args);
         deps.io.write(`${r.text}\n`);
       } catch (err) {
         deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
@@ -1521,7 +1536,7 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
     return;
   }
   try {
-    await cmd.execute(args, createCommandContext(deps));
+    await cmd.execute(args, commandContext(deps));
   } catch (err) {
     deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
   }
