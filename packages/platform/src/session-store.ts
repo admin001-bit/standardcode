@@ -242,16 +242,36 @@ export class ResilientTranscriptWriter {
   }
 }
 
-/** 对 message 文本与 tool_result 内容做 S-10 脱敏（其余字段无自由文本）。 */
+/** 递归脱敏任意 JSON 结构的字符串叶子（S1-2：tool_use.input 形状不定——Bash 命令、Write 内容、
+ *  嵌套参数皆自由文本；结构与非字符串值原样保留，幂等随 redactSecrets）。 */
+function redactValue(v: unknown): unknown {
+  if (typeof v === "string") return redactSecrets(v);
+  if (Array.isArray(v)) return v.map(redactValue);
+  if (v !== null && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) out[k] = redactValue(val);
+    return out;
+  }
+  return v;
+}
+
+/** 全记录自由文本面 S-10 脱敏（S1-2，全仓审查 2026-10-01）。
+ *  原实现只处理 message 内 text/tool_result 两块：`tool_use.input`（Bash 命令/Write 内容）、
+ *  `thinking.thinking` 明文入盘，`kind:"compact"`（无 message）整条早退、`summary` 摘要文本绕过——
+ *  S-10 密钥脱敏被块级/记录级两重击穿。现覆盖 4 类内容块＋summary（其余记录字段为枚举/数字）。 */
 function opts_redact(rec: Omit<TranscriptRecord, "schemaVersion" | "seq" | "ts">): Omit<TranscriptRecord, "schemaVersion" | "seq" | "ts"> {
-  if (!rec.message) return rec;
+  let next = rec;
+  if (typeof rec.summary === "string") next = { ...next, summary: redactSecrets(rec.summary) };
+  if (!rec.message) return next;
   const message = {
     ...rec.message,
     content: rec.message.content.map((b) => {
       if (b.type === "text") return { ...b, text: redactSecrets(b.text) };
       if (b.type === "tool_result") return { ...b, content: redactSecrets(b.content) };
+      if (b.type === "thinking") return { ...b, thinking: redactSecrets(b.thinking) };
+      if (b.type === "tool_use") return { ...b, input: redactValue(b.input) };
       return b;
     }),
   };
-  return { ...rec, message };
+  return { ...next, message };
 }

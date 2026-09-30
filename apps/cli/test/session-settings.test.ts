@@ -16,7 +16,11 @@ function writeSettings(root: string, file: string, doc: unknown): void {
 }
 
 function baseInit(root: string): SessionInit {
-  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root };
+  // S1-1（全仓审查 2026-10-01）修复连带：本文件种子在**项目共享层**的嵌套 `env`（settings.json）受
+  // 信任门控——修复前经嵌套形绕门注入（bug 通道，CI 无环境 key 时靠它供凭据），修复后未信任必被剥。
+  // 本文件测 settings 装配/注入机制而非信任门（信任门断言在 session-trust/trust.test），故显式 trusted
+  // 模拟"已接受信任对话框"。
+  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root, trusted: true };
 }
 
 describe("createSession settings 装配（WP-01）", () => {

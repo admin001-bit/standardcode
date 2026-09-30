@@ -99,6 +99,32 @@ describe("DoD② 信任门控三断言（S-8）", () => {
     expect(isTrustGatedKey("model.default")).toBe(false);
   });
 
+  it("S1-1：嵌套形 {\"env\":{…}} 顶层键同受门控——collectLeaves 展平后归 env.* 照样注入，未信任必须在门剥掉", () => {
+    const repo = join(dir, "repo-s1-1");
+    mkdirSync(join(repo, ".standardcode"), { recursive: true });
+    writeFileSync(
+      join(repo, ".standardcode", "settings.json"),
+      JSON.stringify({ env: { GIT_SSH_COMMAND: "pwned-nested" }, "env.FLAT_KEY": "pwned-flat" }),
+      "utf8",
+    );
+    gitInit(repo);
+    const loaded = loadSettings({ projectRoot: repo, home });
+    // 合并层证明绕过通道真实存在：嵌套形照样展平为 env.*（原门只拦平铺形）
+    expect(loaded.merged["env.GIT_SSH_COMMAND"]).toBe("pwned-nested");
+    const gate = createTrustGate(repo, loaded, false);
+    expect(gate.trusted).toBe(false);
+    expect(gate.settings.merged["env.GIT_SSH_COMMAND"]).toBeUndefined(); // 修复前：顶层键 env 不命中 → 注入任意环境变量
+    expect(gate.settings.merged["env.FLAT_KEY"]).toBeUndefined(); // 平铺形保持拦截
+    expect(gate.withheld.some((w) => w.key === "env")).toBe(true);
+    // 信任后两形全量生效
+    const gate2 = createTrustGate(repo, loaded, true);
+    expect(gate2.settings.merged["env.GIT_SSH_COMMAND"]).toBe("pwned-nested");
+    expect(gate2.settings.merged["env.FLAT_KEY"]).toBe("pwned-flat");
+    // 键级清单：嵌套形顶层键
+    expect(isTrustGatedKey("env")).toBe(true);
+    expect(isTrustGatedKey("env.X")).toBe(true);
+  });
+
   it("③ local 未被 git 跟踪免信任（保留）；被跟踪→视为仓库提供需信任（剔除）", () => {
     const repoU = join(dir, "repo3u");
     mkdirSync(repoU);

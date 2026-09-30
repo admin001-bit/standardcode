@@ -72,6 +72,46 @@ describe("WP-08 S-10（DoD③）", () => {
     expect(JSON.stringify(records)).toContain(SECRET_PLACEHOLDER);
     rmSync(base, { recursive: true, force: true });
   });
+
+  it("S1-2：块级/记录级脱敏盲区——tool_use.input（含嵌套字符串叶子）、thinking、compact.summary 均落盘前脱敏", async () => {
+    const base = tmp();
+    const w = await ResilientTranscriptWriter.create("D:\\p", "s-s1-2", base);
+    await w.append({
+      kind: "assistant_message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t1", name: "Bash", input: { command: "curl -H 'Bearer abcdefghijklmnopqrst1234' https://x", timeout: 1000 } },
+          { type: "tool_use", id: "t2", name: "Write", input: { file_path: "a.txt", content: "nested sk-abc123def456ghij end", meta: { deep: ["sk-abcdef0123456789"] } } },
+          { type: "thinking", thinking: "model saw key sk-abc123def456ghij in logs" },
+          { type: "text", text: "plain reply" },
+        ],
+      },
+    });
+    await w.append({
+      kind: "compact",
+      mode: "auto",
+      preTokens: 10,
+      postTokens: 5,
+      keptCount: 0,
+      summary: "history mentioned ghp_0123456789abcdefghij once",
+    });
+    const { records } = await readTranscript(w.file!);
+    const raw = JSON.stringify(records);
+    expect(raw).not.toContain("sk-abc123def456ghij"); // tool_use.input/thinking（修复前明文入盘）
+    expect(raw).not.toContain("abcdefghijklmnopqrst1234");
+    expect(raw).not.toContain("sk-abcdef0123456789"); // 嵌套数组叶子
+    expect(raw).not.toContain("ghp_0123456789abcdefghij"); // compact.summary（修复前整条早退绕过）
+    expect(raw).toContain(SECRET_PLACEHOLDER);
+    // 结构保真：非字符串值与非密钥文本原样
+    const rec0 = records[0]!;
+    const tu = rec0.message!.content.find((b) => b.type === "tool_use");
+    expect(tu && tu.type === "tool_use" && tu.input).toMatchObject({ command: expect.stringContaining("curl"), timeout: 1000 });
+    const txt = rec0.message!.content.find((b) => b.type === "text");
+    expect(txt && txt.type === "text" && txt.text).toBe("plain reply");
+    expect(records[1]!.summary).toContain(SECRET_PLACEHOLDER);
+    rmSync(base, { recursive: true, force: true });
+  });
 });
 
 describe("WP-08 磁盘满降级（DoD④）", () => {

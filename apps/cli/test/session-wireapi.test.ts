@@ -16,7 +16,9 @@ function writeSettings(root: string, doc: unknown): void {
 }
 
 function baseInit(root: string): SessionInit {
-  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root };
+  // S1-1（全仓审查 2026-10-01）修复连带：嵌套 `env` 种子在项目共享层受信任门控——修复前经 bug 通道
+  // 注入，修复后未信任被剥致 CI（无环境 key）缺 key 红；本文件测 wire_api/keychain 链非信任门，显式 trusted。
+  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root, trusted: true };
 }
 
 describe("buildProvider wire_api 线制（WP-02 DoD③）", () => {

@@ -17,10 +17,13 @@ export const TRUST_GATED_KEYS: readonly string[] = [
   "additionalDirectories",
 ];
 
-/** env.* 键受门控（"多数 env"的可操作化：全部 env.* 注入需信任；凭据由用户自担 [自定]）。 */
+/** env.* 键受门控（"多数 env"的可操作化：全部 env.* 注入需信任；凭据由用户自担 [自定]）。
+ *  S1-1（全仓审查 2026-10-01）：嵌套形 `{"env":{"GIT_SSH_COMMAND":…}}` 的顶层键是 `env`（无点），
+ *  原前缀判定不命中——而 settings.ts collectLeaves 展平后照样归 `env.*` 由 applySettingsEnv 注入 ⇒
+ *  未信任仓库可经嵌套形注入任意环境变量。两形（顶层 `env` 对象 / 平铺 `env.*`）同受门控。 */
 export function isTrustGatedKey(key: string): boolean {
   if (TRUST_GATED_KEYS.includes(key)) return true;
-  if (key.startsWith("env.")) return true;
+  if (key === "env" || key.startsWith("env.")) return true;
   return false;
 }
 
