@@ -77,6 +77,42 @@ describe("wp03 bash/write/edit sandbox routing", () => {
     expect(h.shutdownCalled).toBe(true);
   }, 15_000);
 
+  it("S4-4：race 收束后 abort 监听器成对摘除——正常完成后迟到 abort 不再 shutdown（原 finally 只清 timer）", async () => {
+    const rec: Array<{ kind: string; payload: unknown }> = [];
+    let shutdowns = 0;
+    const h = fakeHandle({}, rec);
+    const orig = h.shutdown;
+    h.shutdown = () => {
+      shutdowns++;
+      orig();
+    };
+    const ac = new AbortController();
+    const out = await execBash({ command: "echo hi" }, { cwd: process.cwd(), env: {}, sandbox: h, signal: ac.signal });
+    expect(out.trim()).toBe("ok");
+    expect(shutdowns).toBe(0);
+    ac.abort(); // 迟到 Ctrl+C（同一 turn 活体 signal）——修复前残留监听器触发会话级 shutdown 且不可逆
+    await new Promise((r) => setTimeout(r, 10));
+    expect(shutdowns).toBe(0); // 修复前=1（会话沙箱死，后续全部 SandboxUnavailableError）
+  });
+
+  it("S4-4：超时臂收束后同样摘除——迟到 abort 不再二次 shutdown（既有超时 shutdown 语义保持）", async () => {
+    const h = createSandboxHandleDelay();
+    const ac = new AbortController();
+    const wrapper = { ...h } as typeof h;
+    let shutdowns = 0;
+    wrapper.shutdown = () => {
+      shutdowns++;
+      h.shutdown();
+    };
+    await expect(
+      execBash({ command: "sleep 5", timeout: 1 }, { cwd: process.cwd(), env: {}, sandbox: wrapper, signal: ac.signal }),
+    ).rejects.toThrow(/timed out after 1ms/);
+    expect(shutdowns).toBe(1); // 超时自身的会话级 shutdown（登记语义保持）
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(shutdowns).toBe(1); // 迟到 abort 零追加
+  }, 15_000);
+
   it("execWrite 经沙箱：目录护栏先行（宿主 stat）；写走 writeViaSandbox 同文案", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wp03-route-"));
     const rec: Array<{ kind: string; payload: unknown }> = [];

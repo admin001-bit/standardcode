@@ -39,6 +39,9 @@ function truthyEnv(raw: string | undefined): boolean {
   return raw !== undefined && /^(1|true|yes)$/i.test(raw.trim());
 }
 
+/** 可运行工具定义（元数据＋run 原语；run 必须消费 bind 下发的逐调用 env——S4-1 见下）。 */
+type RunnableToolDef = ToolMetadata & { run(input: unknown, env: ExecEnv): Promise<string> };
+
 export function createStandardTools(opts: StandardToolsOptions = {}): StandardTool[] {
   const toolEnv = sanitizeToolEnv();
   if (opts.debugToolEnv ?? truthyEnv(process.env.STANDARD_CODE_DEBUG)) {
@@ -48,17 +51,20 @@ export function createStandardTools(opts: StandardToolsOptions = {}): StandardTo
     );
   }
   const env: ExecEnv = { cwd: opts.cwd ?? process.cwd(), env: toolEnv.env, ...(opts.spillDir ? { spillDir: opts.spillDir } : {}), ...(opts.sandbox ? { sandbox: opts.sandbox } : {}) };
-  const bind = (def: ToolMetadata & { run(input: unknown, env: ExecEnv): Promise<string> }): StandardTool => ({
+  const bind = (def: RunnableToolDef): StandardTool => ({
     ...def,
-    // 中断信号与子进程注册逐调用并入 env（§8.4：工具 MUST 观察中断；harness 负责注册进程的树终止）
+    // 中断信号与子进程注册逐调用并入 env（§8.4：工具 MUST 观察中断；harness 负责注册进程的树终止）。
+    // S4-1（全仓审查 2026-10-01）：六工具 run 原为单参 `(input) => execX(input, 闭包 env)`——本处并入的
+    // 第 2 参被形参表丢弃（TS 少参可赋值不报错），signal/registerProcess 恒 undefined ⇒ 执行中 Ctrl+C
+    // 无效、procs 恒空。修＝run 显式收第 2 参并透传（闭包 env 不再被 run 引用）。
     execute: (input: unknown, ctx: ToolContext) => def.run(input, { ...env, signal: ctx.signal, registerProcess: ctx.registerProcess }),
   });
-  return [bashTool(env), readTool(env), writeTool(env), editTool(env), globTool(env), grepTool(env)].map(bind);
+  return [bashTool, readTool, writeTool, editTool, globTool, grepTool].map(bind);
 }
 
 // —— 执行类 ——
 
-const bashTool = (env: ExecEnv) => ({
+const bashTool: RunnableToolDef = {
   name: "Bash",
   description:
     "Executes a shell command and returns combined stdout/stderr. Default timeout 120s, hard cap 600s (pass timeout in milliseconds to raise per-call); " +
@@ -75,12 +81,13 @@ const bashTool = (env: ExecEnv) => ({
       timeout: { type: "integer", description: "optional timeout in ms (max 600000)" },
     },
   },
-  run: (input: unknown) => execBash(input as BashInput, env),
-});
+  // S4-1：run 必须消费 bind 下发的第 2 参（逐调用 env 带 ctx.signal/registerProcess），不得闭包基线 env
+  run: (input: unknown, env: ExecEnv) => execBash(input as BashInput, env),
+};
 
 // —— 文件类 ——
 
-const readTool = (env: ExecEnv) => ({
+const readTool: RunnableToolDef = {
   name: "Read",
   description:
     "Reads a file from the local filesystem as UTF-8 text with cat -n line numbers (default up to 2000 lines; overlong lines truncated). " +
@@ -97,10 +104,10 @@ const readTool = (env: ExecEnv) => ({
       limit: { type: "integer", description: "max lines to read" },
     },
   },
-  run: (input: unknown) => execRead(input as ReadInput, env),
-});
+  run: (input: unknown, env: ExecEnv) => execRead(input as ReadInput, env),
+};
 
-const writeTool = (env: ExecEnv) => ({
+const writeTool: RunnableToolDef = {
   name: "Write",
   description: "Writes a file to the local filesystem, overwriting it if it exists (parent directories are created). Prefer Edit for changing existing files.",
   searchHint: "file creation, overwrite file",
@@ -114,10 +121,10 @@ const writeTool = (env: ExecEnv) => ({
       content: { type: "string", description: "full file content" },
     },
   },
-  run: (input: unknown) => execWrite(input as WriteInput, env),
-});
+  run: (input: unknown, env: ExecEnv) => execWrite(input as WriteInput, env),
+};
 
-const editTool = (env: ExecEnv) => ({
+const editTool: RunnableToolDef = {
   name: "Edit",
   description:
     "Replaces old_string with new_string in a file. Fails when old_string is not unique unless replace_all is set — include more surrounding context " +
@@ -135,12 +142,12 @@ const editTool = (env: ExecEnv) => ({
       replace_all: { type: "boolean", description: "replace every occurrence (default false)" },
     },
   },
-  run: (input: unknown) => execEdit(input as EditInput, env),
-});
+  run: (input: unknown, env: ExecEnv) => execEdit(input as EditInput, env),
+};
 
 // —— 搜索类 ——
 
-const globTool = (env: ExecEnv) => ({
+const globTool: RunnableToolDef = {
   name: "Glob",
   description:
     "Fast file pattern matching: returns up to 100 newest files matching a glob pattern (supports * and **), sorted by modification time. " +
@@ -156,10 +163,10 @@ const globTool = (env: ExecEnv) => ({
       path: { type: "string", description: "optional root directory (default session cwd)" },
     },
   },
-  run: (input: unknown) => execGlob(input as GlobInput, env),
-});
+  run: (input: unknown, env: ExecEnv) => execGlob(input as GlobInput, env),
+};
 
-const grepTool = (env: ExecEnv) => ({
+const grepTool: RunnableToolDef = {
   name: "Grep",
   description:
     "Content search backed by ripgrep (must be installed on PATH; on Windows: winget install BurntSushi.ripgrep.MSVC). " +
@@ -178,5 +185,5 @@ const grepTool = (env: ExecEnv) => ({
       case_insensitive: { type: "boolean", description: "case-insensitive matching" },
     },
   },
-  run: (input: unknown) => execGrep(input as GrepInput, env),
-});
+  run: (input: unknown, env: ExecEnv) => execGrep(input as GrepInput, env),
+};

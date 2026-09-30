@@ -81,6 +81,10 @@ async function execBashSandboxed(input: BashInput, env: ExecEnv, shell: { comman
   });
   run.catch(() => {}); // 输 race 时抑制 unhandled rejection（结果已由 timeout/interrupt 呈现）
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // S4-4（全仓审查 2026-10-01）：abort 监听器必须随 race 收束成对摘除——原 finally 只清 timer，正常/超时
+  // 胜出后监听器残留挂在活体 signal 上，迟到 Ctrl+C 触发 sandbox.shutdown() 且 shutting 永久置位
+  // （client 无重启路径）⇒ 会话后续全部沙箱执行 SandboxUnavailableError 直到重启 CLI。
+  let removeAbort: (() => void) | undefined;
   const timeouts = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       sandbox.shutdown();
@@ -89,14 +93,12 @@ async function execBashSandboxed(input: BashInput, env: ExecEnv, shell: { comman
   });
   const interrupted = env.signal
     ? new Promise<never>((_, reject) => {
-        env.signal!.addEventListener(
-          "abort",
-          () => {
-            sandbox.shutdown();
-            reject(new ExecError("interrupted"));
-          },
-          { once: true },
-        );
+        const onAbort = () => {
+          sandbox.shutdown();
+          reject(new ExecError("interrupted"));
+        };
+        env.signal!.addEventListener("abort", onAbort, { once: true });
+        removeAbort = () => env.signal!.removeEventListener("abort", onAbort);
       })
     : null;
   try {
@@ -115,6 +117,7 @@ async function execBashSandboxed(input: BashInput, env: ExecEnv, shell: { comman
     throw err;
   } finally {
     if (timer) clearTimeout(timer);
+    removeAbort?.(); // 成对摘除（中断臂胜出时 once 已摘，二次摘幂等）
   }
 }
 
