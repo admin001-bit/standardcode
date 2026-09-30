@@ -9,7 +9,7 @@ import type { LLMEvent, ProviderAdapter } from "@standardcode/providers";
 import { acceptTrust } from "@standardcode/platform";
 import { createSession } from "../src/session.ts";
 import { runRepl, type ReplIo } from "../src/repl.ts";
-import { alwaysAllowRuleFor, parseConfirmAnswer, parseTrustAnswer, trustQuestion } from "../src/confirm.ts";
+import { alwaysAllowRuleFor, alwaysAllowRulesFor, parseConfirmAnswer, parseTrustAnswer, trustQuestion } from "../src/confirm.ts";
 
 let dir: string;
 beforeAll(() => {
@@ -111,6 +111,14 @@ describe("DoD①/② 确认流（ask → y/a/n；总是允许落 local 层）", 
     expect(alwaysAllowRuleFor("Bash", { command: "echo hi" })).toBe("Bash(echo *)");
     expect(alwaysAllowRuleFor("Write", { file_path: "a\\b.txt" })).toBe("Write(a/b.txt)");
     expect(alwaysAllowRuleFor("WebFetch", { url: "https://x" })).toBe("WebFetch");
+  });
+
+  it("S3-1 alwaysAllowRulesFor：复合 Bash 逐段首词各一条（同首词去重）；单段/非 Bash 与单条口径一致", () => {
+    expect(alwaysAllowRulesFor("Bash", { command: "echo hi" })).toEqual(["Bash(echo *)"]); // 单段=原口径
+    expect(alwaysAllowRulesFor("Bash", { command: "git status && echo hi" })).toEqual(["Bash(git *)", "Bash(echo *)"]);
+    expect(alwaysAllowRulesFor("Bash", { command: "git a && git b" })).toEqual(["Bash(git *)"]); // 同首词去重
+    expect(alwaysAllowRulesFor("Write", { file_path: "a\\b.txt" })).toEqual(["Write(a/b.txt)"]);
+    expect(alwaysAllowRulesFor("WebFetch", { url: "https://x" })).toEqual(["WebFetch"]);
   });
 });
 

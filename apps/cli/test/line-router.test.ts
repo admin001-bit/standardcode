@@ -37,14 +37,28 @@ describe("createLineRouter（P0 修复回归）", () => {
     await expect(it.next()).resolves.toEqual({ value: "second", done: false });
   });
 
-  it("EOF：挂起 askLine 以空串收束（fail-closed=按不信任处理）；挂起 lines 直接终止（不吐空行）", async () => {
+  it("EOF：挂起 askLine 以 null 收束（S6-1：EOF≠空串，提问方按语义 fail-closed）；挂起 lines 直接终止（不吐空行）", async () => {
     const { input, router } = mkRouter();
     const it = router.lines[Symbol.asyncIterator]();
     const p = router.askLine("q? ");
     const n = it.next(); // lines 的 waiter 先行挂上（覆盖 close 收束路径）
     input.end();
-    await expect(p).resolves.toBe("");
+    await expect(p).resolves.toBeNull();
     await expect(n).resolves.toEqual({ value: undefined, done: true });
+  });
+
+  it("S6-1 回归：真实空行仍解析为空串（回车=once 缺省档语义不变，与 EOF 可分）", async () => {
+    const { input, router } = mkRouter();
+    const p = router.askLine("q? ");
+    input.write("\n");
+    await expect(p).resolves.toBe("");
+  });
+
+  it("S6-1 回归：EOF 之后迟到的 askLine 直接得 null（不挂死）", async () => {
+    const { input, router } = mkRouter();
+    input.end();
+    await new Promise((r) => setTimeout(r, 10)); // 等 pump 收束（closed=true）
+    await expect(router.askLine("q? ")).resolves.toBeNull();
   });
 
   it("管道场景：缓冲行取尽后 lines 终止（非 TTY 跑完即退）", async () => {

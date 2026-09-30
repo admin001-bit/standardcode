@@ -315,6 +315,13 @@ export interface SubagentRunContext {
   /** WP-10（ADR-0043 决策 6/DoD⑤）：定义级 hooks 执行面（接线层经 SEC-070 确认/留痕后构造注入；透传 runAgentLoop——子代理工具链过 agent 级引擎）。 */
   hooks?: LoopOptions["hooks"];
   /**
+   * S3-2（全仓审查 2026-10-01）：guard-path 护栏透传——子代理 Write/Edit/Bash 与主循环同守
+   * stop/confirm 硬闸（原结构缺位=子代理写 `.bashrc`/高危路径时护栏全失效，acceptEdits 下直落盘）。
+   */
+  guard?: LoopOptions["guard"];
+  /** S3-2：file-history 写盘前快照透传——子代理写盘入 rewind 数据面（原结构缺位=子代理写盘零快照）。 */
+  fileHistory?: LoopOptions["fileHistory"];
+  /**
    * WP-06（ORC-022 omit 规则消费面）：父会话可传入记忆/gitStatus 段进子 agent 系统提示词组装；
    * 定义位 omitClaudeMd/omitGitStatus 置真时对应段省略（子代理上下文本就隔离，omit 作用于提示词组装）。
    */
@@ -426,6 +433,9 @@ export async function runSubagent(
     maxToolRounds: def.maxTurns,
     onProcess: run.onProcess,
     ...(run.hooks ? { hooks: run.hooks } : {}),
+    // S3-2：护栏/写盘快照透传（与主循环 repl.ts 同源装配；缺省 undefined=原语义）
+    ...(run.guard ? { guard: run.guard } : {}),
+    ...(run.fileHistory ? { fileHistory: run.fileHistory } : {}),
     agentKind: "subagent", // WP-02（M4）：MCP 转后台生效条件之"主循环"面（:296642 同构）
   })) {
     switch (ev.type) {

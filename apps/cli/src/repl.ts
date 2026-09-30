@@ -18,7 +18,7 @@ import { AGENTS_SKELETON, CLI_COMMANDS, deriveSubtaskName, EFFORT_LEVELS, EFFORT
 import { bashWriteTargets, sessionDiff, persistAlwaysAllow, type ExperimentalGate, type FileHistoryStore } from "@standardcode/platform";
 import { buildContextGrid, renderContextGrid, cleanupToolResults, contextCollapse, nextReactiveStep } from "@standardcode/context";
 import { runCompaction, createCompactionCoordinator, resolveAutocompactConfig, MANUAL_WINDOW_MIN, MANUAL_WINDOW_MAX } from "@standardcode/context";
-import { alwaysAllowRuleFor, type ConfirmPrompt } from "./confirm.ts";
+import { alwaysAllowRulesFor, type ConfirmPrompt } from "./confirm.ts";
 import { isTrusted } from "@standardcode/platform";
 import { createStandardTools } from "@standardcode/capabilities";
 import { workflowBoard } from "./workflow-board.ts";
@@ -437,7 +437,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const launch = await spawnSubagentTask(
         { prompt, ...(type !== undefined ? { subagentType: type } : {}), description: deriveSubtaskName(prompt), runInBackground: false },
         spawn.ctx,
-        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
+        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, guard: guardOptionFor(deps), fileHistory: fileHistoryOptionFor(deps), ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) }, // S3-2：子代理护栏/快照接线
         {
           registry: s.taskRegistry,
           env: {}, // env 空=autoBackgroundMs 0 → 同步恒同步
@@ -762,7 +762,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
           runInBackground: true, // fork=后台异步（[CC] isAsync:!0）→ async_launched
         },
         spawn.ctx,
-        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
+        { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, guard: guardOptionFor(deps), fileHistory: fileHistoryOptionFor(deps), ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) }, // S3-2：子代理护栏/快照接线
         {
           registry: s.taskRegistry,
           env: {}, // 同 /subtask：翻转面无涉（后台显式 true 恒走后台分支）
@@ -941,7 +941,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         const launch = await spawnSubagentTask(
           { prompt: s.i18n.t("repl.goal.refinePrompt", { value: sessionGoal }), description: "goal-refine", runInBackground: false },
           spawn.ctx,
-          { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) },
+          { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, guard: guardOptionFor(deps), fileHistory: fileHistoryOptionFor(deps), ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) }, // S3-2：子代理护栏/快照接线
           {
             registry: s.taskRegistry,
             env: {}, // env 空=同步恒同步（subtask 同形）
@@ -1233,6 +1233,36 @@ export function drainSessionNotes(s: Session): void {
   }
 }
 
+/**
+ * S3-2（全仓审查 2026-10-01）：护栏/写盘快照装配单源——主循环与 subtask/fork/refine 三个 spawn 面共用
+ * （子代理 Write/Edit/Bash 同守 guard-path 硬闸与 file-history 快照；cwd 动态读=与 /cd 后主循环一致）。
+ */
+function guardOptionFor(deps: ReplDeps): { check(toolName: string, input: unknown): { action: "stop" | "confirm" | "pass"; rule?: string; detail?: string } } {
+  return {
+    check: (name, input) => {
+      const v = guardCheck(name, input, deps.session.cwd);
+      return { action: v.action, ...(v.rule ? { rule: v.rule } : {}), ...(v.detail ? { detail: v.detail } : {}) };
+    },
+  };
+}
+
+function fileHistoryOptionFor(deps: ReplDeps): { beforeTool(toolName: string, input: unknown): Promise<void> } | undefined {
+  const fh = deps.fileHistory;
+  if (!fh) return undefined;
+  return {
+    beforeTool: async (name, input) => {
+      const rec = input as { file_path?: unknown; command?: unknown };
+      if ((name === "Write" || name === "Edit") && typeof rec.file_path === "string") {
+        await fh.snapshot(name as "Write" | "Edit", resolve(deps.session.cwd, rec.file_path));
+      } else if (name === "Bash" && typeof rec.command === "string") {
+        for (const t of bashWriteTargets(rec.command)) {
+          await fh.snapshot("Bash", resolve(deps.session.cwd, t));
+        }
+      }
+    },
+  };
+}
+
 async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
   const s = deps.session;
   // M5-WP-06：遥测 turn 界门刷新（SEC-050 一键关：env STANDARD_CODE_TELEMETRY 每 turn 重读=翻回即时生效；
@@ -1337,44 +1367,30 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
           }),
         },
         // WP-09（EXE-030/040）：写盘前快照（Write/Edit 取 file_path；Bash 重定向启发式，[自定]）
-        fileHistory: deps.fileHistory
-          ? {
-              beforeTool: async (name, input) => {
-                const rec = input as { file_path?: unknown; command?: unknown };
-                if ((name === "Write" || name === "Edit") && typeof rec.file_path === "string") {
-                  await deps.fileHistory!.snapshot(name as "Write" | "Edit", resolve(s.cwd, rec.file_path));
-                } else if (name === "Bash" && typeof rec.command === "string") {
-                  for (const t of bashWriteTargets(rec.command)) {
-                    await deps.fileHistory!.snapshot("Bash", resolve(s.cwd, t));
-                  }
-                }
-              },
-            }
-          : undefined,
+        // S3-2：装配抽单源 fileHistoryOptionFor（与 subagent spawn 面同函数；原内联随修抽出）
+        fileHistory: fileHistoryOptionFor(deps),
         messages: s.messages,
         tools: s.skills.toolFace(s.tools), // M4-WP05：allowed-tools 白名单收窄（DoD⑤ S-5；激活自下一 turn 生效 [自定]）
         // WP-09：guard-path 护栏（platform 实现；stop 硬停/confirm 升 ask——S-9 Auto 不豁免）
-        guard: {
-          check: (name, input) => {
-            const v = guardCheck(name, input, s.cwd);
-            return { action: v.action, ...(v.rule ? { rule: v.rule } : {}), ...(v.detail ? { detail: v.detail } : {}) };
-          },
-        },
+        // S3-2：装配抽单源 guardOptionFor（与 subagent spawn 面同函数）
+        guard: guardOptionFor(deps),
         // WP-08：权限仲裁挂接（评估序与 Plan 硬门在 broker；ask → 确认 UI 最小流——解除 M1 拒绝降级）
         permission: {
           check: async (name, input) => {
             const v = s.broker.evaluate(name, input);
             if (v.decision !== "ask" || !deps.confirm) return v.decision;
-            const rule = alwaysAllowRuleFor(name, input);
             const choice = await deps.confirm.confirm(name, v.reason);
             if (choice === "once") return "allow";
             if (choice === "always") {
+              // S3-1：复合 Bash 的"总是允许"=逐段首词各一条规则（evaluate 已分段——单条盖不住多段，
+              // 否则同形复合命令永远重复 ask）；非 Bash 恒单条，语义与原 alwaysAllowRuleFor 一致。
+              const rules = alwaysAllowRulesFor(name, input);
               try {
-                s.broker.addAllow(rule); // 运行时即时生效（构造期清洗，违规抛错→按拒绝处理）
+                for (const rule of rules) s.broker.addAllow(rule); // 运行时即时生效（构造期清洗，违规抛错→按拒绝处理）
               } catch {
                 return "deny";
               }
-              persistAlwaysAllow(s.cwd, rule); // ADR-0037：跨会话落项目 local 层（§8.3"只落 local 层"原文路径）
+              for (const rule of rules) persistAlwaysAllow(s.cwd, rule); // ADR-0037：跨会话落项目 local 层（§8.3"只落 local 层"原文路径）
               return "allow";
             }
             return "deny";

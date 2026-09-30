@@ -23,8 +23,13 @@ import { getKeybindings, keybindingsFromSettings, matchKeyEvent, setKeybindings,
  * 消费它（main 尾部）时才从 rl 拉行；而信任提问/沙箱确认发生在启动早期（消费之前）⇒
  * `askLine` 的 waiter 永远没有搬运工 → 真 TTY 下任何**未信任目录的首次运行必卡死**
  * （CI 无 TTY 测试 + 首跑前置信任，故自 M2 潜伏）。改为**主动泵**：pump 随 router 创建
- * 立即启动，把行分发给 waiter 或缓冲队列；EOF 时唤醒挂起 waiter（空串＝fail-closed 不信任）
- * 并终止 lines（REPL 可退出）——非 TTY 管道跑完即退（原同样挂住）一并修复。
+ * 立即启动，把行分发给 waiter 或缓冲队列；EOF 时唤醒挂起 waiter 并终止 lines（REPL 可退出）
+ * ——非 TTY 管道跑完即退（原同样挂住）一并修复。
+ *
+ * S6-1（全仓审查 2026-10-01）：EOF 唤醒 ask 等待者原为**空串**，与「回车空行」在解析层不可分——
+ * `parseConfirmAnswer("")==="once"` 致 Ctrl+D/断线即无同意放行（权限确认=allow once、danger 沙箱
+ * 确认判 true 直接启用）。改为 ask 等待者收 **null**（EOF 专用），空串只可能来自真实空行；
+ * 各提问方显式映射 fail-closed（confirm→deny、trust→不信任、选择器→取消）。
  */
 export function createLineRouter(rl: import("node:readline").Interface) {
   const EOF = Symbol("line-router-eof");
@@ -33,8 +38,9 @@ export function createLineRouter(rl: import("node:readline").Interface) {
   let closed = false;
   const close = () => {
     closed = true;
-    // 分型收束：提问等待者→空串（fail-closed＝按不信任/拒绝处理）；lines 等待者→EOF 哨兵（直接终止，不吐空行）
-    for (const w of waiters.splice(0)) w.fn(w.kind === "ask" ? "" : EOF);
+    // 分型收束：提问等待者→EOF 哨兵（askLine 映射 null＝fail-closed 由提问方按语义处理，S6-1）；
+    // lines 等待者→EOF 哨兵（直接终止，不吐空行）
+    for (const w of waiters.splice(0)) w.fn(EOF);
   };
   void (async () => {
     try {
@@ -51,12 +57,13 @@ export function createLineRouter(rl: import("node:readline").Interface) {
     }
   })();
   return {
-    askLine(question: string): Promise<string> {
+    askLine(question: string): Promise<string | null> {
       process.stdout.write(question);
       const next = buffered.shift();
       if (next !== undefined) return Promise.resolve(next);
+      if (closed) return Promise.resolve(null); // 收束后仍提问（EOF 后迟到的 ask）：null＝fail-closed，不挂死
       return new Promise((resolve) => {
-        waiters.push({ kind: "ask", fn: (v) => resolve(v as string) });
+        waiters.push({ kind: "ask", fn: (v) => resolve(v === EOF ? null : v) });
       });
     },
     lines: (async function* () {
@@ -111,7 +118,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const repoRoot = findGitRoot(workdir);
       const symlinkFlagged = isNativeDirSymlink(workdir);
       const answer = await router.askLine(trustQuestion(workdir, repoRoot, symlinkFlagged));
-      if (parseTrustAnswer(answer)) acceptTrust(workdir);
+      if (answer !== null && parseTrustAnswer(answer)) acceptTrust(workdir); // S6-1：EOF(null)＝不信任
       else process.stdout.write("[trust] proceeding without trust — shared settings stay gated (deny/ask still apply)\n");
     }
   }
@@ -131,7 +138,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }),
       async () => {
         if (!process.stdin.isTTY) return false; // 非 TTY=无法显式确认→不启用（fail-closed，非降档）
-        const choice = parseConfirmAnswer(await router.askLine(confirmQuestion("sandbox", "danger-full-access：全盘可写+网络全开，沙箱不施加固有限制")));
+        // S6-1：EOF(null)→deny——原空串映射 once 会令 Ctrl+D 直接启用 danger 档
+        const raw = await router.askLine(confirmQuestion("sandbox", "danger-full-access：全盘可写+网络全开，沙箱不施加固有限制"));
+        const choice = raw === null ? "deny" : parseConfirmAnswer(raw);
         return choice === "once" || choice === "always";
       },
     );
@@ -165,7 +174,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const ttyConfirm = process.stdin.isTTY
     ? {
         async confirm(toolLabel: string, detail: string): Promise<ConfirmChoice> {
-          return parseConfirmAnswer(await router.askLine(confirmQuestion(toolLabel, detail)));
+          // S6-1：EOF(null)→deny（原空串经 parseConfirmAnswer 映射 once＝无同意放行）
+          const raw = await router.askLine(confirmQuestion(toolLabel, detail));
+          return raw === null ? "deny" : parseConfirmAnswer(raw);
         },
       }
     : undefined;
@@ -179,6 +190,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           for (;;) {
             candidates.forEach((e, i) => process.stdout.write(`  ${i + 1}. ${fmt(e)}\n`));
             const raw = await router.askLine("resume # / <search> / r<N> <title> to rename / empty to cancel: ");
+            if (raw === null) return null; // S6-1：EOF＝取消（与空行同路）
             const s = raw.trim();
             if (s === "") return null;
             if (/^\d+$/.test(s)) {
@@ -210,7 +222,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // 选择器内重命名钩子（恢复前对历史会话；空输入跳过）
         async rename(entry: SessionIndexEntry): Promise<void> {
           const raw = await router.askLine(`rename this session (empty to keep "${entry.title || "(no title)"}"): `);
-          if (raw.trim() !== "") {
+          if (raw !== null && raw.trim() !== "") { // S6-1：EOF＝保持原名
             const { renameSessionTitle } = await import("@standardcode/platform");
             await renameSessionTitle(process.cwd(), entry.sessionId, raw.trim());
           }
