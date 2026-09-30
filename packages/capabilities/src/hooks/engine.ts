@@ -45,7 +45,9 @@ export interface HookEngineOptions {
   /** 工作区信任态（:262013 逐字跳全部；thunk 形式=/reload 后读最新）。 */
   trusted: boolean | (() => boolean);
   cwd?: string;
-  sessionId?: string;
+  /** S5-4（全仓审查 2026-10-01）：接受 thunk 活读——会话 id 在 switchSession 随切随更，按值捕获会
+   *  停在构造期（原空串条件展开直接省略 ⇒ payload 永无 session_id）。 */
+  sessionId?: string | (() => string);
   /** http 型注入面（测试）；缺省 global fetch。 */
   fetchImpl?: typeof fetch;
   /** command 型注入面（测试）；缺省 node:child_process spawn。 */
@@ -243,9 +245,10 @@ export function createHookEngine(config: LoadedHooksConfig, opts: HookEngineOpti
       for (const g of matched) for (const h of g.hooks) flat.push({ config: h, source: g.source });
       if (flat.length === 0) return { verdict: null, decisionReason: null, nonBlockingErrors };
 
+      const sid = typeof opts.sessionId === "function" ? opts.sessionId() : opts.sessionId; // S5-4：thunk 活读
       const payload: Record<string, unknown> = {
         hook_event_name: event,
-        ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
+        ...(sid ? { session_id: sid } : {}),
         ...(opts.cwd ? { cwd: opts.cwd } : {}),
         ...(input.stopHookActive ? { stop_hook_active: true } : {}),
         ...input.payload,

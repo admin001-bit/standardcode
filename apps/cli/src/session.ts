@@ -13,6 +13,7 @@ import { applySettingsEnv, buildPluginDocs, configureI18n, createI18n, createKey
 import { createTrustGate, isTrusted, projectMemoryDir, readMcpTrust, readTrustStore, recordMcpTrust, type McpTrustRecord, type TrustGateResult } from "@standardcode/platform";
 import { buildMemoryDisciplinePrompt, createCompactionCoordinator, detectProjectWorkspace, loadAutoMemory, loadMemory, renderAutoMemoryContext, resolveAutocompactConfig, type AutoMemoryView, type CompactionCoordinator, type LoadedMemory, type MemoryPrecedence, type ThinkingSetting } from "@standardcode/context";
 import { readdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { createWorkflowRunner, type WorkflowRunner } from "./workflow-runner.ts";
@@ -68,6 +69,9 @@ export interface SessionSkills {
   toolFace(base: StandardTool[]): StandardTool[];
   /** 用户点名豁免（/skills run；不经 Skill tool=免 disable-model-invocation 限制，DoD④ 双轨）。 */
   runByName(name: string, args?: string): { text: string; injected: string | null };
+  /** S5-5（全仓审查 2026-10-01）：注入三态复位（sent 名/hash 集合+激活态）——switchSession/clearHistory
+   *  调用；原只增无清 ⇒ /new 后新会话永看不到清单、/clear 后 already loaded 自相矛盾、旧激活白名单继续收窄。 */
+  resetInjectionState(): void;
 }
 
 /** M4-WP-09：plugin 门面（会话装配期聚合四注入面消费；生效时点=会话创建，/reload 不重建装配面与 skills/hooks 既有口径一致 [自定] 登记偏差）。 */
@@ -108,7 +112,7 @@ export interface SessionAgents {
 }
 
 export interface Session {
-  /** 当前会话 ID（WP-10：转录文件名+锁键+/resume 目标；repl 初始化时赋 UUID）。 */
+  /** 当前会话 ID（WP-10：转录文件名+锁键+/resume 目标；createSession 即赋 UUID，switchSession 随切随更——S5-4）。 */
   id: string;
   provider: ProviderAdapter;
   providerName: string;
@@ -116,6 +120,10 @@ export interface Session {
   catalog: readonly string[];
   model: string;
   messages: LLMMessage[];
+  /** M7-WP-01 会话目标（/goal）——R1-3（全仓审查 2026-10-01）：原存 ctx 闭包致每条会话切换路径须手工清
+   *  （resume 漏清=R1-1 跨会话残留、clear 漏清=R1-2 status 失真）；改 Session 字段随 messages/meter 在
+   *  switchSession 一并复位。仅会话内存态不落盘 [自定]。 */
+  sessionGoal?: string;
   tools: StandardTool[];
   cwd: string;
   meter: UsageMeter;
@@ -486,12 +494,15 @@ export function createSession(init: SessionInit = {}): Session {
     ? createSandboxHandle({ tier: init.sandbox.tier, workspaceRoot: sessionCwd, ...(init.sandbox.binaryPath ? { binaryPath: init.sandbox.binaryPath } : {}) })
     : undefined;
   const session: Session = {
-    id: "",
+    // S5-4（全仓审查 2026-10-01）：创建即赋 UUID——原 id="" 且 runRepl 事后才赋，hookEngine 构造期
+    // 按值捕获空 id（条件展开直接省略）⇒ hooks payload 永无 session_id；telemetry/MCP 拿到空串兜底。
+    id: randomUUID(),
     provider,
     providerName,
     catalog,
     model,
     messages: [],
+    sessionGoal: undefined,
     tools: createStandardTools({ cwd: init.cwd ?? process.cwd(), ...(sandboxHandle ? { sandbox: sandboxHandle } : {}) }),
     cwd: init.cwd ?? process.cwd(),
     meter: new UsageMeter(),
@@ -540,6 +551,7 @@ export function createSession(init: SessionInit = {}): Session {
       active: () => null,
       toolFace: (base) => base,
       runByName: () => ({ text: "bootstrap", injected: null }),
+      resetInjectionState: () => {},
     },
     plugins: {
       baseDir: () => pluginBaseDir,
@@ -564,15 +576,19 @@ export function createSession(init: SessionInit = {}): Session {
       if (!session.catalog.includes(session.model)) session.model = session.catalog[0]!;
     },
     reload() {
-      // 设置重载（WP-01）：重新 loadSettings+门控+env 注入（粘滞 handle 延续）+原位替换
+      // 设置重载（WP-01）：重新 loadSettings+门控+env 注入（粘滞 handle 延续）+原位替换。
+      // S5-3（全仓审查 2026-10-01）：projectRoot 取 session.cwd——/cd 只改 s.cwd，而 /effort /config
+      // /theme 等写 setLocalSetting(s.cwd, …) 落**新**目录；原恒读启动期 sessionCwd ⇒ 写读路径分叉，
+      // 命令回显成功但对本进程 reload 永不生效。settings/门控读随 cwd（写读同径）；memory 项目归属仍
+      // 启动 projectRoot（/cd 不迁移=既有偏差登记）。
       const fresh = loadSettings({
-        projectRoot: sessionCwd,
+        projectRoot: session.cwd,
         ...(init.home !== undefined ? { home: init.home } : {}),
         ...(init.programData !== undefined ? { programData: init.programData } : {}),
         ...(init.platform !== undefined ? { platform: init.platform } : {}),
         ...(init.flagOverrides !== undefined ? { flagOverrides: init.flagOverrides } : {}),
       });
-      const freshTrust = createTrustGate(sessionCwd, fresh, init.trusted ?? isTrusted(sessionCwd, readTrustStore(trustStoreFile)));
+      const freshTrust = createTrustGate(session.cwd, fresh, init.trusted ?? isTrusted(session.cwd, readTrustStore(trustStoreFile)));
       applySettingsEnv(freshTrust.settings, env, settingsEnv);
       session.settings = fresh;
       session.trust = freshTrust;
@@ -679,7 +695,9 @@ export function createSession(init: SessionInit = {}): Session {
   const hookEngine: HookEngine = createHookEngine(loadHookConfigs(hookDocs), {
     trusted: () => session.trust.trusted,
     cwd: sessionCwd,
-    ...(session.id ? { sessionId: session.id } : {}),
+    // S5-4：活读 session.id——原按值捕获（构造期 id 还是 ""，条件展开直接省略）⇒ hooks payload 永无
+    // session_id，且 /new /resume 切换后仍指启动 UUID。
+    sessionId: () => session.id,
   });
   /** ToolHooks 装配（WP-10 提取共用：父会话引擎与 agent 级引擎同形制——原内联闭包零行为变化）。
    * opts.notification=false=子代理适配器（WP-04 M5）：Notification 不在 tut 传播集（dig-04 §2.2 :62093），
@@ -715,7 +733,7 @@ export function createSession(init: SessionInit = {}): Session {
     const engine = createHookEngine(loadHookConfigs(docs), {
       trusted: () => session.trust.trusted,
       cwd: sessionCwd,
-      ...(session.id ? { sessionId: session.id } : {}),
+      sessionId: () => session.id, // S5-4：活读（与父引擎同形）
     });
     return makeToolHooks(engine, { notification: false });
   }
@@ -806,6 +824,12 @@ export function createSession(init: SessionInit = {}): Session {
       if (sentSkillHashes.has(s.contentHash)) return { text: `[skills] ${name}: ${SKILL_ALREADY_LOADED_NOTE}`, injected: null };
       sentSkillHashes.add(s.contentHash);
       return { text: session.i18n.t("repl.skills.invoked", { value: name }), injected: expandSkillBody(s.body, { skillDir: s.dir, projectDir: sessionCwd, sessionId: session.id, args }) };
+    },
+    // S5-5：会话切换/清史时复位注入三态（switchSession/clearHistory 调用）
+    resetInjectionState: () => {
+      sentSkillNames.clear();
+      sentSkillHashes.clear();
+      activeSkillState = null;
     },
   };
   // —— M6-WP-07：Teams 装配（DoD⑤ 默认关=零构造零触盘；工具面真注册=WP-06 遗留五随本卡落地）——

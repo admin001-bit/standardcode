@@ -36,6 +36,7 @@ process.stdin.on("end", () => {
   if (a === "env") { console.log(JSON.stringify({ hookSpecificOutput: { permissionDecision: process.env[process.argv[3]] === undefined ? "allow" : "deny" } })); process.exit(0); }
   if (a === "sleep") { setTimeout(() => process.exit(0), Number(process.argv[3] ?? 5000)); return; }
   if (a === "mark") { appendFileSync(process.argv[3], (process.argv[4] ?? "x") + "\\n"); process.exit(0); }
+  if (a === "capture") { appendFileSync(process.argv[3], buf + "\\n"); process.exit(0); }
   process.exit(0);
 });
 `,
@@ -105,6 +106,20 @@ describe("DoD④ matcher 三态+query 缺失语义陷阱（:261743）", () => {
     expect(matchHookMatcher("^Ba.*", "Bash", w)).toBe(true);
     expect(matchHookMatcher("[", "Bash", w)).toBe(false);
     expect(w.some((x) => x.includes("invalid hook matcher regex"))).toBe(true);
+  });
+
+  it("S5-4：sessionId thunk 活读——payload session_id 跟随当前会话 id（原值捕获停在构造期）", async () => {
+    const captureFile = path.join(root, "s54-session-id.jsonl");
+    let id = "s-init";
+    const config = loadHookConfigs({ user: { hooks: { Stop: [{ hooks: [{ type: "command", command: `node "${fixturePath}" capture "${captureFile}"` }] }] } } });
+    const e = createHookEngine(config, { trusted: true, cwd: root, sessionId: () => id });
+    await e.fire("Stop", { payload: {} });
+    id = "s-after-switch"; // switchSession 换 id
+    await e.fire("Stop", { payload: {} });
+    const lines = readFileSync(captureFile, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]!.session_id).toBe("s-init");
+    expect(lines[1]!.session_id).toBe("s-after-switch"); // 修复前（值捕获）恒构造期值 → 红
   });
 
   it("S2-4：列表态零正则回退——Read|Write 不再子串误配 mcp__files__ReadDir（原回退致 deny 误拒/approve 误放行）", () => {

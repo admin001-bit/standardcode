@@ -159,10 +159,19 @@ async function switchSession(deps: ReplDeps, opts?: { sessionId: string; message
   const old = sessionAssets.get(s);
   if (old) await old.chain.catch(() => {}); // 旧会话尾部先落盘（drain 串行链）
   if (old) await old.lock.release().catch(() => {});
+  sessionAssets.delete(s);
+  // S5-1（全仓审查 2026-10-01）：先摘旧资产再建新——原 WeakMap 同 key 残留，createSessionAssets 失败
+  //（/resume 撞锁）返回 null 后旧写入器仍在位 ⇒ 全部转录串进旧会话 .jsonl、X 会话零落盘、rename/export
+  // 全错位。摘除后 transcriptAppend 无资产=no-op（不可用提示已由 createSessionAssets 打出）。
   s.messages = opts?.messages ? [...opts.messages] : [];
   s.exitRequested = false;
   s.meter = new (Object.getPrototypeOf(s.meter).constructor)();
+  // R1-1/R1-3（全仓审查 2026-10-01）：会话内存态随 messages/meter 一并复位——原存 ctx 闭包仅 /new 清，
+  // /resume 跨会话残留旧目标（status 失真、refine 对模型未见过的目标 spawn 子代理）。
+  s.sessionGoal = undefined;
+  s.skills.resetInjectionState(); // S5-5：注入三态复位（sent 集合+激活白名单）
   const sessionId = opts?.sessionId ?? randomUUID();
+  s.id = sessionId; // S5-4：id 随切换（hooks/telemetry/skills/MCP 活读）
   const assets = await createSessionAssets(deps, sessionId);
   if (assets) sessionAssets.set(s, assets);
 }
@@ -211,9 +220,9 @@ export const BATCH_LINE_CAP = 200;
 
 export function createCommandContext(deps: ReplDeps): CommandContext {
   const s = deps.session;
-  // M7-WP-01：会话目标状态（/goal）——ctx 生命周期=会话生命周期；/new 经 newSession 清除；仅会话内存态不落盘 [自定]
-  // （历史可见性由注入的 user turn 落转录承载，resume 后目标文本在消息历史中仍可见）
-  let sessionGoal: string | undefined;
+  // M7-WP-01：会话目标状态（/goal）——R1-1/R1-2/R1-3（全仓审查 2026-10-01）：原 ctx 闭包 `sessionGoal`
+  // 每条切换/清史路径须手工清（resume 漏清=跨会话残留、clear 漏清=status 失真），改 Session 字段
+  // `s.sessionGoal` 随 messages/meter 在 switchSession 一并复位、clearHistory 同步清；仅内存态不落盘 [自定]。
   return {    // WP-01：现行注册表（门控后；/help 同源）
     commands: () => deps.commands ?? CLI_COMMANDS,
     catalog: () => s.catalog,
@@ -229,6 +238,8 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     },
     clearHistory: () => {
       s.messages.length = 0;
+      s.sessionGoal = undefined; // R1-2：清史连带清目标——否则 status 显示目标而注入轮已随 messages 消失，模型永远看不到
+      s.skills.resetInjectionState(); // S5-5：清单/激活态复位（/clear 后重新可见、白名单不再跨清史收窄）
     },
     requestExit: () => {
       s.exitRequested = true;
@@ -258,7 +269,7 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— WP-10 会话命令（CTX-101 交接终点/UI-030）——
     newSession: () => {
       // 旧 transcript 完好（append-only 不动）；锁随旧会话释放；新 sessionId 新 writer 新锁
-      sessionGoal = undefined; // M7-WP-01：新会话不带旧目标（目标=会话内存态 [自定]）
+      // （M7-WP-01 目标清除已并入 switchSession：sessionGoal 为 Session 字段随切复位——R1-3）
       return switchSession(deps);
     },
     resumeSession: async () => {
@@ -299,9 +310,27 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         if (!Number.isInteger(window) || window < MANUAL_WINDOW_MIN || window > MANUAL_WINDOW_MAX) {
           throw new Error(s.i18n.t("repl.compact.errManual", { min: MANUAL_WINDOW_MIN, max: MANUAL_WINDOW_MAX }));
         }
-      s.autocompact = createCompactionCoordinator(
-        resolveAutocompactConfig({ env: { STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) } }),
-      );
+        // S5-7（全仓审查 2026-10-01）：重建带全量配置——原只传单键 env window，settings 的
+        // autocompact.enabled:false、env DISABLE/pct、modelDefault 全丢 ⇒ 重建后 enabled 恒 true、
+        // 窗口回落假定值。现与 session.ts 装配同形：全 env（window 键覆写为手动值=env 优先级天然保持）
+        // + settings 三键 + 真实模型窗口；模型窗口取不到=不传（协调器假定窗口兜底，同构造期口径）。
+        let rebuildWindow: number | undefined;
+        try {
+          rebuildWindow = s.provider.capabilities(s.model).contextWindow;
+        } catch {
+          rebuildWindow = undefined;
+        }
+        s.autocompact = createCompactionCoordinator(
+          resolveAutocompactConfig({
+            env: { ...s.env, STANDARD_CODE_AUTO_COMPACT_WINDOW: String(window) },
+            settings: {
+              autocompactEnabled: settingsValue<boolean>(s.trust.settings, "autocompact.enabled"),
+              autocompactWindow: settingsValue<unknown>(s.trust.settings, "autocompact.window"),
+              autocompactPct: settingsValue<unknown>(s.trust.settings, "autocompact.pct"),
+            },
+            ...(rebuildWindow !== undefined ? { modelDefault: rebuildWindow } : {}),
+          }),
+        );
       }
       // M4-WP04：PreCompact 触发（通知面；verdict 不消费 [自定]）
       await s.hooks.gate("PreCompact", undefined, {}).catch(() => null);
@@ -938,25 +967,25 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const objective = escaped ? raw.slice(raw === "--" ? 2 : 3).trim() : raw;
       if (escaped) {
         if (objective === "") {
-          return { text: sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: sessionGoal }) };
+          return { text: s.sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: s.sessionGoal }) };
         }
-        sessionGoal = objective;
-        const injectedEsc = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: sessionGoal }) }] };
+        s.sessionGoal = objective;
+        const injectedEsc = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: s.sessionGoal }) }] };
         s.messages.push(injectedEsc);
         transcriptAppend(deps, { kind: "user_message", message: injectedEsc });
-        return { text: s.i18n.t("repl.goal.set", { value: sessionGoal }) };
+        return { text: s.i18n.t("repl.goal.set", { value: s.sessionGoal }) };
       }
       const words = objective === "" ? [] : objective.split(/\s+/);
       const first = words.length > 0 ? words[0]!.toLowerCase() : "";
       const extraArgs = words.length > 1;
       if (first === "status" || objective === "") {
         if (first === "status" && extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "status", hint: "--" }));
-        return { text: sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: sessionGoal }) };
+        return { text: s.sessionGoal === undefined ? s.i18n.t("repl.goal.none") : s.i18n.t("repl.goal.status", { value: s.sessionGoal }) };
       }
       if (first === "clear") {
         if (extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "clear", hint: "--" }));
-        if (sessionGoal === undefined) return { text: s.i18n.t("repl.goal.none") };
-        sessionGoal = undefined;
+        if (s.sessionGoal === undefined) return { text: s.i18n.t("repl.goal.none") };
+        s.sessionGoal = undefined;
         const cleared = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.clearedInjected") }] };
         s.messages.push(cleared);
         transcriptAppend(deps, { kind: "user_message", message: cleared });
@@ -964,11 +993,11 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       }
       if (first === "refine") {
         if (extraArgs) throw new Error(s.i18n.t("repl.goal.err.subcommandArgs", { sub: "refine", hint: "--" }));
-        if (sessionGoal === undefined) throw new Error(s.i18n.t("repl.goal.err.noGoal"));
+        if (s.sessionGoal === undefined) throw new Error(s.i18n.t("repl.goal.err.noGoal"));
         if (s.messages.length === 0) throw new Error(s.i18n.t("repl.subtask.guard")); // spawn 面首轮守卫（subtask 同构 [自定]）
         const spawn = s.agents.prepareSpawn(undefined);
         const launch = await spawnSubagentTask(
-          { prompt: s.i18n.t("repl.goal.refinePrompt", { value: sessionGoal }), description: "goal-refine", runInBackground: false },
+          { prompt: s.i18n.t("repl.goal.refinePrompt", { value: s.sessionGoal }), description: "goal-refine", runInBackground: false },
           spawn.ctx,
           { provider: s.provider, model: s.model, tools: [...s.tools], permissionBroker: s.broker, guard: guardOptionFor(deps), fileHistory: fileHistoryOptionFor(deps), ...(spawn.hooks !== undefined ? { hooks: spawn.hooks } : {}) }, // S3-2：子代理护栏/快照接线
           {
@@ -993,18 +1022,18 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
         // 防占位文案污染目标 [自定]；harness 文案若变更，wp01 测试即红=同步提示（判别力）。
         const EMPTY_SUBAGENT_OUTPUT = "(Subagent completed but returned no output.)";
         if (refined === "" || refined === EMPTY_SUBAGENT_OUTPUT) throw new Error(s.i18n.t("repl.goal.err.emptyRefine"));
-        sessionGoal = refined;
+        s.sessionGoal = refined;
         const injected = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: refined }) }] };
         s.messages.push(injected);
         transcriptAppend(deps, { kind: "user_message", message: injected });
         return { text: s.i18n.t("repl.goal.refined", { value: refined }) };
       }
       // 设定（raw 以 `-- ` 开头=目标以子命令词开头的转义形；无 -- 时首词恰为子命令词已在上分支按子命令处理）
-      sessionGoal = objective;
-      const injected = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: sessionGoal }) }] };
+      s.sessionGoal = objective;
+      const injected = { role: "user" as const, content: [{ type: "text" as const, text: s.i18n.t("repl.goal.injected", { value: s.sessionGoal }) }] };
       s.messages.push(injected);
       transcriptAppend(deps, { kind: "user_message", message: injected });
-      return { text: s.i18n.t("repl.goal.set", { value: sessionGoal }) };
+      return { text: s.i18n.t("repl.goal.set", { value: s.sessionGoal }) };
     },
     // —— M7-WP-03：/theme（终端渲染主题单源+持久化；§8.2 M7 增 /theme——
     // 无参=展示当前主题+可选主题；带参=切换并写 ui.theme 到 local 层（setLocalSetting→settings.local.json）；
@@ -1180,8 +1209,8 @@ export function startAutoUpdateCheck(deps: ReplDeps, env: NodeJS.ProcessEnv = de
 
 export async function runRepl(deps: ReplDeps): Promise<void> {
   // WP-10：会话资产初始化（锁+转录；新会话在此建立——/resume 前的默认会话亦有落盘）
+  // S5-4：id 已在 createSession 赋值（hookEngine 等构造期即拿到真值）——原此处才赋致构造期捕获空串。
   const s0 = deps.session;
-  s0.id = randomUUID();
   const assets = await createSessionAssets(deps, s0.id);
   if (assets) sessionAssets.set(s0, assets);
   // M4-WP04：SessionStart（source=startup [自定] 单值；/resume /clear 变体不区分）
