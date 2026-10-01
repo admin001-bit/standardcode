@@ -295,6 +295,16 @@ describe("DoD⑧ list_changed→刷新回调", () => {
     t.fire({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
     expect(fired).toEqual(["fx"]);
   });
+
+  it("S2-3：重复 build（刷新形）不叠监听——list_changed 恰触发一次（原每次 build 追加监听且 disposer 丢弃＝指数增长，触发又刷新成风暴）", async () => {
+    const fired: string[] = [];
+    const { t, client } = scriptClient(toolsListHandler([{ name: "x" }]));
+    await buildMcpToolsForConnection(client, baseMctx({ onToolsChanged: (s) => fired.push(s) }));
+    await buildMcpToolsForConnection(client, baseMctx({ onToolsChanged: (s) => fired.push(s) }));
+    await buildMcpToolsForConnection(client, baseMctx({ onToolsChanged: (s) => fired.push(s) }));
+    t.fire({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+    expect(fired).toEqual(["fx"]); // 修复前：三次监听 → ["fx","fx","fx"]
+  });
 });
 
 describe("tools/call 结果收敛（isError/非文本块）", () => {

@@ -177,8 +177,9 @@ function copyTree(src: string, dest: string): void {
 
 export interface InstallOutcome {
   ok: boolean;
-  /** "no-manifest"|"exists"|"declined"|"clone-failed"|"marketplace-entry-not-found"（declined=S-5 确认未通过，零落地）。 */
-  error?: "no-manifest" | "exists" | "declined" | "clone-failed" | "marketplace-entry-not-found";
+  /** "no-manifest"|"exists"|"declined"|"clone-failed"|"marketplace-entry-not-found"|"marketplace-entry-depth-exceeded"
+   * （declined=S-5 确认未通过，零落地；depth-exceeded=S1-5 条目递归环/畸形链截断）。 */
+  error?: "no-manifest" | "exists" | "declined" | "clone-failed" | "marketplace-entry-not-found" | "marketplace-entry-depth-exceeded";
   manifest?: PluginManifest;
   dir?: string;
   /** 目标=marketplace 仓库（根含 marketplace.json 无 plugin.json）时登记市场+返回索引条目（不装插件）。 */
@@ -207,7 +208,10 @@ export async function installPluginFromDir(sourceDir: string, baseDir: string, s
   const m = parsed.manifest;
   const doc = loadPluginsDoc(baseDir);
   const warnings = [...doc.warnings, ...parsed.warnings];
-  if (doc.plugins.some((p) => normName(p.name) === normName(m.name))) {
+  // S1-6（全仓审查 2026-10-01）：重名判定与落盘目录同源——原判 normName（仅小写）、目录用
+  // sanitizePluginName（折叠非法串为 -）：`my plugin` 与 `my-plugin` 判不重名却落同一 destDir，
+  // rmSync 摧毁先装插件、两记录同目录串包。sanitize 自带小写（大小写语义一并保留）。
+  if (doc.plugins.some((p) => sanitizePluginName(p.name) === sanitizePluginName(m.name))) {
     return { ok: false, error: "exists", manifest: m, warnings: [...warnings, `plugin "${m.name}" is already installed (remove first)`] };
   }
   if (opts.onConfirm && !(await opts.onConfirm(m))) {
@@ -236,6 +240,10 @@ export interface ResolveContext {
   /** settings.plugins.defaultMarketplace 值（缺省官方市场位 [自定] 占位；git URL 或路径）。 */
   defaultMarketplace?: string;
   opts?: InstallOptions;
+  /** S1-5（全仓审查 2026-10-01）：条目源递归深度——entry.source 可为裸名字再入本函数（分支 3），
+   *  畸形/环形市场（defaultMarketplace 被摘但 doc.marketplaces 仍在场）无深度限制＝每层 git clone
+   *  挂死＋temp 层层泄漏；>上限即 fail-closed 拒绝。 */
+  depth?: number;
 }
 
 /** marketplace 源物化（目录=直用；git=临时克隆；调用方负责 returned.tempDir 清理）。 */
@@ -262,6 +270,15 @@ function mkdtempSafe(root: string): string {
 
 /** 目标解析并安装：本地目录 | git URL | marketplace 条目名（自定义市场记录+缺省市场位）。 */
 export async function installPlugin(target: string, ctx: ResolveContext): Promise<InstallOutcome> {
+  // S1-5：条目源递归深度闸（上限 3=缺省市场→条目→其市场条目 的合理链；环/畸形即拒）
+  const depth = ctx.depth ?? 0;
+  if (depth > 3) {
+    return {
+      ok: false,
+      error: "marketplace-entry-depth-exceeded",
+      warnings: [`plugin "${target}" marketplace entry recursion exceeded depth 3 (cycle or malformed marketplace chain) — refused (S1-5)`],
+    };
+  }
   const doc = loadPluginsDoc(ctx.baseDir);
   // 1) 本地目录
   if (existsSync(target) && statSync(target).isDirectory()) return landPluginDir(target, target, ctx, doc);
@@ -291,7 +308,8 @@ export async function installPlugin(target: string, ctx: ResolveContext): Promis
       const parsed = parseMarketplace(readFileSync(file, "utf8"), file);
       const entry = parsed.marketplace?.entries.find((e) => normName(e.name) === normName(target));
       if (!entry) continue;
-      return await installPlugin(entry.source, { ...ctx, defaultMarketplace: undefined }); // 条目源递归解析（不再走名字路）
+      // S1-5：递归带深度（条目源可为裸名字再入分支 3——环形市场靠深度闸截断）
+      return await installPlugin(entry.source, { ...ctx, defaultMarketplace: undefined, depth: depth + 1 }); // 条目源递归解析（不再走名字路）
     } finally {
       if (mat.tempDir) rmSync(path.dirname(mat.tempDir), { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }

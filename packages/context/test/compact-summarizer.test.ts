@@ -71,6 +71,38 @@ describe("DoD② partial 变体 8/9 段", () => {
     expect(toSummarize).toHaveLength(1);
     expect(kept).toEqual(CONVO.slice(1));
   });
+
+  it("S3-8：partial 边界吸附工具配对——kept 不以孤儿 tool_result 开头（原裸 slice 致 invariant 下一请求每 turn fail-fast）", () => {
+    // 孤儿判据=harness assertProtocolInvariants 的等价子集（context 层不依赖 harness，层内内联）：
+    // 每条 tool_result 的 tool_use 必须在同一列表内先行出现（首条即孤儿=缺陷形）。
+    const paired = (msgs: LLMRequest["messages"]): boolean => {
+      const seen = new Set<string>();
+      for (const m of msgs) {
+        for (const b of m.content) {
+          if (b.type === "tool_use") seen.add(b.id);
+          if (b.type === "tool_result" && !seen.has(b.toolUseId)) return false;
+        }
+      }
+      return true;
+    };
+    const convo: LLMRequest["messages"] = [
+      { role: "user", content: [{ type: "text", text: "q" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "echo", input: { text: "x" } }] },
+      { role: "user", content: [{ type: "tool_result", toolUseId: "t1", content: "ok" }] },
+      { role: "assistant", content: [{ type: "text", text: "final" }] },
+    ];
+    // idx=2 恰落在 tool_use/tool_result 对之间（裸 slice 的缺陷位）→ 吸附回退，两侧成对
+    const r2 = splitForPartial(convo, 2);
+    expect(r2.kept[0]).toMatchObject({ role: "assistant" }); // 孤儿 tool_result 已被吸附出 kept 头
+    expect(r2.toSummarize).toHaveLength(1);
+    expect(paired(r2.kept)).toBe(true);
+    // 其余边界同样成对
+    for (const idx of [0, 1, 3, 4, 99]) {
+      expect(paired(splitForPartial(convo, idx).kept)).toBe(true);
+    }
+    // 非法下标 fail-safe（NaN 不崩）
+    expect(paired(splitForPartial(convo, Number.NaN).kept)).toBe(true);
+  });
 });
 
 describe("DoD③/⑥/⑦ 请求构造：禁工具/前缀共享/≤32MB", () => {

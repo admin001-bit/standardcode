@@ -28,6 +28,16 @@ disable-model-invocation: true
 Secret body.
 `;
 
+// S2-6（全仓审查 2026-10-01）：disallowed-tools 对称解析+消费（原解析/消费双缺位＝安全约束静默失效）
+const GUARDED_MD = `---
+name: guarded
+description: bans bash while active
+disallowed-tools:
+  - Bash
+---
+Guarded body.
+`;
+
 let root: string;
 
 beforeAll(() => {
@@ -35,8 +45,10 @@ beforeAll(() => {
   const projSkills = path.join(root, "proj", ".standardcode", "skills");
   const userSkills = path.join(root, "home", ".standardcode", "skills");
   mkdirSync(path.join(projSkills, "greet"), { recursive: true });
+  mkdirSync(path.join(projSkills, "guarded"), { recursive: true });
   mkdirSync(path.join(userSkills, "secret-skill"), { recursive: true });
   writeFileSync(path.join(projSkills, "greet", "SKILL.md"), SKILL_MD, "utf8");
+  writeFileSync(path.join(projSkills, "guarded", "SKILL.md"), GUARDED_MD, "utf8");
   writeFileSync(path.join(userSkills, "secret-skill", "SKILL.md"), SECRET_MD, "utf8");
 });
 afterAll(() => {
@@ -99,7 +111,7 @@ describe("DoD② session 装配（SEC-070 信任门+三源）", () => {
     expect(un.skills.all().map((s) => s.name)).toEqual(["secret-skill"]); // 仅 user 层
     expect(un.skills.warnings().some((w) => w.includes("SEC-070"))).toBe(true);
     const tr = makeSession(true);
-    expect(tr.skills.all().map((s) => s.name).sort()).toEqual(["greet", "secret-skill"]);
+    expect(tr.skills.all().map((s) => s.name).sort()).toEqual(["greet", "guarded", "secret-skill"]); // +guarded=S2-6 夹具
   });
 
   it("Skill 工具注册进工具面", () => {
@@ -161,6 +173,20 @@ describe("DoD④ Skill 工具端到端", () => {
     const r = await skillTool.execute({ skill: "secret-skill" }, { signal: new AbortController().signal, registerProcess: () => {} });
     expect(r).toContain("user-invocable only");
   });
+
+  it("S2-6 disallowed-tools：解析+激活消费（原在 known-key 白名单却无解析无消费＝安全约束静默失效）", async () => {
+    const s = makeSession(true);
+    const base = s.skills.toolFace(s.tools).map((t) => t.name);
+    expect(base).toContain("Bash"); // 未激活：禁用面不生效
+    await skillToolExecute(s, "guarded");
+    expect(s.skills.active()?.disallowedTools).toEqual(["Bash"]); // frontmatter 真解析进激活态
+    const face = s.skills.toolFace(s.tools).map((t) => t.name);
+    expect(face).not.toContain("Bash"); // 激活期间剔除（修复前：约束从未生效）
+    expect(face).toContain("Skill"); // 逃生口恒保留
+    expect(face).toContain("Read");
+    s.skills.resetInjectionState(); // S5-5 连带：复位后禁用面解除
+    expect(s.skills.toolFace(s.tools).map((t) => t.name)).toContain("Bash");
+  });
 });
 
 async function skillToolExecute(s: Session, name: string): Promise<string> {
@@ -172,7 +198,7 @@ describe("DoD⑦ /skills 命令（list+run）", () => {
   it("list：name/来源/状态/描述逐行；run=用户点名豁免注入 isMeta 消息", async () => {
     const s = makeSession(true);
     const out = await runReplWith(s, ["/skills", "/skills run greet there", "/exit"]);
-    expect(out).toContain("[skills] 2 skill(s)");
+    expect(out).toContain("[skills] 3 skill(s)"); // +guarded=S2-6 夹具
     expect(out).toContain("greet  project  model  ([who])  greets the user warmly");
     expect(out).toContain("secret-skill  user  user-only");
     expect(out).toContain("[skills] invoked greet");

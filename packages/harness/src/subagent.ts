@@ -418,6 +418,8 @@ export async function runSubagent(
   let totalTokens = 0;
   let totalToolUseCount = 0;
   let usage: TokenUsage | null = null;
+  /** S3-5：本轮（单次 provider 调用）末条 usage——轮末 finish 结算 totalTokens（原逐事件 += 虚增）。 */
+  let pendingUsage: TokenUsage | null = null;
   let doneReason = "end";
   const stateRef: { current?: TurnState } = {};
 
@@ -440,9 +442,17 @@ export async function runSubagent(
   })) {
     switch (ev.type) {
       case "usage":
-        // 四列快照（ADR-0027 最后一条为准）；totalTokens 跨轮累计（input+output，CC totalTokens 口径）
+        // 四列快照（ADR-0027 轮内末条为准——Anthropic 每轮发两条：message_start 部分快照＋
+        // message_delta 合并，render/agent-loop 已钉末条语义，唯此处原逐事件 += ⇒ input 约 2× 虚增，
+        // S3-5）。totalTokens 改轮末（finish）结算一次。
         usage = ev.usage;
-        totalTokens += ev.usage.inputTokens + ev.usage.outputTokens;
+        pendingUsage = ev.usage;
+        break;
+      case "finish": // 轮边界（每次 provider 调用恰一次）→ 末条 usage 入累计
+        if (pendingUsage) {
+          totalTokens += pendingUsage.inputTokens + pendingUsage.outputTokens;
+          pendingUsage = null;
+        }
         break;
       case "tool_start":
         totalToolUseCount++;
@@ -452,6 +462,7 @@ export async function runSubagent(
         break;
     }
   }
+  if (pendingUsage) totalTokens += pendingUsage.inputTokens + pendingUsage.outputTokens; // 中断轮收尾结算
 
   const finalMessages = stateRef.current?.messages ?? messages;
   const lastAssistant = [...finalMessages].reverse().find((m) => m.role === "assistant");

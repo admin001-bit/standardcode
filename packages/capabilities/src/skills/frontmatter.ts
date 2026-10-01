@@ -11,6 +11,9 @@ export interface SkillFrontmatter {
   description?: string;
   whenToUse?: string;
   allowedTools?: string[];
+  /** S2-6（全仓审查 2026-10-01）：与 allowed-tools 对称解析并消费（原在 known-key 白名单却
+   *  无解析无消费也无忽略告警＝用户安全约束静默失效）。激活时从工具面剔除（Skill 逃生口恒保留）。 */
+  disallowedTools?: string[];
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
   argumentHint?: string;
@@ -84,6 +87,7 @@ export function parseSkillMarkdown(text: string, file: string): ParsedSkillMarkd
       description: asString(f.description),
       whenToUse: asString(f.when_to_use),
       allowedTools: toolsListOf(f["allowed-tools"], file, "allowed-tools", warnings),
+      disallowedTools: toolsListOf(f["disallowed-tools"], file, "disallowed-tools", warnings), // S2-6 对称解析
       disableModelInvocation: asBool(f["disable-model-invocation"]),
       ...(asBool(f["user-invocable"]) !== undefined ? { userInvocable: asBool(f["user-invocable"]) } : {}),
       argumentHint: argumentHintOf(f["argument-hint"]),

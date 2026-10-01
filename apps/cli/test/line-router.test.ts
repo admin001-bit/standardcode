@@ -70,4 +70,30 @@ describe("createLineRouter（P0 修复回归）", () => {
     await expect(it.next()).resolves.toEqual({ value: "b", done: false });
     await expect(it.next()).resolves.toEqual({ value: undefined, done: true });
   });
+
+  it("S5-2：askLine 可中断——signal abort → 立即 null，且 waiter 从队列摘除（僵尸不吞下一条输入）", async () => {
+    const { input, router } = mkRouter();
+    const ac = new AbortController();
+    const it = router.lines[Symbol.asyncIterator](); // lines waiter 先挂（同泵双路）
+    const p = router.askLine("confirm? ", ac.signal);
+    ac.abort();
+    await expect(p).resolves.toBeNull(); // 修复前：挂起等待真行 → 对话框纹丝不动
+    // 僵尸已摘：随后到达的行归 lines（原被死 waiter 吞掉=回车 once 被中断工具照常执行）
+    input.write("next-line\n");
+    await expect(it.next()).resolves.toEqual({ value: "next-line", done: false });
+  });
+
+  it("S5-2：signal 已 abort → 直接 null（不入队不挂死）", async () => {
+    const { router } = mkRouter();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(router.askLine("q? ", ac.signal)).resolves.toBeNull();
+  });
+
+  it("S5-2：无 signal 的既有语义不变（正常应答/EOF null）", async () => {
+    const { input, router } = mkRouter();
+    const p = router.askLine("q? ");
+    input.write("y\n");
+    await expect(p).resolves.toBe("y");
+  });
 });

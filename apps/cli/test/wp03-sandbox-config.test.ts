@@ -32,9 +32,18 @@ describe("wp03 resolveSandboxSettings（env > -sdb > settings > 缺省关）", (
     expect(bad.notice).toMatch(/不启用而非猜档/);
   });
 
-  it("非法 env 形/非布尔 settings=不启用+提示（fail-closed 无静默）", () => {
+  it("非法 env 形/非布尔 settings=不启用+提示（fail-closed 无静默）；S6-3：坏 settings 不再否决更高优先级判源", () => {
+    // env 非法形=最高优先 fail-closed（原语义保持）
     expect(resolveSandboxSettings({ cliFlag: true, env: { STANDARD_CODE_SANDBOX: "maybe" }, settings: EMPTY }).enabled).toBe(false);
-    expect(resolveSandboxSettings({ cliFlag: true, env: EMPTY, settings: { enabled: "yes" } }).enabled).toBe(false);
+    // 坏 settings 为唯一判源 → 拒+提示
+    const bad = resolveSandboxSettings({ cliFlag: false, env: EMPTY, settings: { enabled: "yes" } });
+    expect(bad.enabled).toBe(false);
+    expect(bad.notice).toMatch(/非布尔/);
+    // S6-3（全仓审查 2026-10-01）：原在 env/旗标求值前早退 ⇒ -sdb/env=1 被一条坏 settings 否决（违 env>旗标>settings）
+    expect(resolveSandboxSettings({ cliFlag: true, env: EMPTY, settings: { enabled: "yes" } }).enabled).toBe(true);
+    expect(resolveSandboxSettings({ cliFlag: false, env: { STANDARD_CODE_SANDBOX: "1" }, settings: { enabled: "yes" } }).enabled).toBe(true);
+    // env 显式 off：坏 settings 不误归因（无 notice）
+    expect(resolveSandboxSettings({ cliFlag: false, env: { STANDARD_CODE_SANDBOX: "0" }, settings: { enabled: "yes" } })).toEqual({ enabled: false, tier: "workspace-write" });
   });
 });
 

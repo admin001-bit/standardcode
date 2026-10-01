@@ -64,7 +64,8 @@ export interface SessionSkills {
   warnings(): string[];
   /** 增量清单 meta 文本（CTX-005 追加载体；null=无新增；内部推进 sent 名集合——DoD⑧ per-agent 去重）。 */
   listing(): string | null;
-  active(): { name: string; allowedTools?: string[] } | null;
+  /** S2-6：激活态载荷含 disallowedTools（frontmatter disallowed-tools 消费面）。 */
+  active(): { name: string; allowedTools?: string[]; disallowedTools?: string[] } | null;
   /** allowed-tools 白名单收窄后的工具面（DoD⑤ S-5；Skill 工具恒保留 [自定]）。 */
   toolFace(base: StandardTool[]): StandardTool[];
   /** 用户点名豁免（/skills run；不经 Skill tool=免 disable-model-invocation 限制，DoD④ 双轨）。 */
@@ -768,11 +769,11 @@ export function createSession(init: SessionInit = {}): Session {
   const skillUsage: Record<string, SkillUsageRecord> = {};
   const sentSkillNames = new Set<string>();
   const sentSkillHashes = new Set<string>();
-  let activeSkillState: { name: string; allowedTools?: string[] } | null = null;
+  let activeSkillState: { name: string; allowedTools?: string[]; disallowedTools?: string[] } | null = null;
   const skillTool = createSkillTool({
     findSkill: (name) => {
       const s = loadedSkills.skills.find((x) => x.name === name);
-      return s ? { name: s.name, description: s.description, allowedTools: s.allowedTools, disableModelInvocation: s.disableModelInvocation, contentHash: s.contentHash, body: s.body, dir: s.dir } : undefined;
+      return s ? { name: s.name, description: s.description, allowedTools: s.allowedTools, disallowedTools: s.disallowedTools, disableModelInvocation: s.disableModelInvocation, contentHash: s.contentHash, body: s.body, dir: s.dir } : undefined;
     },
     projectDir: sessionCwd,
     get sessionId() {
@@ -812,15 +813,24 @@ export function createSession(init: SessionInit = {}): Session {
     active: () => activeSkillState,
     toolFace: (base) => {
       const a = activeSkillState;
-      if (!a?.allowedTools || a.allowedTools.length === 0) return base;
-      const allow = new Set([...a.allowedTools, "Skill"]); // Skill 工具恒保留（切换/退出通道 [自定]）
-      return base.filter((t) => allow.has(t.name));
+      // S2-6：allowed 白名单（原语义）→ disallowed 黑名单剔除（skill 激活期间禁用面；Skill 恒保留=逃生口）
+      let out = base;
+      if (a?.allowedTools && a.allowedTools.length > 0) {
+        const allow = new Set([...a.allowedTools, "Skill"]);
+        out = out.filter((t) => allow.has(t.name));
+      }
+      if (a?.disallowedTools && a.disallowedTools.length > 0) {
+        const deny = new Set(a.disallowedTools);
+        out = out.filter((t) => t.name === "Skill" || !deny.has(t.name));
+      }
+      return out;
     },
     runByName: (name, args) => {
       const s = loadedSkills.skills.find((x) => x.name === name);
       if (!s) throw new Error(`no skill named "${name}"（/skills 查看清单）`);
       skillUsage[name] = { count: (skillUsage[name]?.count ?? 0) + 1, lastUsedAt: Date.now() };
-      activeSkillState = { name: s.name, ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}) }; // 用户点名同激活白名单 [自定]
+      // 用户点名同激活白名单 [自定]；S2-6：disallowed 同步进激活态
+      activeSkillState = { name: s.name, ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}), ...(s.disallowedTools ? { disallowedTools: s.disallowedTools } : {}) };
       if (sentSkillHashes.has(s.contentHash)) return { text: `[skills] ${name}: ${SKILL_ALREADY_LOADED_NOTE}`, injected: null };
       sentSkillHashes.add(s.contentHash);
       return { text: session.i18n.t("repl.skills.invoked", { value: name }), injected: expandSkillBody(s.body, { skillDir: s.dir, projectDir: sessionCwd, sessionId: session.id, args }) };

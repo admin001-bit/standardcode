@@ -116,19 +116,26 @@ describe("DoD⑤ 零副作用与懒创建（fs 注入面）", () => {
 });
 
 describe("[自定]① 文件命名与净化（A 级 §12 未解②——不臆造 [CC] 路径）", () => {
-  it("净化：非 [A-Za-z0-9._-] → x<hex>（防穿越），整段为 \".\"/\"..\" 回落 x，空段回落 x", () => {
-    expect(sanitizeMailboxSegment("researcher")).toBe("researcher");
+  it("净化：非 [A-Za-z0-9._-] → x<hex>（防穿越）+ 内容短哈希后缀（S2-5 单射）", () => {
+    // S2-5（全仓审查 2026-10-01）：原无哈希——`a b` 与字面 `ax20b` 同名碰撞＝跨成员串箱；
+    // 现 base-<sha256前8> 形（前缀可读、映射单射）。
+    expect(sanitizeMailboxSegment("researcher")).toMatch(/^researcher-[0-9a-f]{8}$/);
     expect(sanitizeMailboxSegment("../etc/passwd")).not.toContain("/");
-    expect(sanitizeMailboxSegment("..")).toBe("x"); // 纯点段=相对路径语义，回落（防穿越）
-    expect(sanitizeMailboxSegment(".")).toBe("x");
-    expect(sanitizeMailboxSegment("a..b")).toBe("a..b"); // 段内点无害（非相对路径语义）
-    expect(sanitizeMailboxSegment("a b/c:d")).toBe("ax20bx2fcx3ad");
-    expect(sanitizeMailboxSegment("")).toBe("x");
+    expect(sanitizeMailboxSegment("..")).toMatch(/^x-[0-9a-f]{8}$/); // 纯点段回落 base + 哈希
+    expect(sanitizeMailboxSegment(".")).toMatch(/^x-[0-9a-f]{8}$/);
+    expect(sanitizeMailboxSegment("a..b")).toMatch(/^a\.\.b-[0-9a-f]{8}$/); // 段内点无害（非相对路径语义）
+    expect(sanitizeMailboxSegment("a b/c:d")).toMatch(/^ax20bx2fcx3ad-[0-9a-f]{8}$/);
+    expect(sanitizeMailboxSegment("")).toMatch(/^x-[0-9a-f]{8}$/);
+    // 单射判据：编码形 vs 字面形、点段 vs 字面 x——修复前两对各自相等（碰撞）
+    expect(sanitizeMailboxSegment("a b")).not.toBe(sanitizeMailboxSegment("ax20b"));
+    expect(sanitizeMailboxSegment(".")).not.toBe(sanitizeMailboxSegment("x"));
+    // 确定性（同输入同名，路径稳定）
+    expect(sanitizeMailboxSegment("a b")).toBe(sanitizeMailboxSegment("a b"));
   });
 
   it("teammateInboxPath 组合形状：<teamsDir>/<净化 teamName>/<净化成员名>.inbox.json（平台路径分隔符无关）", () => {
     expect(teammateInboxPath(path.join("/root", "teams"), "design-team", "researcher")).toBe(
-      path.join("/root", "teams", "design-team", "researcher.inbox.json"),
+      path.join("/root", "teams", sanitizeMailboxSegment("design-team"), `${sanitizeMailboxSegment("researcher")}.inbox.json`),
     );
     const hostile = teammateInboxPath(path.join("/root", "teams"), "../../evil", "../..");
     expect(hostile.startsWith(path.join("/root", "teams"))).toBe(true);

@@ -219,6 +219,39 @@ describe("DoD② git URL 源+marketplace 登记（runGit 桩，零真实网络�
     const hit = await installPlugin("from-mkt", { baseDir: path.join(root, "g3-base2"), defaultMarketplace: mktDir });
     expect(hit.ok).toBe(true); // 未登记自定义市场也能经缺省市场位命中
   });
+
+  it("S1-5：条目源名字环（a→b→a）深度闸截断——原无深度限制每层再入分支 3 挂死（超时即红）", async () => {
+    const { baseDir } = freshDirs("s15");
+    const mktDir = path.join(root, "s15-mkt");
+    mkdirSync(mktDir, { recursive: true });
+    writeFileSync(
+      path.join(mktDir, "marketplace.json"),
+      JSON.stringify({ name: "cycle-mkt", plugins: [{ name: "a", source: "b" }, { name: "b", source: "a" }] }),
+      "utf8",
+    );
+    const add = await installPlugin(mktDir, { baseDir });
+    expect(add.ok).toBe(true); // 市场登记（分支 3 的搜索面）
+    const inst = await installPlugin("a", { baseDir });
+    expect(inst.ok).toBe(false);
+    expect(inst.error).toBe("marketplace-entry-depth-exceeded");
+    expect(inst.warnings.join("\n")).toContain("S1-5");
+  }, 15_000);
+
+  it("S1-6：重名判定与落盘目录同源——`my plugin` 与 `my-plugin` 同 destDir 判 exists（原 normName 判不重名→rmSync 摧毁先装）", async () => {
+    const { baseDir } = freshDirs("s16");
+    const srcA = path.join(root, "s16-a");
+    const srcB = path.join(root, "s16-b");
+    writePlugin(srcA, { ...GOOD_MANIFEST, name: "my plugin" });
+    writePlugin(srcB, { ...GOOD_MANIFEST, name: "my-plugin", version: "9.9.9" });
+    const first = await installPlugin(srcA, { baseDir });
+    expect(first.ok).toBe(true);
+    const destA = first.dir!;
+    expect(destA.endsWith(sanitizePluginName("my plugin"))).toBe(true);
+    const second = await installPlugin(srcB, { baseDir });
+    expect(second.error).toBe("exists"); // 修复前：判不重名 → 同目录 rmSync 覆盖
+    expect(existsSync(path.join(destA, "plugin.json"))).toBe(true); // 先装件完好
+    expect(JSON.parse(readFileSync(path.join(destA, "plugin.json"), "utf8")).name).toBe("my plugin");
+  });
 });
 
 describe("DoD⑤ remove=目录级清理+留痕删", () => {

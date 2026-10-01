@@ -112,7 +112,7 @@ export function createTeammateRunner(options: TeammateRunnerOptions): TeammateRu
 
   const port: SendMessagePort = {
     addressable: () => roster.addressable(),
-    async send(input: { to: string; message: unknown; notifyWhenIdle?: boolean }): Promise<string | null> {
+    async send(input: { to: string; message: unknown; notifyWhenIdle?: boolean; summary?: string }): Promise<string | null> {
       const route = roster.resolve(input.to);
       if (route.kind === "unknown") return "unreachable-namespace"; // 归一 not_reachable
 
@@ -154,6 +154,10 @@ export function createTeammateRunner(options: TeammateRunnerOptions): TeammateRu
         from: selfName,
         text: typeof message === "string" ? message : JSON.stringify(message),
         sentAt: now(),
+        // S2-2：summary 真入条目（与 roster port 同形）
+        ...(input.summary !== undefined ? { summary: input.summary } : {}),
+        // S2-5：收件成员落条目（receive 信封校验）
+        to: route.member.name,
         ...(isPlainObject(message) ? { message } : {}),
       };
       appendMailbox(teammateInboxPath(teamsRoot, roster.teamName, route.member.name), entry, fs);
@@ -163,9 +167,15 @@ export function createTeammateRunner(options: TeammateRunnerOptions): TeammateRu
 
   async function receive(): Promise<void> {
     const { entries } = readMailbox(inboxPath, fs);
-    const plain: Array<{ from: string; text: string }> = [];
+    const plain: Array<{ from: string; text: string; summary?: string }> = []; // summary=S2-2 收件链透传
     for (let i = cursor; i < entries.length; i++) {
       const entry = entries[i]!;
+      // S2-5：信封收件人校验——entry.to 在场且非本 runner 自名（错投/碰撞残留）即丢弃+告警。
+      //（自家写入恒 to=route.member.name=文件名成员=selfName，零误伤；仅外部构造条目触发。）
+      if (typeof entry.to === "string" && entry.to !== "" && entry.to !== selfName) {
+        warn(`[S2-5] dropped mis-addressed entry: to=${entry.to} inbox=${selfName}`);
+        continue;
+      }
       const proto = entry.message;
       if (isPlainObject(proto) && isTeamsProtocolType(proto.type)) {
         const parsed = parseProtocolMessage(proto);
@@ -174,6 +184,12 @@ export function createTeammateRunner(options: TeammateRunnerOptions): TeammateRu
           continue;
         }
         const msg = parsed.message;
+        // S2-5（全仓审查 2026-10-01）：收件人校验——协议消息显式携带 recipient 而非本 runner 自名
+        //（碰撞/误投进本 inbox）即丢弃+告警（原不校验=错投照常消费）。
+        if (typeof msg.recipient === "string" && msg.recipient !== "" && msg.recipient !== selfName) {
+          warn(`[S2-5] dropped mis-addressed protocol entry: recipient=${msg.recipient} inbox=${selfName}`);
+          continue;
+        }
         if (msg.type === "shutdown_request") {
           // DoD②：转 user 消息由模型决定，不自动终止（泵的既有分支）
           knownRequestIds.add(msg.request_id);
@@ -217,14 +233,24 @@ export function createTeammateRunner(options: TeammateRunnerOptions): TeammateRu
           }
         }
       } else {
-        plain.push({ from: entry.from, text: entry.text });
+        // S2-2：summary 随条目透传进事件（events j3 渲染 `[summary]\nfrom: text` 消费面——
+        // 原 receive 丢 summary，渲染分支对收件消息恒空转）
+        plain.push({ from: entry.from, text: entry.text, ...(entry.summary !== undefined ? { summary: entry.summary } : {}) });
       }
     }
     cursor = entries.length; // [自定]① 幂等游标推进
     if (plain.length === 1) {
-      pump.dispatch({ type: "new_message", from: plain[0]!.from, message: plain[0]!.text });
+      pump.dispatch({
+        type: "new_message",
+        from: plain[0]!.from,
+        message: plain[0]!.text,
+        ...(plain[0]!.summary !== undefined ? { summary: plain[0]!.summary } : {}),
+      });
     } else if (plain.length > 1) {
-      pump.dispatch({ type: "new_messages", messages: plain.map((p) => ({ from: p.from, text: p.text })) });
+      pump.dispatch({
+        type: "new_messages",
+        messages: plain.map((p) => ({ from: p.from, text: p.text, ...(p.summary !== undefined ? { summary: p.summary } : {}) })),
+      });
     }
   }
 

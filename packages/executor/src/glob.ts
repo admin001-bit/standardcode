@@ -23,7 +23,9 @@ export async function execGlob(input: GlobInput, env: ExecEnv): Promise<string> 
   try {
     await walk(root, root, "", 0, compiled, matches);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") throw new ExecError(`path not found: ${root}`);
+    const code = (err as NodeJS.ErrnoException)?.code;
+    // S4-5：ENOTDIR（path 指向文件）与 ENOENT 同归「path not found」可诊断形
+    if (code === "ENOENT" || code === "ENOTDIR") throw new ExecError(`path not found: ${root}`);
     throw err;
   }
   if (matches.length === 0) return "no files found";
@@ -38,8 +40,13 @@ async function walk(root: string, dir: string, relDir: string, depth: number, co
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return; // 无权限/竞态删除：跳过该目录
+  } catch (err) {
+    // S4-4 归类修正（全仓审查 2026-10-01，S4-5）：原 catch 吞掉**含根目录在内**的全部 readdir 错误——
+    // 外层专设的 ENOENT「path not found」分支成死代码（目录拼错返回 "no files found"，模型无法区分
+    // 写错路径与无匹配）。根目录错误必须上抛（ENOENT/ENOTDIR→外层转 path not found；其余原样重抛）；
+    // 子目录仍跳过（无权限/竞态删除=局部降级）。
+    if (dir === root) throw err;
+    return; // 子目录无权限/竞态删除：跳过该目录
   }
   for (const entry of entries) {
     const rel = relDir ? `${relDir}/${entry.name}` : entry.name;

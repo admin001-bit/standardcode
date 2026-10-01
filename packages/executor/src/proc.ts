@@ -80,7 +80,10 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
   const cap = opts.maxOutputChars ?? Number.POSITIVE_INFINITY;
   let stdout = "";
   let stderr = "";
-  let truncated = false;
+  // S4-6（全仓审查 2026-10-01）：分流传标志——原单一 truncated 在 close 时给 stdout/stderr **同时**
+  // 追加截断标记：仅 stderr 越界时完整 stdout 被打 [output truncated] 假标（模型误判输出缺失）。
+  let truncatedOut = false;
+  let truncatedErr = false;
   // 超限全文落盘（E2E② 行为载体；[CC] _440.js:5282-5290 #f 同构：stdout 原样、stderr 加 "[stderr] "
   // 前缀，混流；单流内字节序=到达序）。文件=全量输出不变式：首触发时一次性写足"完整 cap 窗口（已收头部
   // +本块内到达 cap 的余下部分）+ 本块超出 cap 的溢出"，其后每块整写（首触发即置 headWritten，杜绝乱序/
@@ -119,8 +122,12 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
   const capInto = (tag: "out" | "err", sink: () => string, set: (v: string) => void, chunk: Buffer) => {
     const cur = sink();
     const text = chunk.toString("utf8");
+    const markTrunc = () => {
+      if (tag === "out") truncatedOut = true;
+      else truncatedErr = true;
+    };
     if (cur.length >= cap) {
-      truncated = true;
+      markTrunc();
       if (!headWritten[tag]) {
         spillWrite(tag, cur); // 恰满 cap 未越界的迟到块：头部此刻才入档
         headWritten[tag] = true;
@@ -131,7 +138,7 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
     const next = cur + text;
     if (next.length > cap) {
       set(next.slice(0, cap));
-      truncated = true;
+      markTrunc();
       if (!headWritten[tag]) {
         spillWrite(tag, next); // 完整窗口（cap 内）+溢出部分一次写足，序=到达序
         headWritten[tag] = true;
@@ -183,11 +190,11 @@ export async function runProcess(opts: RunProcessOptions): Promise<RunProcessRes
     );
     child.on("close", (code) =>
       settle(async () => {
-        if (truncated) {
-          stdout += "\n[output truncated]";
-          stderr += "\n[stderr truncated]";
-        }
+        // S4-6：按流追加标记（原无差别双打——仅 stderr 越界时完整 stdout 被假标）
+        if (truncatedOut) stdout += "\n[output truncated]";
+        if (truncatedErr) stderr += "\n[stderr truncated]";
         await drainSpill();
+        const truncated = truncatedOut || truncatedErr; // 对外契约保持单布尔（任一越界=截断态）
         resolve({
           code,
           stdout,

@@ -17,6 +17,20 @@ export interface GrepInput {
   case_insensitive?: boolean;
 }
 
+/** S4-2（全仓审查 2026-10-01）EAGAIN 形判定：rg 的 strerror 文案是 `os error 11`/
+ *  `Resource temporarily unavailable`——原 /EAGAIN/ 测试与 rg 实际输出永不相交（ADR-0029 自愈完全不可用，
+ *  重试还产出误导性「ripgrep rejected the pattern」）。 */
+export function isEagainStderr(stderr: string): boolean {
+  return /EAGAIN|os error 11|Resource temporarily unavailable/i.test(stderr);
+}
+
+/** S4-2：单线程重试 args——`-j 1` 插在 `--` 分隔符**之前**（原追加尾部＝被 rg 当搜索路径处理）。 */
+export function singleThreadRetryArgs(args: string[]): string[] {
+  const i = args.indexOf("--");
+  if (i < 0) return [...args, "-j", "1"];
+  return [...args.slice(0, i), "-j", "1", ...args.slice(i)];
+}
+
 export async function execGrep(input: GrepInput, env: ExecEnv): Promise<string> {
   const pattern = requireString(input.pattern, "pattern");
   const searchPath = input.path ? resolve(env.cwd, input.path) : env.cwd;
@@ -50,11 +64,11 @@ export async function execGrep(input: GrepInput, env: ExecEnv): Promise<string> 
     throw err;
   }
   if (result.timedOut) throw new ExecError(`ripgrep timed out after ${GREP_TIMEOUT_MS}ms`);
-  // [CC] EAGAIN 自愈同构：资源暂时不可用自动单线程重试
-  if (result.code !== 0 && /EAGAIN/.test(result.stderr)) {
+  // [CC] EAGAIN 自愈同构：资源暂时不可用自动单线程重试（S4-2 双断修复）
+  if (result.code !== 0 && isEagainStderr(result.stderr)) {
     result = await runProcess({
       command: rgCommand,
-      args: [...args, "-j", "1"],
+      args: singleThreadRetryArgs(args), // S4-2：-j 1 必须在 `--` 之前（原追加在尾＝被当搜索路径）
       cwd: env.cwd,
       env: env.env,
       timeoutMs: GREP_TIMEOUT_MS,

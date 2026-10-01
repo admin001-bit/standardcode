@@ -66,11 +66,22 @@ describe("DoD③ 参数四字段与常量", () => {
     expect(p.calls).toEqual([{ to: "a", message: "x", notifyWhenIdle: true }]);
   });
 
-  it("summary 超限**截断而非拒绝**（A 级 §2.1 逐字）", async () => {
+  it("summary 超限**截断而非拒绝**（A 级 §2.1 逐字）+ S2-2 截断值真传输（原只回标志，口无字段=收件方永收不到）", async () => {
     const long = "s".repeat(SEND_MESSAGE_SUMMARY_MAX + 50);
-    const result = await sendMessage({ to: "a", message: "x", summary: long }, { port: port() });
+    const p = port();
+    const result = await sendMessage({ to: "a", message: "x", summary: long }, { port: p });
     expect(result.ok).toBe(true);
     expect(result.ok && result.receipt).toContain("summary truncated to 200 characters");
+    // S2-2：投递口收到的是**前 200 截断值**（非 undefined、非全量）
+    expect(p.calls[0]).toMatchObject({ to: "a", message: "x", summary: "s".repeat(SEND_MESSAGE_SUMMARY_MAX) });
+    // 短 summary 原样传输
+    const p2 = port();
+    await sendMessage({ to: "a", message: "x", summary: "short recap" }, { port: p2 });
+    expect(p2.calls[0]).toMatchObject({ summary: "short recap" });
+    // 未提供 summary → 不带该字段（零噪声）
+    const p3 = port();
+    await sendMessage({ to: "a", message: "x" }, { port: p3 });
+    expect("summary" in (p3.calls[0] as object)).toBe(false);
   });
 
   it("to 多行/超长/空一律拒绝", async () => {

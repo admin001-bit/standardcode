@@ -20,6 +20,7 @@
 //   ⑤ 合法条目的其余字段**透传保留**（A 级未给完整 schema，只锚对象性与 text）。
 //   ⑥ fs 注入面（WP-04 同形）：读写全部经注入 fs（缺省 node:fs）——Windows 无稳定错误触发路径，容错须可证伪。
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -115,15 +116,23 @@ export function appendMailbox(inboxPath: string, entry: MailboxEntry, fs: Mailbo
   return current.warnings; // 既有文件里的坏条目告警上浮（写时也禁静默）
 }
 
-/** [自定]①：文件名净化（encodeProjectPath 同族：非 [A-Za-z0-9._-] → x<hex>；防穿越——整段为 "."/".." 时回落 "x"）。 */
+/** [自定]①：文件名净化（encodeProjectPath 同族：非 [A-Za-z0-9._-] → x<hex>；防穿越——整段为 "."/".." 时回落 "x"）。
+ *  S2-5（全仓审查 2026-10-01）：原编码**非单射**——编码形（`a b`→`ax20b`）与字面形（`ax20b`）、
+ *  "."/"x" 回落形均碰撞同一 inbox 文件＝跨成员消息串箱。追加内容短哈希（sha256 前 8 hex）使映射
+ *  单射：前缀保持可读。兼容注记：成员名不变文件名也会变（teams 实验旗面，在途 inbox 可弃 [自定]）。 */
 export function sanitizeMailboxSegment(raw: string): string {
-  if (raw === "." || raw === "..") return "x"; // 纯点段=相对路径语义，必须编码（防穿越）
   let out = "";
-  for (const ch of raw) {
-    if (/[A-Za-z0-9._-]/.test(ch)) out += ch;
-    else out += `x${ch.codePointAt(0)!.toString(16)}`;
+  if (raw === "." || raw === "..") {
+    out = "x"; // 纯点段=相对路径语义，必须编码（防穿越）
+  } else {
+    for (const ch of raw) {
+      if (/[A-Za-z0-9._-]/.test(ch)) out += ch;
+      else out += `x${ch.codePointAt(0)!.toString(16)}`;
+    }
   }
-  return out === "" ? "x" : out;
+  const base = out === "" ? "x" : out;
+  const digest = createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 8);
+  return `${base}-${digest}`;
 }
 
 /** 成员 inbox 文件路径（[自定]① 落形；teamsDir 由 platform 提供，此处只组合）。 */

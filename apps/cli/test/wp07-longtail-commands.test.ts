@@ -212,6 +212,18 @@ describe("WP-07 ③ 四长尾语义各一正例", () => {
     expect(batched).toBe(3);
     expect(existsSync(file)).toBe(true); // 源文件不消费
   });
+
+  it("S5-6：/batch 相对路径以 s.cwd 为基（原裸 existsSync=进程 cwd：/cd 后必 miss 或静默读错目录同名文件）", async () => {
+    const s = makeSession(); // cwd=projDir（tmp）
+    const rel = path.join(projDir, "batch-relative.txt");
+    writeFileSync(rel, "r1\nr2\n", "utf8");
+    const r = await ctxOf(s).batch("batch-relative.txt"); // 相对名（修复前按 vitest 进程 cwd 查找 → 找不到）
+    expect(r.text).toContain("[batch]");
+    expect(r.text).toContain("2"); // 行数
+    const batched = s.messages.filter((m) => m.role === "user" && Array.isArray(m.content) && ["r1", "r2"].includes((m.content[0] as { text?: string }).text ?? "")).length;
+    expect(batched).toBe(2);
+    rmSync(rel, { force: true });
+  });
 });
 
 describe("WP-07 ④ fail-closed（用法错/缺资源均点名报错，不静默）", () => {

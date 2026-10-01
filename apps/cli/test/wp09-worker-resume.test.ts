@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createSession } from "../src/session.ts";
 import { TranscriptWriter, teamsDir, transcriptsDir } from "@standardcode/platform";
+import { teammateInboxPath } from "@standardcode/capabilities"; // S2-5：文件名带内容哈希后缀——同源计算不硬编码
 import type { LLMMessage, ProviderAdapter } from "@standardcode/providers";
 
 const AGENT_ID = "a000000000001-0001";
@@ -104,7 +105,7 @@ describe("session 装配接线 + flag 关态零构造", () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.receipt).toBe(`delivered to ${AGENT_ID}`);
-    const inbox = path.join(teamsDir(h, path.join(h, ".standardcode")), "default", "alice.inbox.json");
+    const inbox = teammateInboxPath(teamsDir(h, path.join(h, ".standardcode")), "default", "alice");
     expect(existsSync(inbox)).toBe(true);
     expect(readFileSync(inbox, "utf8")).toContain("carry on");
     expect(JSON.stringify(session.taskRegistry.get(taskId))).toBe(before); // 接缝⑲：消息不改状态

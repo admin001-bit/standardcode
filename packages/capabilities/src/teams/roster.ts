@@ -172,6 +172,8 @@ export interface MemberDelivery {
     summary?: string;
     color?: string;
     sentAt: string;
+    /** S2-5：收件成员名（=文件名成员）落条目——receive 侧信封校验完整性面。 */
+    to?: string;
     /** 结构化协议原物（纯文本消息无此字段）。 */
     message?: unknown;
   };
@@ -203,7 +205,7 @@ export function createRosterSendMessagePort(
   return {
     roster: options.roster,
     addressable: () => options.roster.addressable(),
-    async send(input: { to: string; message: unknown; notifyWhenIdle?: boolean }): Promise<string | null> {
+    async send(input: { to: string; message: unknown; notifyWhenIdle?: boolean; summary?: string }): Promise<string | null> {
       const route = options.roster.resolve(input.to);
       if (route.kind === "unknown") return "unreachable-namespace";
       if (route.kind === "main") {
@@ -220,6 +222,11 @@ export function createRosterSendMessagePort(
           from: options.from,
           text: typeof message === "string" ? message : JSON.stringify(message),
           sentAt: new Date().toISOString(),
+          // S2-2：summary 真入条目（MailboxEntry.summary → events j3 `[summary]` 渲染面消费；
+          // 原口不收不落，渲染分支恒空转而回执谎报已截断）。
+          ...(input.summary !== undefined ? { summary: input.summary } : {}),
+          // S2-5：收件成员落条目（receive 侧校验信封收件人=本 inbox 主人的完整性面）
+          to: route.member.name,
           ...(typeof message === "object" && message !== null ? { message } : {}),
         },
       });

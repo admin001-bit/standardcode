@@ -69,9 +69,17 @@ export function stripAnalysis(text: string): string {
   return out.trim();
 }
 
-/** partial 压缩边界：保留 selected 起的消息，压其前缀（compact_partial messagesKept 同构）。 */
+/** partial 压缩边界：保留 selected 起的消息，压其前缀（compact_partial messagesKept 同构）。
+ *  S3-8（全仓审查 2026-10-01）：原裸 slice(idx) 不校验工具配对边界——idx 落在 tool_use/tool_result
+ *  对之间时 kept 以**孤儿 tool_result** 开头，下一请求 assertProtocolInvariants fail-fast 抛
+ *  HarnessInvariantError 且 s.messages 已被替换 ⇒ 该会话此后每 turn 必抛（/compact partial N 直传
+ *  裸下标）。现吸附：kept[0] 含 tool_result 即回退 idx（配对的 tool_use 一并纳入 kept，两侧成对）。 */
 export function splitForPartial(messages: LLMMessage[], selectedIdx: number): { toSummarize: LLMMessage[]; kept: LLMMessage[] } {
-  const idx = Math.max(0, Math.min(selectedIdx, messages.length));
+  const clamped = Number.isFinite(selectedIdx) ? Math.max(0, Math.min(Math.floor(selectedIdx), messages.length)) : 0;
+  let idx = clamped;
+  const orphanAtCut = (i: number): boolean =>
+    i < messages.length && messages[i]!.role === "user" && messages[i]!.content.some((b) => b.type === "tool_result");
+  while (idx > 0 && orphanAtCut(idx)) idx--;
   return { toSummarize: messages.slice(0, idx), kept: messages.slice(idx) };
 }
 

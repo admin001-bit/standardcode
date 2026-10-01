@@ -705,15 +705,41 @@ fn quote_cmdline(req: &ExecRequest) -> String {
     // （`"/C"` 被误解析：实测报"文件名、目录名或卷标语法不正确"/`'"echo hi' 不是内部或外部命令`、
     // exit=1 零落盘；裸开关形 exit=0 落盘）。且 Windows 侧宿主（bash.ts）对命令体已按 verbatim
     // 预包装引号（`"cmd"`），二次包裹同样致坏。现形制＝MSVCRT 常规三则：
-    //   ①入参已带成对引号 → 原样透传（宿主预包装，不二次包裹）；②含空白（空格/Tab）或空串 → 包引号；
-    //   ③其余（含 `/d` `/C` 类开关、裸名、单词路径）→ 不包。
+    //   ①入参已带成对引号 → 原样透传（宿主预包装，不二次包裹）；②需转义形（空白/内部引号/尾反斜杠/
+    //     空串）→ 包引号并按 MSVCRT 规则转义；③其余（含 `/d` `/C` 类开关、裸名、单词路径）→ 不包。
+    // S8-5（全仓审查 2026-10-01）：原②只查空白——参数含内部 `"`（`x"y z`→`"x"y z"` 按
+    // CommandLineToArgvW 拆成两参）或尾部反斜杠（`C:\p\` 收尾引号被 `\"` 吞）时拆词错乱；补
+    // 引号内转义（引号前反斜杠 2n+1）与结尾反斜杠加倍（2n）的标准 MSVCRT quoting。
     let quote = |a: &str| -> String {
         if a.len() >= 2 && a.starts_with('"') && a.ends_with('"') {
             a.to_string()
         } else if a.is_empty() {
             "\"\"".to_string()
-        } else if a.contains(' ') || a.contains('\t') {
-            format!("\"{a}\"")
+        } else if a.contains(' ') || a.contains('\t') || a.contains('"') || a.ends_with('\\') {
+            let mut out = String::from("\"");
+            let mut backslashes = 0usize;
+            for ch in a.chars() {
+                match ch {
+                    '\\' => backslashes += 1,
+                    '"' => {
+                        out.push_str(&"\\".repeat(backslashes * 2 + 1));
+                        out.push('"');
+                        backslashes = 0;
+                    }
+                    _ => {
+                        if backslashes > 0 {
+                            out.push_str(&"\\".repeat(backslashes));
+                            backslashes = 0;
+                        }
+                        out.push(ch);
+                    }
+                }
+            }
+            if backslashes > 0 {
+                out.push_str(&"\\".repeat(backslashes * 2)); // 结尾反斜杠（收尾引号前）加倍
+            }
+            out.push('"');
+            out
         } else {
             a.to_string()
         }
@@ -1150,6 +1176,76 @@ mod tests {
         );
         assert_eq!(mk("whoami.exe", &[]), "whoami.exe");
         assert_eq!(mk("p.exe", &[""]), r#"p.exe """#);
+    }
+
+    /// S8-5：真拆词验证——用系统 CommandLineToArgvW（MSVCRT 规则的权威实现）回读 quote_cmdline 产物。
+    fn parse_via_argv0(cmdline: &str) -> Vec<String> {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = cmdline.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let mut argc = 0i32;
+            let argv = windows_sys::Win32::UI::Shell::CommandLineToArgvW(wide.as_ptr(), &mut argc);
+            assert!(!argv.is_null());
+            let out = (0..argc)
+                .map(|i| {
+                    let p = *argv.add(i as usize);
+                    let mut len = 0usize;
+                    while *p.add(len) != 0 {
+                        len += 1;
+                    }
+                    OsString::from_wide(std::slice::from_raw_parts(p, len))
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            windows_sys::Win32::Foundation::LocalFree(argv as *mut _);
+            wide.clear(); // keep alive until parse done
+            out
+        }
+    }
+
+    #[test]
+    fn quote_cmdline_s8_5_msvcrt_roundtrip() {
+        // S8-5（全仓审查 2026-10-01）：含内部引号/尾反斜杠/空白的参数经系统解析器回读后逐字相等——
+        // 原形（只包不转义）在这些输入下拆词错乱（`x"y z` 拆成两参）。
+        let mk = |program: &str, args: &[&str]| {
+            quote_cmdline(&ExecRequest::new(
+                program,
+                args.iter().map(|s| s.to_string()).collect(),
+                "C:/x",
+            ))
+        };
+        for arg in [
+            r#"x"y z"#,              // 内部引号+空白（原拆两参）
+            r#"plain"quote"#,        // 内部引号无空白（原裸引号错乱）
+            r#"C:\dir with space\"#, // 尾反斜杠+空白（收尾引号被吞）
+            r#"C:\plain\"#,          // 尾反斜杠无空白
+            "no-escape-needed",      // 无需转义形零扰动
+            "",                      // 空串
+            r#"pre"wrapped"#,        // 非成对预包（含引号但首尾非成对）→ 转义包裹
+        ] {
+            let line = mk("prog.exe", &[arg]);
+            let parsed = parse_via_argv0(&line);
+            assert_eq!(
+                &parsed[1..],
+                &[arg.to_string()],
+                "roundtrip failed for {arg:?} via {line:?}"
+            );
+        }
+        // 成对预包透传（F26 宿主形）+ 开关不包（F26）保持
+        assert_eq!(
+            mk("cmd.exe", &["/d", "/s", "/c", r#""echo x> y.txt""#]),
+            r#"cmd.exe /d /s /c "echo x> y.txt""#
+        );
+        assert_eq!(
+            parse_via_argv0(&mk("cmd.exe", &["/C", "echo hi"])),
+            vec![
+                "cmd.exe".to_string(),
+                "/C".to_string(),
+                "echo hi".to_string()
+            ]
+        );
     }
 
     #[test]

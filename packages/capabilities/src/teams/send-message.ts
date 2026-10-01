@@ -66,8 +66,10 @@ export function classifySendFailure(reason: string): SendMessageFailure {
 
 /** 投递口（WP-07 运行器/邮箱提供方；本卡只消费）。 */
 export interface SendMessagePort {
-  /** 投递；返回 null=成功，否则返回传输层原因字符串（经 classifySendFailure 归一）。 */
-  send(input: { to: string; message: unknown; notifyWhenIdle?: boolean }): Promise<string | null>;
+  /** 投递；返回 null=成功，否则返回传输层原因字符串（经 classifySendFailure 归一）。
+   *  S2-2（全仓审查 2026-10-01）：summary 随包传输（≤200 截断值）——原口无此字段，收件方永远
+   *  收不到 summary 而回执谎报 "(summary truncated…)"。 */
+  send(input: { to: string; message: unknown; notifyWhenIdle?: boolean; summary?: string }): Promise<string | null>;
   /** 可寻址集（通讯录面；缺席=不校验存在性，只做形状校验）。 */
   addressable?(): readonly string[];
 }
@@ -131,6 +133,7 @@ export async function sendMessage(
   const failureReason = await options.port.send({
     to,
     message,
+    ...(summary.value !== undefined ? { summary: summary.value } : {}), // S2-2：截断值随包真传输
     ...(notifyWhenIdle ? { notifyWhenIdle: true } : {}),
   });
   if (failureReason !== null) {
@@ -143,11 +146,13 @@ export async function sendMessage(
   return { ok: true, receipt };
 }
 
-/** `summary`：超限**截断**（A 级 §2.1 明示"truncated rather than rejected"）。 */
-function normalizeSummary(raw: unknown): { truncated: boolean; error?: string } {
+/** `summary`：超限**截断**（A 级 §2.1 明示"truncated rather than rejected"）。
+ *  S2-2：返回截断值本身（value=前 200 字符；undefined=未提供）——原只回 {truncated} 标志，
+ *  传输口无 summary 字段，收件方永远收不到而回执谎报已截断。 */
+function normalizeSummary(raw: unknown): { truncated: boolean; value?: string; error?: string } {
   if (raw === undefined) return { truncated: false };
   if (typeof raw !== "string") return { truncated: false, error: "`summary` must be a string when provided" };
-  return { truncated: raw.length > SEND_MESSAGE_SUMMARY_MAX };
+  return { truncated: raw.length > SEND_MESSAGE_SUMMARY_MAX, value: raw.slice(0, SEND_MESSAGE_SUMMARY_MAX) };
 }
 
 /** 结构化 `message`：含字符串 `type`、键集 ⊆ 白名单（DoD④）。 */

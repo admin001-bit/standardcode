@@ -44,11 +44,18 @@ export function resolveSandboxSettings(input: {
     return { enabled: false, tier: "workspace-write", notice: `[sandbox] STANDARD_CODE_SANDBOX 值非法（${input.env.STANDARD_CODE_SANDBOX}）——不启用（fail-closed）` };
   }
   const settingsEnabled = typeof input.settings.enabled === "boolean" ? input.settings.enabled : undefined;
-  if (settingsEnabled === undefined && input.settings.enabled !== undefined && typeof input.settings.enabled !== "boolean") {
-    return { enabled: false, tier: "workspace-write", notice: `[sandbox] settings sandbox.enabled 非布尔（${String(input.settings.enabled)}）——不启用（fail-closed）` };
-  }
+  const settingsInvalid = input.settings.enabled !== undefined && typeof input.settings.enabled !== "boolean";
+  // S6-3（全仓审查 2026-10-01）：坏 settings 值只在其**是唯一判源**时 fail-closed 拒——原在
+  // envSwitch/cliFlag 参与求值**之前**就 return disabled：`STANDARD_CODE_SANDBOX=1 -sdb` 被一条
+  // 坏 settings 值否决，违反头注 env>旗标>settings 优先序。现先按优先序求值，坏值仅兜底报。
   const enabled = envSwitch ?? (input.cliFlag || settingsEnabled === true);
-  if (!enabled) return { enabled: false, tier: "workspace-write" };
+  if (!enabled) {
+    // 坏值告警仅当 env/旗标均未显式表态（此时坏 settings 才是唯一判源）——env 显式 off 时不误归因
+    if (settingsInvalid && envSwitch === undefined && !input.cliFlag) {
+      return { enabled: false, tier: "workspace-write", notice: `[sandbox] settings sandbox.enabled 非布尔（${String(input.settings.enabled)}）——不启用（fail-closed）` };
+    }
+    return { enabled: false, tier: "workspace-write" };
+  }
   const tierRaw = input.env.STANDARD_CODE_SANDBOX_TIER ?? (input.settings.tier !== undefined ? String(input.settings.tier) : undefined);
   if (tierRaw !== undefined && !(SANDBOX_TIERS as readonly string[]).includes(tierRaw)) {
     return { enabled: false, tier: "workspace-write", notice: `[sandbox] sandbox.tier 值非法（${tierRaw}）——不启用而非猜档（fail-closed）` };

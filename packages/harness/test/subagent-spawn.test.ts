@@ -196,9 +196,13 @@ describe("DoD②/③ 执行器：独立上下文+摘要回传+<subagent_tokens>"
     const r = await runSubagent(v.normalized, { provider: p, model: "m", tools: TOOLS, newAgentId: () => "subagent-42" });
     // 摘要=最后一条 assistant text（Gxt 同构）
     expect(r.content).toBe("child answer");
-    // <subagent_tokens> 标注：跨轮累计 totalTokens=100+20+1+2=123（CC totalTokens 口径）
+    // S3-5（全仓审查 2026-10-01）：单轮双 usage 事件（Anthropic message_start+message_delta 形）按
+    // ADR-0027「轮内末条为准」结算一次——totalTokens=末条 {1,2}=3；原逐事件 += 得 123（≈2× 虚增，
+    // 本用例原断言 123 即缺陷固化，随修订正）。跨轮累计语义不变（每 finish 结算一轮）。
     expect(r.report).toContain("child answer");
-    expect(r.report).toContain("<subagent_tokens>subagent_tokens: 123, tool_uses: 0, duration_ms:");
+    expect(r.report).toContain("<subagent_tokens>subagent_tokens: 3, tool_uses: 0, duration_ms:");
+    expect(r.totalTokens).toBe(3);
+    expect(r.usage).toEqual({ inputTokens: 1, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0 });
     expect(r.agentId).toBe("subagent-42");
     // 防伪造条目（ORC-041）进 subagent 系统提示词
     expect(capturedSystem).toContain(SUBAGENT_ANTI_FABRICATION);

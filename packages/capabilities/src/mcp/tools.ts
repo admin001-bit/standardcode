@@ -295,13 +295,20 @@ export async function callMcpToolWithAutoBackground(
   ); // :293505 逐段形状
 }
 
+/** S2-3（全仓审查 2026-10-01）：list_changed 订阅 disposer 按客户端保留——每次刷新原都追加监听
+ *  且丢弃 disposer：监听器随刷新指数增长（每次触发又刷新），并发重排可向 session.tools 写重名工具
+ *  （下游 registry 抛 duplicate）。现先摘旧再挂新＝每客户端至多一个监听。 */
+const listChangedDisposers = new WeakMap<McpClient, () => void>();
+
 /** 客户端→工具列表（含 list_changed 订阅 DoD⑧）；serverName 经 mctx 提供（=连接 entry.name）。 */
 export async function buildMcpToolsForConnection(client: McpClient, mctx: McpToolContext): Promise<{ tools: (StandardTool & McpToolMeta)[]; skipped: { name: string; reason: string }[]; pageCapReached: boolean }> {
   const enumerated = await enumerateMcpTools(client);
   if (mctx.onToolsChanged) {
-    client.addNotificationListener((n: JsonRpcNotification) => {
+    listChangedDisposers.get(client)?.();
+    const dispose = client.addNotificationListener((n: JsonRpcNotification) => {
       if (n.method === "notifications/tools/list_changed") mctx.onToolsChanged!(mctx.serverName);
     });
+    listChangedDisposers.set(client, dispose);
   }
   const cfg = mctx.serverName;
   const tools = enumerated.tools.map((t): StandardTool & McpToolMeta => {

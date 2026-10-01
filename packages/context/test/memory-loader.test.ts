@@ -162,8 +162,16 @@ describe("WP-02 记忆用户轨", () => {
     mkdirSync(path.join(withGit, ".git"));
     expect(detectProjectWorkspace(withGit)).toBe(true);
     expect(detectProjectWorkspace(tmp())).toBe(false);
+    // S3-9：worktree/submodule 的 .git 是**文件**（gitdir: 指针）——原 readdirSync ENOTDIR →
+    // 误判非项目 ⇒ worktree 里项目级 AGENTS.md/规则/记忆整体静默不加载
+    const wt = tmp();
+    writeFileSync(path.join(wt, ".git"), "gitdir: /somewhere/.git/worktrees/x\n");
+    wf(wt, "AGENTS.md", "WORKTREE-ONLY");
+    expect(detectProjectWorkspace(wt)).toBe(true); // 修复前：false
+    expect(loadMemory({ cwd: wt, home: tmp(), inProject: detectProjectWorkspace(wt) }).text).toContain("WORKTREE-ONLY");
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
     rmSync(withGit, { recursive: true, force: true });
+    rmSync(wt, { recursive: true, force: true });
   });
 });

@@ -10,7 +10,7 @@
 // rules frontmatter `paths:` glob 按路径过滤加载（MEM-010）；未匹配路径的规则不注入。
 // 同步实现（createSession 同步装配启动路径；记忆文件量小，冷启动预算内）。
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -384,6 +384,13 @@ export function detectProjectWorkspace(cwd: string, readFile: typeof readFileSyn
     // 自 cwd 向上；home 层只认 .git（~/.standardcode=用户级布局非项目标记），home 之上不扫
     const markers = dir === home ? ([".git"] as const) : ([".git", ".standardcode"] as const);
     for (const marker of markers) {
+      if (marker === ".git") {
+        // S3-9（全仓审查 2026-10-01）：worktree/submodule 的 .git 是**文件**（gitdir: 指针）——
+        // readdirSync 对文件 ENOTDIR → catch → 整体误判「非项目」⇒ worktree 里项目级 AGENTS.md/
+        // 规则/记忆静默不加载。存在（文件或目录）即标记；.standardcode 维持目录形判定。
+        if (existsSync(path.join(dir, ".git"))) return true;
+        continue;
+      }
       try {
         readdirSync(path.join(dir, marker));
         return true;

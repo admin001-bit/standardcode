@@ -928,8 +928,10 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
     // —— M7-WP-07：/batch（workflow flag：读文件逐非空行作为 user turn 顺序执行；行数上限防失控）——
     batch: async (args) => {
       const s = deps.session;
-      const file = args.trim();
-      if (file === "") throw new Error(s.i18n.t("repl.batch.err.required"));
+      // S5-6（全仓审查 2026-10-01）：以 s.cwd 为基解析——原裸 existsSync（进程 cwd）与 @file 等
+      // （s.cwd 基）口径分叉：/cd 后必 miss，或更糟——**静默读错目录同名文件**逐行派发给模型。
+      const file = resolve(s.cwd, args.trim());
+      if (args.trim() === "") throw new Error(s.i18n.t("repl.batch.err.required"));
       if (!existsSync(file)) throw new Error(s.i18n.t("repl.batch.err.missing", { value: file }));
       const lines = (await readFile(file, "utf8")).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
       if (lines.length > BATCH_LINE_CAP) throw new Error(s.i18n.t("repl.batch.err.limit", { value: lines.length, cap: BATCH_LINE_CAP }));
@@ -1043,7 +1045,9 @@ export function createCommandContext(deps: ReplDeps): CommandContext {
       const raw = args.trim();
       // F29（2026-09-30 可用性实测）：usage 广告 `| list`（i18n cmd.theme.usage）——原实现只认空参，
       // `/theme list` 落 resolveTheme fail-closed 抛错；归一化 list=无参列清单。
-      if (raw === "" || raw === "list") {
+      // R1-5（全仓审查 2026-10-01）：list 归一化大小写不敏感——原精确小写 vs /goal 首词 toLowerCase
+      // 口径分叉：`/theme LIST` 落 resolveTheme fail-closed 报 invalid theme。
+      if (raw === "" || raw.toLowerCase() === "list") {
         const cur = themeFromSettings(s.settings);
         const opts = THEMES.map((t) => (t === cur ? `* ${t}` : `  ${t}`)).join("\n");
         return { text: `${s.i18n.t("repl.theme.current", { value: cur })}\n${opts}` };
@@ -1232,6 +1236,8 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   // 不挂冷启动门禁（DoD②）；env 未设=零请求（DoD④）；失败静默（DoD③）。
   void startAutoUpdateCheck(deps);
   const commands = new Map((deps.commands ?? CLI_COMMANDS).map((c) => [c.name, c]));
+  // R1-7：ctx 启动时构建一次下传（原模块级 WeakMap 缓存按 deps 身份维系——注释前提结构化）
+  const ctx = createCommandContext(deps);
   for await (const raw of deps.io.lines) {
     const line = raw.trim();
     if (line === "") continue;
@@ -1243,7 +1249,7 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
     } else if (parsed.kind === "file") {
       await runFileTurn(deps, parsed.path, parsed.rest);
     } else {
-      await runSlash(deps, commands, parsed.name, parsed.args);
+      await runSlash(deps, ctx, commands, parsed.name, parsed.args);
     }
     if (deps.session.exitRequested) {
       await exitRepl(deps);
@@ -1404,8 +1410,11 @@ async function runPromptTurn(deps: ReplDeps, text: string): Promise<void> {
               thinking: s.thinking,
             });
             // ADR-0038 对齐前提：本 turn 尚未落盘、将被卷入压缩的消息先补写（保证 transcript 与压缩前活体对齐，
-            // compact 截断语义才有确定的重建基点——V 首验 R1：缺此步则压缩后增量 slice 错位、重建≠活体）
-            for (const m of preCompact.slice(preTurnLength)) {
+            // compact 截断语义才有确定的重建基点——V 首验 R1：缺此步则压缩后增量 slice 错位、重建≠活体）。
+            // S5-8（全仓审查 2026-10-01）：基准取**已落盘水位 appendFrom**——原 preTurnLength 是 turn 起点，
+            // Stop 钉 blocking 续轮时第 1 轮消息已按 iterBase 落盘，第 2 轮 auto-compact 再补写一遍
+            // ⇒ JSONL 重复、keptCount 尾部对不上（catch 路径 :appendFrom 即此语义）。
+            for (const m of preCompact.slice(appendFrom)) {
               transcriptAppend(deps, { kind: m.role === "assistant" ? "assistant_message" : "user_message", message: m });
             }
             s.messages = r.newMessages;
@@ -1544,6 +1553,12 @@ function runShellLine(deps: ReplDeps, command: string): void {
     return;
   }
   const r = spawnSync(command, { shell: true, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  // S5-10（全仓审查 2026-10-01）：spawn 层失败（EMFILE/ENOBUFS/ComSpec 缺失等）原只打空输出＋
+  // exit code unknown——真实错误零解释。r.error 显式呈现（i18n）。
+  if (r.error) {
+    deps.io.write(`${deps.session.i18n.t("repl.shell.spawnError", { value: r.error.message })}\n`);
+    return;
+  }
   let out = (r.stdout ?? "") + (r.stderr ? (r.stdout ? "\n[stderr]\n" : "") + r.stderr : "");
   if (out.length > SHELL_OUTPUT_TRUNCATE_CHARS) out = out.slice(0, SHELL_OUTPUT_TRUNCATE_CHARS) + "\n" + deps.session.i18n.t("repl.shell.truncated");
   deps.io.write(out + (out.endsWith("\n") || out === "" ? "" : "\n"));
@@ -1566,20 +1581,11 @@ async function runFileTurn(deps: ReplDeps, path: string, rest: string): Promise<
   await runPromptTurn(deps, `${rest ? `${rest}\n\n` : ""}[attached file: ${path}]\n\n${content}`);
 }
 
-// F28（2026-09-30 可用性实测）：CommandContext 按 deps 缓存复用——ctx 注释即约定"生命周期=会话生命周期"，
-// 但派发点原为每条命令新建，致 sessionGoal 等会话态即抛即弃（/goal status|clear|refine 生产路径恒失效）。
-// deps.session 经 switchSession 原地切换（identity 不变），故缓存安全；测试注入新 deps 仍得新 ctx（隔离不破）。
-const ctxCache = new WeakMap<ReplDeps, CommandContext>();
-function commandContext(deps: ReplDeps): CommandContext {
-  let ctx = ctxCache.get(deps);
-  if (!ctx) {
-    ctx = createCommandContext(deps);
-    ctxCache.set(deps, ctx);
-  }
-  return ctx;
-}
+// F28（2026-09-30 可用性实测）→ R1-7 简化（全仓审查 2026-10-01）：原模块级 WeakMap ctxCache 按 deps
+// 键控缓存——「deps/session/io 不换身份」前提仅靠注释维系；runSlash/runRepl 是唯一消费链，改为 runRepl
+// 启动时构建**一次** ctx 下传（ctx 生命周期=会话生命周期的结构化兑现；测试仍直调 createCommandContext）。
 
-async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, name: string, args: string): Promise<void> {
+async function runSlash(deps: ReplDeps, ctx: CommandContext, commands: Map<string, SlashCommand>, name: string, args: string): Promise<void> {
   if (name === "") {
     deps.io.write(`${deps.session.i18n.t("repl.command.usage")}\n`);
     return;
@@ -1595,7 +1601,7 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
     }
     if (name === "btw") {
       try {
-        const r = await commandContext(deps).btw(args);
+        const r = await ctx.btw(args);
         deps.io.write(`${r.text}\n`);
       } catch (err) {
         deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
@@ -1610,16 +1616,28 @@ async function runSlash(deps: ReplDeps, commands: Map<string, SlashCommand>, nam
     return;
   }
   try {
-    await cmd.execute(args, commandContext(deps));
+    await cmd.execute(args, ctx);
   } catch (err) {
     deps.io.write(`${deps.session.i18n.t("repl.command.failed", { name, value: err instanceof Error ? err.message : String(err) })}\n`);
   }
 }
 
 /** Tab 补全入口（readline completer 用；UI-001）。 */
-export function completerFor(commands: readonly SlashCommand[]): (line: string) => [string[], string] {
+/**
+ * S6-4（全仓审查 2026-10-01）：readline completer 接线——原只透传 candidates，唯一命中（insert）
+ * 与参数 hint 双双丢弃（唯一前缀 Tab 补全、参数提示在生产终端完全不生效；纯函数测试全绿掩盖）。
+ * ①唯一命中：候选=[insert]（readline 单候选自动补全当前词）；②多义：候选列表（原语义）；
+ * ③无候选但有 hint：换行打出 hint 后 readline 会重绘提示行（write 注入口=测试可替换）。
+ */
+export function completerFor(
+  commands: readonly SlashCommand[],
+  write: (s: string) => void = (s) => process.stdout.write(s),
+): (line: string) => [string[], string] {
   return (line: string): [string[], string] => {
     const c: TabCompletion = completeInput(line, commands);
-    return [c.candidates, line];
+    if (c.insert !== null) return [[c.insert], line];
+    if (c.candidates.length > 0) return [c.candidates, line];
+    if (c.hint !== null) write(`\n${c.hint}\n`);
+    return [[], line];
   };
 }

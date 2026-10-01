@@ -23,6 +23,8 @@ export {
   execGrep,
   GREP_TIMEOUT_MS,
   GREP_MAX_RESULTS,
+  isEagainStderr,
+  singleThreadRetryArgs,
   type GrepInput,
 } from "./grep.ts";
 // WP-03 沙箱宿主接线（ARCH-008 帧通道客户端+策略 wire+编解码；装配层注入 ExecEnv.sandbox）。

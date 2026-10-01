@@ -57,13 +57,38 @@ export function createLineRouter(rl: import("node:readline").Interface) {
     }
   })();
   return {
-    askLine(question: string): Promise<string | null> {
+    askLine(question: string, signal?: AbortSignal): Promise<string | null> {
+      // S5-2（全仓审查 2026-10-01）：可中断提问——权限确认 await 原不与 activeAbort 竞速：确认挂起时
+      // Ctrl+C 对话框纹丝不动，且僵尸 ask waiter 吞掉用户下一条输入（回车=once 被中断工具照常执行）。
+      // signal abort → 从队列**摘除**本 waiter + 立即 null（confirm 映射 deny；S6-1 null 通道复用）。
       process.stdout.write(question);
       const next = buffered.shift();
       if (next !== undefined) return Promise.resolve(next);
       if (closed) return Promise.resolve(null); // 收束后仍提问（EOF 后迟到的 ask）：null＝fail-closed，不挂死
+      if (signal?.aborted) return Promise.resolve(null);
       return new Promise((resolve) => {
-        waiters.push({ kind: "ask", fn: (v) => resolve(v === EOF ? null : v) });
+        if (!signal) {
+          // 无 signal：原语义直通（S5-2 的包装只在可中断形存在——无 signal 时不得引用它）
+          waiters.push({ kind: "ask", fn: (v) => resolve(v === EOF ? null : v) });
+          return;
+        }
+        const waiter: { kind: "ask"; fn: (v: string | typeof EOF) => void } = {
+          kind: "ask",
+          fn: (v) => resolve(v === EOF ? null : v),
+        };
+        const onAbort = (): void => {
+          const i = waiters.indexOf(waiter);
+          if (i >= 0) waiters.splice(i, 1); // 摘除僵尸（防吞下一条输入）
+          signal.removeEventListener("abort", onAbort);
+          resolve(null);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        const origFn = waiter.fn;
+        waiter.fn = (v) => {
+          signal.removeEventListener("abort", onAbort);
+          origFn(v);
+        };
+        waiters.push(waiter);
       });
     },
     lines: (async function* () {
@@ -175,7 +200,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     ? {
         async confirm(toolLabel: string, detail: string): Promise<ConfirmChoice> {
           // S6-1：EOF(null)→deny（原空串经 parseConfirmAnswer 映射 once＝无同意放行）
-          const raw = await router.askLine(confirmQuestion(toolLabel, detail));
+          // S5-2：传当前 turn 的 activeAbort——确认挂起时 Ctrl+C 即消解（null→deny）且不吞下一条输入
+          const raw = await router.askLine(confirmQuestion(toolLabel, detail), session.activeAbort?.signal ?? undefined);
           return raw === null ? "deny" : parseConfirmAnswer(raw);
         },
       }

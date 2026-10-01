@@ -14,6 +14,8 @@ export interface LoadedSkill {
   description: string;
   whenToUse?: string;
   allowedTools?: string[];
+  /** S2-6：禁用工具面（frontmatter disallowed-tools 对称装载；激活时剔除）。 */
+  disallowedTools?: string[];
   disableModelInvocation: boolean;
   userInvocable: boolean;
   argumentHint?: string;
@@ -70,6 +72,7 @@ function discoverDir(dir: string, source: SkillSource, warnings: string[]): Load
       description: fm.description ?? "",
       ...(fm.whenToUse !== undefined ? { whenToUse: fm.whenToUse } : {}),
       ...(fm.allowedTools !== undefined ? { allowedTools: fm.allowedTools } : {}),
+      ...(fm.disallowedTools !== undefined ? { disallowedTools: fm.disallowedTools } : {}), // S2-6
       disableModelInvocation: fm.disableModelInvocation === true,
       userInvocable: fm.userInvocable !== false,
       ...(fm.argumentHint !== undefined ? { argumentHint: fm.argumentHint } : {}),

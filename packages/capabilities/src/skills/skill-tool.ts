@@ -9,7 +9,7 @@ export const SKILL_SHELL_PREEXEC_DISABLED = "[shell command execution disabled b
 export const SKILL_ALREADY_LOADED_NOTE = "[skill content already loaded above; instructions unchanged]"; // Jes :164124 形状
 
 export interface SkillToolDeps {
-  findSkill(name: string): { name: string; description: string; allowedTools?: string[]; disableModelInvocation: boolean; contentHash: string; body: string; dir: string } | undefined;
+  findSkill(name: string): { name: string; description: string; allowedTools?: string[]; disallowedTools?: string[]; disableModelInvocation: boolean; contentHash: string; body: string; dir: string } | undefined;
   /** 变量替换基底。 */
   projectDir: string;
   sessionId: string;
@@ -17,7 +17,8 @@ export interface SkillToolDeps {
   bumpUsage(name: string): void;
   wasSent(contentHash: string): boolean;
   markSent(contentHash: string): void;
-  activate(active: { name: string; allowedTools?: string[] } | null): void;
+  /** S2-6：activate 载荷增 disallowedTools（激活时从工具面剔除）。 */
+  activate(active: { name: string; allowedTools?: string[]; disallowedTools?: string[] } | null): void;
 }
 
 /** 展开正文：${STANDARD_CODE_SKILL_DIR/PROJECT_DIR/SESSION_ID} 替换（[CC] CLAUDE_* 前缀的仓内前缀形 [自定]）+shell 预执行剥离（DoD⑥）。 */
@@ -47,7 +48,11 @@ export function createSkillTool(deps: SkillToolDeps): StandardTool {
         return `error: skill "${skillName}" is user-invocable only (disable-model-invocation); ask the user to invoke it`;
       }
       deps.bumpUsage(s.name);
-      deps.activate({ name: s.name, ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}) });
+      deps.activate({
+        name: s.name,
+        ...(s.allowedTools ? { allowedTools: s.allowedTools } : {}),
+        ...(s.disallowedTools ? { disallowedTools: s.disallowedTools } : {}), // S2-6
+      });
       const args = typeof (input as { args?: unknown })?.args === "string" ? (input as { args: string }).args : undefined;
       const expanded = expandSkillBody(s.body, { skillDir: s.dir, projectDir: deps.projectDir, sessionId: deps.sessionId, args });
       if (deps.wasSent(s.contentHash)) {

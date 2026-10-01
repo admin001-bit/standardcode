@@ -232,6 +232,58 @@ describe("DoD② 不自动终止（复用既有泵；onAborted 计数 0）", () 
       expect(deliveredToModel[0]!.meta.kind).toBe("shutdown_request");
     });
   });
+
+  it("S2-2 receive：plain 条目 summary 透传进 new_message 事件（events j3 `[summary]` 渲染消费；原 receive 丢弃）", async () => {
+    const mem = memFs();
+    const roster = createTeamRoster({ teamName: "team1" });
+    roster.addMember("mateA");
+    const inboxPath = teammateInboxPath("/teams", "team1", "mateA");
+    mem.writeFileSync(
+      inboxPath,
+      JSON.stringify([{ from: "lead", text: "did the thing", summary: "thing done" }]),
+    );
+    const deliveredToModel: TeammateDelivery[] = [];
+    const runner = createTeammateRunner({
+      roster,
+      selfName: "mateA",
+      teamsRoot: "/teams",
+      fs: mem,
+      deliverToModel: (d) => deliveredToModel.push(d),
+    });
+    await runner.receive();
+    expect(deliveredToModel).toHaveLength(1);
+    expect(deliveredToModel[0]!.meta.summary).toBe("thing done"); // 修复前：receive 丢 summary → undefined
+    expect(JSON.stringify(deliveredToModel[0]!.message)).toContain("[thing done]"); // j3 渲染前缀真出现
+  });
+
+  it("S2-5 receive：信封收件人不符即丢弃+告警（to 字段；协议消息再查 recipient）——自家条目零误伤", async () => {
+    const mem = memFs();
+    const roster = createTeamRoster({ teamName: "team1" });
+    roster.addMember("mateA");
+    const inboxPath = teammateInboxPath("/teams", "team1", "mateA");
+    mem.writeFileSync(
+      inboxPath,
+      JSON.stringify([
+        { from: "x", text: "misfiled envelope", to: "someone-else" }, // 信封收件人不符 → 丢
+        { from: "team-lead", text: "", message: buildShutdownRequest({ request_id: "rS", content: "stop", recipient: "othermate" }) }, // 内容收件人不符 → 丢
+        { from: "lead", text: "for me" }, // 无收件人字段（legacy/自写形）→ 正常消费
+      ]),
+    );
+    const deliveredToModel: TeammateDelivery[] = [];
+    const warns: string[] = [];
+    const runner = createTeammateRunner({
+      roster,
+      selfName: "mateA",
+      teamsRoot: "/teams",
+      fs: mem,
+      deliverToModel: (d) => deliveredToModel.push(d),
+      warn: (m) => warns.push(m),
+    });
+    await runner.receive();
+    expect(deliveredToModel).toHaveLength(1); // 恰剩合法条目
+    expect(JSON.stringify(deliveredToModel[0]!.message)).toContain("for me");
+    expect(warns.filter((w) => w.includes("[S2-5]"))).toHaveLength(2); // 两形各一告警
+  });
 });
 
 describe("DoD③ plan_approval 链（请求→确认→回灌发起方；拒绝=发起方继续）", () => {
