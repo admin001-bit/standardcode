@@ -39,8 +39,12 @@ function readLocal(cwd: string): Record<string, unknown> {
 const BASE_ENV: NodeJS.ProcessEnv = { STANDARD_CODE_LANG: "en" };
 
 function fixture(cwd: string, sandbox?: SandboxCommandDeps) {
-  const env = sandbox?.env ?? BASE_ENV;
-  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, env });
+  // S7-3（全仓审查 2026-10-01）双修：①env 合并而非整族顶掉——原 `sandbox?.env ?? BASE_ENV` 被用例
+  // 传 `env: {}` 顶掉 BASE_ENV，头注「lang 钉 en」形同虚设（本机 zh 即文案断言批量红）；
+  // ②传 home——原不传 ⇒ DoD①「缺省态 off/default」读**真实用户** sandbox 配置（用户 settings
+  // sandbox.enabled:true 即假红）。
+  const env = { ...BASE_ENV, ...sandbox?.env };
+  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: path.join(cwd, ".home"), env });
   const out: string[] = [];
   const deps: ReplDeps = {
     session,

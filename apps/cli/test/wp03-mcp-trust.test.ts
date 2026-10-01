@@ -73,7 +73,9 @@ function projWithMcp(name = "proj"): string {
 }
 
 function makeSession(proj: string, over: Partial<SessionInit> = {}) {
-  return createSession({ provider: fakeProvider(), catalog: ["m"], model: "m", cwd: proj, projectRoot: proj, ...over });
+  // S7-1（全仓审查 2026-10-01）：传 home——原不传 ⇒ 真实 ~/.standardcode 的 MCP 配置被装载，
+  // `[mcp] 1 server(s)` 类断言依赖「真实家目录恰零服务器」（wp02:78 显式 home: root 同族惯例）。
+  return createSession({ provider: fakeProvider(), catalog: ["m"], model: "m", cwd: proj, projectRoot: proj, home: path.join(root, "home"), ...over });
 }
 
 async function closeAll(s: { mcpConnections: { close(): Promise<void> }[] }): Promise<void> {

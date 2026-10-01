@@ -63,8 +63,12 @@ function fakeProvider(): ProviderAdapter {
   };
 }
 
+// S7-4（全仓审查 2026-10-01）：缺省态断言（shift+tab 缺省表）不得读真实用户 settings——
+// 指向不存在的 home（loadSettings 缺席=零用户层，零 litter）。
+const NO_USER_HOME = path.join(tmpdir(), "sc-no-such-home");
+
 function fixture(cwd: string) {
-  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd });
+  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: NO_USER_HOME });
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };
   const ctx = createCommandContext(deps);
@@ -106,11 +110,11 @@ describe("键位单源（apps/cli/src/keybindings.ts 纯函数）", () => {
   });
 
   it("keybindingsFromSettings：缺省=缺省表；合法覆盖生效（重启恢复入口可断言）", () => {
-    const empty = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a" });
+    const empty = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", home: NO_USER_HOME });
     expect(normalizeSpec(keybindingsFromSettings(empty.settings)["permission.cycle"])).toBe("shift+tab");
     const dir = mkdtempSync(path.join(tmpRoot(), "sc-kb-rec-"));
     try {
-      const s = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: dir, projectRoot: dir });
+      const s = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: dir, projectRoot: dir, home: NO_USER_HOME });
       writeNestedKeybinding(dir, "permission.cycle", "ctrl+b");
       s.reload();
       expect(normalizeSpec(keybindingsFromSettings(s.settings)["permission.cycle"])).toBe("ctrl+b");
@@ -173,7 +177,7 @@ describe("/keybindings 命令（重绑定/持久化/重启恢复 + 冲突拒绝�
   it("DoD①-重启恢复：新会话由 settings 装配解析出重绑定后的键位", async () => {
     const { ctx } = fixture(cwd);
     await kbCmd().execute("permission.cycle ctrl+b", ctx);
-    const reopened = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd });
+    const reopened = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: NO_USER_HOME });
     expect(normalizeSpec(keybindingsFromSettings(reopened.settings)["permission.cycle"])).toBe("ctrl+b");
     const out2: string[] = [];
     const ctx2 = createCommandContext({ session: reopened, io: { lines: (async function* () {})(), write: (s) => out2.push(s), close: () => {} } });

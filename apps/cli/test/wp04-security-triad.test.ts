@@ -83,6 +83,9 @@ function makeSession(opts: { flagOverrides?: Record<string, unknown>; provider?:
     cwd: projDir,
     projectRoot: projDir,
     trusted: true,
+    // S7-1（全仓审查 2026-10-01）：传 home——原不传 ⇒ 真实 ~/.standardcode 配置面（hooks/MCP/权限）
+    // 混入安全三面断言（用户本地 allow 规则可致假红/假绿）。
+    home: path.join(root, "home"),
     ...(opts.flagOverrides !== undefined ? { flagOverrides: opts.flagOverrides } : {}),
   });
 }

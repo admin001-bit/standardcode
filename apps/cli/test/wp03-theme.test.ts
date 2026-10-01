@@ -21,12 +21,15 @@ import {
 } from "../src/theme.ts";
 
 const ESC = "\x1b"; // 真实 ESC 字节 0x1B，用于校验 colorize 运行时真实产物
+// S7-4（全仓审查 2026-10-01）：缺省态断言（plain/shift+tab 等）不得读真实用户 settings——
+// 一律指向**不存在**的 home（loadSettings 缺席=零用户层，零目录 litter、零清理义务）。
+const NO_USER_HOME = path.join(tmpdir(), "sc-no-such-home");
 // 守卫判据须覆盖三种书写形态（main 抽查补判据）：①源码真实 ESC 字节（运行时产物）②文本转义 `\x1b[`
 // ③文本转义 `\u001b[`，后接 [0-9;]*m；擦除码 `[2K`（结尾非 m）不匹配 → 维持既有语义；白名单 theme.ts/main.ts 不变。
 const COLOR_RE = /\x1b\[[0-9;]*m|\\x1b\[[0-9;]*m|\\u001b\[[0-9;]*m/;
 
 function fixture(cwd: string) {
-  const init: SessionInit = { provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd };
+  const init: SessionInit = { provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: NO_USER_HOME };
   const session = createSession(init);
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };
@@ -86,12 +89,12 @@ describe("主题单源（apps/cli/src/theme.ts 纯函数）", () => {
   });
 
   it("themeFromSettings：缺省=plain；ui.theme 合法=解析；非法=fail-closed 抛错（重启恢复入口可断言）", () => {
-    const empty = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a" });
+    const empty = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", home: NO_USER_HOME });
     expect(themeFromSettings(empty.settings)).toBe("plain");
     // 直接落盘合法值，模拟重启后 settings 装配
     const dir = mkdtempSync(path.join(tmpRoot(), "sc-theme-rec-"));
     try {
-      const s = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: dir, projectRoot: dir });
+      const s = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: dir, projectRoot: dir, home: NO_USER_HOME });
       writeLocalSetting(dir, "ui.theme", "light");
       s.reload();
       expect(themeFromSettings(s.settings)).toBe("light");
@@ -143,7 +146,7 @@ describe("/theme 命令（切换/持久化/重启恢复 + 非法 fail-closed）"
     const { ctx } = fixture(cwd);
     await themeCmd().execute("light", ctx);
     // 模拟重启：同 cwd 新建会话（从落盘 settings.local.json 装配）
-    const reopened = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd });
+    const reopened = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: NO_USER_HOME });
     expect(themeFromSettings(reopened.settings)).toBe("light");
     // 新会话下 /theme 无参应展示恢复后的主题
     const out2: string[] = [];

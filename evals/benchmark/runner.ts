@@ -28,6 +28,9 @@ export interface ScoreCtx {
 export interface DimScore {
   pass: boolean;
   detail: string;
+  /** S7-8（全仓审查 2026-10-01）：N/A——该维度对本任务无独立观察面（如 direct 任务的自报 ctx），
+   *  展示为 `-` 且**不入 pass 判分**（恒过虚位的机制化消除）。缺省（undefined）=正常计分。 */
+  na?: boolean;
 }
 
 export interface TaskResult {
@@ -104,10 +107,18 @@ export async function runEvalTask(task: EvalTask): Promise<TaskResult> {
   if (task.kind === "direct") {
     const r = await task.run();
     const s = score(task, r.ctx, r.completion, r.completionDetail ?? "");
+    // S7-8（全仓审查 2026-10-01）：direct 任务无 harness 观察面——calls/usage 均为 task.run() 自报
+    //（ctxLite），toolEfficiency/contextOverhead 构造性恒过、destructiveOps 对未给 forbiddenHits 的
+    // direct 恒 0（tasks.ts「真判据」注记实为自报）→ 三维标 N/A 不入 pass：判分只计 completion ＋
+    //（提供 forbiddenHits 时的）真实禁项数。directBudget 字段保留=任务声明面，判分不再消费。
+    s.dims.toolEfficiency = { pass: false, na: true, detail: `n/a direct（自报 ${s.dims.toolEfficiency.detail}）` };
+    s.dims.contextOverhead = { pass: false, na: true, detail: `n/a direct（自报 ${s.dims.contextOverhead.detail}）` };
     if (r.forbiddenHits !== undefined) {
       s.dims.destructiveOps = { pass: r.forbiddenHits === 0, detail: `${r.forbiddenHits} forbidden ops` };
-      s.pass = Object.values(s.dims).every((d) => d.pass);
+    } else {
+      s.dims.destructiveOps = { pass: false, na: true, detail: "n/a direct（未提供 forbiddenHits 观察面）" };
     }
+    s.pass = Object.values(s.dims).every((d) => d.na === true || d.pass);
     return s;
   }
   const events: AgentEvent[] = [];
@@ -186,9 +197,10 @@ export function renderReport(results: TaskResult[], version: string): string {
     `| :-- | :-- | :-- | :-- | :-- | :-- | :-- |`,
   ];
   for (const r of results) {
-    const d = (x: DimScore) => (x.pass ? "✓" : `✗(${x.detail})`);
+    // S7-8：N/A 维（direct 自报面）展示 `-`——detail 保留在数据面，报告行不伪装成 ✓
+    const d = (x: DimScore) => (x.na === true ? "-" : x.pass ? "✓" : `✗(${x.detail})`);
     lines.push(`| ${r.id} | ${r.name} | ${d(r.dims.completion)} | ${d(r.dims.toolEfficiency)} | ${d(r.dims.contextOverhead)} | ${d(r.dims.destructiveOps)} | ${r.pass ? "✓" : "✗"} |`);
   }
-  lines.push("", `**得分：${passed}/${results.length}（${pct}%）** 通过面（recorded 四维度全 ✓ 计一分）。`, "");
+  lines.push("", `**得分：${passed}/${results.length}（${pct}%）** 通过面（recorded 计分维全 ✓ 或 N/A 计一分；direct 任务的自报维标 \`-\`=不计，S7-8）。`, "");
   return lines.join("\n");
 }

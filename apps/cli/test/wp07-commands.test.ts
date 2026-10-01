@@ -30,7 +30,9 @@ function textProvider(text = "sub answer"): { provider: ProviderAdapter; request
 
 function fixture(provider?: ProviderAdapter): { session: ReturnType<typeof createSession>; ctx: CommandContext; root: string; cleanup: () => void } {
   const root = tmpRoot();
-  const session = createSession({ provider: provider ?? textProvider().provider, catalog: ["m-a"], model: "m-a", cwd: root, projectRoot: root });
+  // S7-4（全仓审查 2026-10-01）：传 home——原不传 ⇒ 真实用户 settings 混入缺省态断言（用户改过
+  // 相关键即假红）；home 指向不存在路径（loadSettings 缺席=零用户层，随 root 清理零义务）。
+  const session = createSession({ provider: provider ?? textProvider().provider, catalog: ["m-a"], model: "m-a", cwd: root, projectRoot: root, home: path.join(root, "home") });
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };
   const ctx = createCommandContext(deps);

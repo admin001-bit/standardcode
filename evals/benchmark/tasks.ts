@@ -6,7 +6,10 @@
 // （b14，WP-03 S-3）/hooks exit2 阻断+RANK 只升不降（b15）/PreToolUse 超时 fail-closed（b16，WP-04）/
 // skills 清单预算+展开注入（b17，WP-05）/memory 索引硬截断+互链（b18，WP-06）/custom agent 端到端
 // （b19，session 生产装配链——WP-10 链）/plugin 安装确认 fail-closed+聚合（b20，WP-09 S-5）。
-// M4 注记②清偿：b08/b11/b12 补 directBudget（toolEfficiency/contextOverhead 真判据，非恒过虚位）。
+// M4 注记②清偿：b08/b11/b12 补 directBudget。【S7-8 勘误 2026-10-01】该「真判据」口径不成立——
+// direct 任务的 calls/usage 均为 task.run() 自报（ctxLite），两维构造性恒过；runner 已把 direct 的
+// toolEfficiency/contextOverhead/（未给 forbiddenHits 时的）destructiveOps 标 N/A 不入 pass，
+// directBudget 字段保留=任务声明面（判分不再消费）。
 // M5-WP-09 扩列 v2（b21-b24，">20 恰界"清偿=M4-WP-11 未解决①）：沙箱策略 wire 契约+帧 codec（b21，WP-01/03）/
 // SEC-020b env 注入黑名单（b22）+SEC-030 疑似密钥告警+脱敏链（b23，均 WP-05）/遥测契约+opt-in 门序+接缝⑮（b24，WP-06）。
 
@@ -182,7 +185,7 @@ export function buildTasks(work: string): EvalTask[] {
         const ok = got === true && concurrentHeld === 1 && concurrentAfterRelease === 0 && after.length === 0;
         return { ctx: ctxLite({ calls: [{ name: "task-registry", input: { ops: 4 } }] }), completion: ok, completionDetail: ok ? "" : `got=${got} held=${concurrentHeld} afterRelease=${concurrentAfterRelease} list=${after.length}` };
       },
-      directBudget: { maxToolCalls: 1, maxInputTokens: 0 }, // M4-WP-11 注记②补实：两维真判据（usage 自报零 token=注册表操作无模型调用）
+      directBudget: { maxToolCalls: 1, maxInputTokens: 0 }, // M4-WP-11 注记②补实。【S7-8 勘误】usage=calls 均自报（ctxLite），两维 N/A 不入 pass
     },
     {
       id: "b09", name: "sync-to-background-flip", seed: "同步 subagent 超 autoBackgroundMs 翻后台→终态 completed 落账（ORC-022 后台默认/120s 翻转测试注入）",
@@ -432,7 +435,7 @@ export function buildTasks(work: string): EvalTask[] {
           st.stripped.length === 0;
         return { ctx: ctxLite({ calls: [{ name: "Agent", input: { type: "e2e" } }], usage: { inputTokens: 10, outputTokens: 5, cacheCreationTokens: 0, cacheReadTokens: 0 } }), completion: ok, completionDetail: ok ? "" : `sys=${JSON.stringify(cap.system)} trust=${JSON.stringify(local.agentTrust)}` };
       },
-      directBudget: { maxToolCalls: 1, maxInputTokens: 50 }, // 子代理夹具 usage 入判（token 维真判据）
+      directBudget: { maxToolCalls: 1, maxInputTokens: 50 }, // 子代理夹具。【S7-8 勘误】usage=ctxLite 字面自报（10<=50 恒真），token 维 N/A 不入 pass
     },
     {
       id: "b20", name: "plugin-install-confirm-failclosed", kind: "direct",

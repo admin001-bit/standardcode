@@ -32,7 +32,9 @@ function fixture(env?: Record<string, string | undefined>): { session: ReturnTyp
     model: CATALOG[0]!,
     cwd: root,
     projectRoot: root,
-    ...(env !== undefined ? { env: { ...env } } : {}),
+    // S7-5（全仓审查 2026-10-01）：env 缺省=空映射而非 {…process.env}——ambient STANDARD_CODE_THINKING
+    // 会击穿「无 env 覆写」的否定断言（本机设过即假红/假绿）。
+    env: env !== undefined ? { ...env } : {},
   });
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };

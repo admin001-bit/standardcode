@@ -46,6 +46,22 @@ describe("DoD①/② runner recorded 全绿+基准集（v0 ≥10；v1 ≥20=M4 D
     expect(failed).toEqual([]);
     expect(results.every((r) => r.pass)).toBe(true);
   });
+
+  it("S7-8：direct 自报维标 N/A 不入 pass；loop 四维正常计分（原 direct 两至三维构造性恒过）", () => {
+    const na = results.filter((r) => r.dims.toolEfficiency.na === true);
+    expect(na.length).toBeGreaterThan(0); // direct 族存在（>20 任务含多件 direct）
+    for (const r of na) {
+      expect(r.dims.contextOverhead.na).toBe(true);
+      // N/A 不入 pass：总判 = completion（× 提供 forbiddenHits 时的真禁项；未提供则 destr 亦 N/A）
+      expect(r.pass).toBe(r.dims.completion.pass && (r.dims.destructiveOps.na === true || r.dims.destructiveOps.pass));
+    }
+    // loop 任务无 na 标记（四维全真实计分）
+    expect(results.some((r) => r.dims.toolEfficiency.na !== true)).toBe(true);
+    for (const r of results.filter((r) => r.dims.toolEfficiency.na !== true)) {
+      expect(r.dims.contextOverhead.na).toBeUndefined();
+      expect(r.pass).toBe(Object.values(r.dims).every((d) => d.na === true || d.pass));
+    }
+  });
 });
 
 describe("DoD③ 出分记录落盘（docs/evals/<VERSION>.md 逐字节守卫+VERSION 独立版本化【勘误 2026-09-15 V：题头 v0 字样随 v1 更新】）", () => {

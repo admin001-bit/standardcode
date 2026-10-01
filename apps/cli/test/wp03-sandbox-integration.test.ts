@@ -38,9 +38,12 @@ afterAll(async () => {
   for (const d of [root, outside]) if (d) fs.rmSync(d, { recursive: true, force: true });
 });
 
+// S7-7（全仓审查 2026-10-01）：skipIf 门与自检**同源**——原 describe.skipIf(!BIN) 与自建字面量
+// skipIfNoBin 无引用关系（改其一另一不红），自检断言仅 length/typeof 恒真＝沙箱 e2e 全静默跳过无报警。
+// 现 describe 消费同一函数值，自检双向绑定 BIN 真值。
 const skipIfNoBin: [() => boolean] = [() => !BIN];
 
-describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
+describe.skipIf(skipIfNoBin[0]!())("wp03 sandbox e2e（真 bin）", () => {
   it("DoD②：Bash 工作区内写成功；越界写失败且错误可诊断（exec 拒绝非绕过）", async () => {
     const env = { cwd: root, env: {} as NodeJS.ProcessEnv, sandbox: handle! };
     if (process.platform === "win32") {
@@ -157,8 +160,10 @@ describe.skipIf(!BIN)("wp03 sandbox e2e（真 bin）", () => {
 // 门禁自检（skipIf 的对照面）：若上方整块因 BIN 缺位而 skip，CI 上 beforeAll 已抛——
 // 本测锁 skipIf 表达式与 CI 断言同源。
 describe("wp03 guard 形制自检", () => {
-  it("skipIf 与 beforeAll 门禁同源（同一 BIN 变量；CI+缺 bin=抛非 skip）", () => {
+  it("skipIf 与 beforeAll 门禁同源（describe 消费同一函数；函数值恒 ≡ !BIN；CI 缺 bin=beforeAll 抛）", () => {
     expect(skipIfNoBin.length).toBe(1);
     expect(typeof skipIfNoBin[0]!()).toBe("boolean");
+    expect(skipIfNoBin[0]!()).toBe(!BIN); // S7-7：双向同源判据——fn 体被改成无条件/常量即红（原 length/typeof 恒真零判别）
+    if (CI) expect(BIN).toBeTruthy(); // CI 必真跑（缺 bin 由 beforeAll 抛；此处兜底防 skip 语义漂移）
   });
 });

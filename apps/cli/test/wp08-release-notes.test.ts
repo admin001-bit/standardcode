@@ -36,9 +36,10 @@ function makeTmp(): string {
   return d;
 }
 
-/** 会话环境：lang 钉 en（文案断言确定化）；cwd/projectRoot=tmp 项目根（数据源定位面）。 */
+/** 会话环境：lang 钉 en（文案断言确定化）；cwd/projectRoot=tmp 项目根（数据源定位面）。
+ *  S7-4（全仓审查 2026-10-01）：+home 隔离（原不传 ⇒ 真实用户 settings 混入断言面）。 */
 function fixture(cwd: string) {
-  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, env: { STANDARD_CODE_LANG: "en" } });
+  const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd, home: path.join(cwd, "home"), env: { STANDARD_CODE_LANG: "en" } });
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };
   return { session, out, ctx: createCommandContext(deps) };

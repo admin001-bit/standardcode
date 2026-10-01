@@ -20,7 +20,9 @@ function baseInit(root: string): SessionInit {
   // 信任门控——修复前经嵌套形绕门注入（bug 通道，CI 无环境 key 时靠它供凭据），修复后未信任必被剥。
   // 本文件测 settings 装配/注入机制而非信任门（信任门断言在 session-trust/trust.test），故显式 trusted
   // 模拟"已接受信任对话框"。
-  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root, trusted: true };
+  // S7-5（全仓审查 2026-10-01）：env 缺省=空映射——ambient STANDARD_CODE_PROVIDER/MODEL 会击穿
+  // 「env 逃逸舱 > settings > 默认」等优先序断言的非覆写分支（本机设过即假红）。
+  return { projectRoot: root, home: tmpRoot(), programData: tmpRoot(), cwd: root, trusted: true, env: {} };
 }
 
 describe("createSession settings 装配（WP-01）", () => {
@@ -59,18 +61,31 @@ describe("createSession settings 装配（WP-01）", () => {
     }
   });
 
-  it("settings 注入 env 粘滞跨会话（同 handle）：后续会话不再提供该键也不解除", () => {
+  it("settings 注入 env 粘滞（同 handle）：注入真发生；会话内 reload 省略不解除；handle 跨会话延续登记", () => {
+    // S7-6（全仓审查 2026-10-01）：原断言 settingsEnvInjectedOf(handle).has("SC_STICKY") 完全由第一
+    // 会话的只增 Set 决定——第二会话复用与否均恒真，标题承诺行为零覆盖。session env 恒为 init.env 的
+    // 拷贝（session.ts:301「注入只进 env 副本」），值不跨会话迁移——故真判据钉在：
+    // ①注入链真发生（session.env 上可见）；②**会话内 reload**（session.ts:592 同 target 再喂）省略
+    // 该键后值仍在＝粘滞不解除（省略即消失则红）；③handle 登记跨会话延续（第二会话复用不丢）。
+    // handle 的 skipped 报告语义由 platform settings.test:133 钉，此处不重复。
     const root = tmpRoot();
     try {
       writeSettings(root, "settings.json", { env: { SC_STICKY: "1", ANTHROPIC_API_KEY: "sk-a" } });
       const handle = { injected: new Set<string>() };
-      const first = createSession({ ...baseInit(root), settingsEnv: handle });
+      const first = createSession({ ...baseInit(root), env: {}, settingsEnv: handle });
       expect(first.settings.warnings).toEqual([]);
-      // 第二会话：改写 settings 去掉 SC_STICKY → env 副本仍保留（粘滞）
+      expect(first.env.SC_STICKY).toBe("1"); // ①首会话注入真发生（原测试从未验证）
+      expect(first.env.ANTHROPIC_API_KEY).toBe("sk-a"); // settings 注入面覆盖同键（接线判据）
+      // 会话内 reload：settings 省略全部 env 键 → 同 target 上值不解除（粘滞）
       writeSettings(root, "settings.json", {});
-      const secondEnv = { ANTHROPIC_API_KEY: "sk-a" } as NodeJS.ProcessEnv; // 凭据走 env；粘滞语义由 platform 测试覆盖，此处验证 handle 复用不抛错
-      const second = createSession({ ...baseInit(root), env: secondEnv, settingsEnv: handle });
+      first.reload();
+      expect(first.env.SC_STICKY).toBe("1"); // ②粘滞真判据（粘滞环断裂即红）
+      expect(first.env.ANTHROPIC_API_KEY).toBe("sk-a");
       expect(settingsEnvInjectedOf(handle).has("SC_STICKY")).toBe(true);
+      // 跨会话：第二会话复用同一 handle——登记面延续；值不跨会话迁移（env=拷贝，口径如实）
+      const second = createSession({ ...baseInit(root), env: { ANTHROPIC_API_KEY: "sk-a" }, settingsEnv: handle });
+      expect(settingsEnvInjectedOf(handle).has("SC_STICKY")).toBe(true); // ③handle 延续登记
+      expect(second.env.SC_STICKY).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -58,6 +58,9 @@ function makeSession(hooks: Record<string, unknown>, over: Partial<Parameters<ty
     cwd: root,
     projectRoot: root,
     trusted: true,
+    // S7-1（全仓审查 2026-10-01）：传 home——原不传 ⇒ 真实 ~/.standardcode 的 hooks/插件被装载
+    //（用户钩子可能 spawn 真实子进程、改写裁决面，断言依赖「真实家目录恰零钩子」）。
+    home: path.join(root, "home"),
     flagOverrides: { hooks } as Record<string, unknown>,
     ...over,
   });

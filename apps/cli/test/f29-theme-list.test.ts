@@ -24,7 +24,16 @@ function fakeProvider(): ProviderAdapter {
 
 function fixture() {
   const cwd = mkdtempSync(path.join(tmpdir(), "stdcode-f29-"));
-  const init: SessionInit = { provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd, projectRoot: cwd };
+  // R1-4（全仓审查 2026-10-01，f28 同族）：传 home + 自钉 lang（英文串断言不随本机语言/真实设置漂移）
+  const init: SessionInit = {
+    provider: fakeProvider(),
+    catalog: ["m-a"],
+    model: "m-a",
+    cwd,
+    projectRoot: cwd,
+    home: path.join(cwd, "home"),
+    env: { ...process.env, STANDARD_CODE_LANG: "en" },
+  };
   const session = createSession(init);
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: () => {}, close: () => {} } as unknown as ReplDeps["io"] };
   const ctx = createCommandContext(deps);

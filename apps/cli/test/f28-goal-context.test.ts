@@ -30,8 +30,17 @@ function stubProvider(): ProviderAdapter {
   };
 }
 
-async function run(lines: string[]): Promise<string> {
-  const session = createSession({ provider: stubProvider(), catalog: ["m-a"], model: "m-a", cwd: dir });
+async function run(lines: string[]): Promise<{ out: string; session: ReturnType<typeof createSession> }> {
+  // R1-4（全仓审查 2026-10-01）：传 home（不读真实 ~/.standardcode）+ 自钉 lang=en（断言硬编码
+  // 英文串，中文环境即假红；wp01:62/session-commands:122 同族惯例）。
+  const session = createSession({
+    provider: stubProvider(),
+    catalog: ["m-a"],
+    model: "m-a",
+    cwd: dir,
+    home: join(dir, "home"),
+    env: { ...process.env, STANDARD_CODE_LANG: "en" },
+  });
   let out = "";
   const io: ReplIo = {
     lines: (async function* () {
@@ -41,27 +50,30 @@ async function run(lines: string[]): Promise<string> {
     close: () => {},
   };
   await runRepl({ session, io, baseDir: dir });
-  return out;
+  return { out, session };
 }
 
 describe("F28 /goal 会话态跨派发存续（生产路径）", () => {
   it("set 后 status 查得目标（原形：status 恒 none）", async () => {
-    const out = await run(["/goal fix F28 then ship", "/goal status", "/exit"]);
+    const { out } = await run(["/goal fix F28 then ship", "/goal status", "/exit"]);
     expect(out).toContain("fix F28 then ship");
     expect(out).not.toContain("no session goal");
   });
 
   it("clear 真清且输出 cleared（原形：fresh ctx 下 clear 恒 none）", async () => {
-    const out = await run(["/goal ship now", "/goal clear", "/goal status", "/exit"]);
+    const { out } = await run(["/goal ship now", "/goal clear", "/goal status", "/exit"]);
     expect(out).toContain("[goal] cleared");
     expect(out).toContain("no session goal");
     expect(out).not.toContain("current: ship now");
   });
 
   it("转录注入半边不受影响：set 的 <session-goal> 注入轮在转录侧可见", async () => {
-    const out = await run(["/goal persistent-goal-marker", "/exit"]);
+    const { out, session } = await run(["/goal persistent-goal-marker", "/exit"]);
     expect(out).toContain("[goal] set");
-    // 注入消息落 session.messages（共享态）——命令轮不触模型，仅断言 set 回执不抛错。
-    expect(out).not.toContain("failed");
+    // R1-6（全仓审查 2026-10-01）：原只断言输出不含 failed——注入半边零判别（wp01:105 正查形缺位）。
+    // 正查 <session-goal> 注入轮已落 messages（transcript 面随下一 prompt 轮落盘，命令轮不触模型）。
+    const dump = JSON.stringify(session.messages);
+    expect(dump).toContain("<session-goal>");
+    expect(dump).toContain("persistent-goal-marker");
   });
 });

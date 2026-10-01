@@ -9,8 +9,11 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+// S7-4（全仓审查 2026-10-01）：缺省态断言不得读真实用户 settings（指向不存在的 home=零用户层）。
+const NO_USER_HOME = path.join(tmpdir(), "sc-no-such-home");
+
 function fixture() {
-  const session = createSession({ provider: fakeProvider(), catalog: ["m-a", "m-b"], model: "m-a" });
+  const session = createSession({ provider: fakeProvider(), catalog: ["m-a", "m-b"], model: "m-a", home: NO_USER_HOME });
   const out: string[] = [];
   const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (s) => out.push(s), close: () => {} } };
   const ctx = createCommandContext(deps);
@@ -84,7 +87,7 @@ describe("/diff（WP-09 rework：自实现引擎 over file-history）", () => {
       const store = await FileHistoryStoreImpl.create(proj, base);
       await store.snapshot("Write", f);
       writeFileSync(f, "my key sk-abc123def456ghij\nv1\n", "utf8");
-      const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: proj });
+      const session = createSession({ provider: fakeProvider(), catalog: ["m-a"], model: "m-a", cwd: proj, home: NO_USER_HOME });
       const out: string[] = [];
       const deps: ReplDeps = { session, io: { lines: (async function* () {})(), write: (x) => out.push(x), close: () => {} }, fileHistory: store };
       const ctx = createCommandContext(deps);
