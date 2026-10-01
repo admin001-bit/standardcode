@@ -47,6 +47,8 @@ install -D -m 0644 %{SOURCE1} %{buildroot}%{_datadir}/doc/standardcode/README.md
 %{_datadir}/doc/standardcode/README.md
 
 %changelog
+* Fri Oct 02 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.4-1
+- Full-repo audit round: 68 fixes (permissions, interrupts, trust/redaction, sandbox, tests, packaging); rebuilt single-file binaries; checksum channel, not signed (Q-7).
 * Mon Sep 28 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.3-1
 - Fix: Windows exit crash on error paths (libuv assert, rc=127), shift+tab key residue leaking into the next input line, npm package now ships LICENSE/README.
 * Mon Sep 28 2026 StandardCode OSS <maintainers@standardcode.invalid> - 0.1.2-1

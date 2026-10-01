@@ -5,7 +5,7 @@
 param(
   [string]$BaseUrl = "https://github.com/admin001-bit/standardcode/releases/download",
   [string]$Artifact = "standardcode-windows-x64.exe",
-  [string]$Version = "0.1.3",
+  [string]$Version = "0.1.4",
   [string]$Dest = "."
 )
 $ErrorActionPreference = "Stop"

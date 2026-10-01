@@ -5,7 +5,7 @@
 #   缺省 artifact 由 uname 推导：Linux→standardcode-linux-x64、Darwin→standardcode-darwin-arm64。
 set -euo pipefail
 
-DEFAULT_VERSION="0.1.3"
+DEFAULT_VERSION="0.1.4"
 NAME="standardcode-darwin-arm64"
 DEFAULT_BASE="https://github.com/admin001-bit/standardcode/releases/download"
 VERSION="$DEFAULT_VERSION"
