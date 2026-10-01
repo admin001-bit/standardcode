@@ -112,8 +112,11 @@ case ":$PATH:" in
     ANSWER=""; read -r ANSWER || true
     if [ "$ANSWER" = "yes" ]; then
       RC="$HOME/.bashrc"
+      # 运行中 shell 才决定 rc（ZSH_VERSION=当前 zsh）。
+      # S8-9（全仓审查 2026-10-01）：原第三行 `[ -f ~/.zshrc ] && RC=~/.zshrc` 无条件推翻上一行——
+      # bash 主用但装过 zsh 的用户 PATH 只写 .zshrc（bash 会话装完命令不在 PATH，channels ndjson
+      # rcFile 记录同步失真）；该行已删，文件存在与否不改判定。
       [ -n "${ZSH_VERSION:-}" ] && RC="$HOME/.zshrc"
-      [ -f "$HOME/.zshrc" ] && RC="$HOME/.zshrc"
       printf '\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$RC"
       RC_USED="\"$RC\""
       log "PATH entry written to $RC"

@@ -243,15 +243,18 @@ fn handle_fs_write(backend: Arc<NativeBackend>, out: Out, id: u64, inner: Value)
         }
     };
     // 内容经临时文件注入（模块头理由）；沙箱内子进程读 temp 写目标=策略强制面完整保留。
-    let temp =
-        std::env::temp_dir().join(format!("standardcode-fsw-{}-{id}.tmp", std::process::id()));
-    if let Err(e) = std::fs::write(&temp, p.content.as_bytes()) {
-        send(
-            &out,
-            Frame::failure(id, "io_error", &format!("temp write: {e}")),
-        );
-        return;
-    }
+    // S8-4（全仓审查 2026-10-01，CWE-377）：原可预测名（pid-id）+ fs::write 截断跟随——共享 /tmp
+    // 多用户机上 symlink 预占＝任意覆盖原语（截断穿透跟随），失败清理还留残留。现独占创建。
+    let temp = match create_fs_write_temp(p.content.as_bytes()) {
+        Ok(t) => t,
+        Err(e) => {
+            send(
+                &out,
+                Frame::failure(id, "io_error", &format!("temp create/write: {e}")),
+            );
+            return;
+        }
+    };
     let req = ExecRequest::new(
         backend.self_exe.clone(),
         vec![
@@ -273,6 +276,52 @@ fn handle_fs_write(backend: Arc<NativeBackend>, out: Out, id: u64, inner: Value)
             send(&out, Frame::response(id, json!({"exitCode": exit_code})));
         }
         Err(e) => failure(&out, id, &e),
+    }
+}
+
+/// S8-4（全仓审查 2026-10-01，CWE-377 不安全临时文件）：fsWrite 内容注入临时文件的独占创建——
+/// `create_new`（O_EXCL，预占 symlink/同名文件一律失败换名）+ 纳秒与进程内原子计数双唯一后缀
+/// +（unix）0600 权限。旧形 `standardcode-fsw-<pid>-<id>.tmp` 可预测且 `fs::write` 截断跟随。
+fn create_fs_write_temp(content: &[u8]) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let mut attempt = 0u32;
+    loop {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let p = dir.join(format!("standardcode-fsw-{pid}-{nanos}-{seq}.tmp"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)
+        {
+            Ok(mut f) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+                }
+                f.write_all(content)?;
+                return Ok(p);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                attempt += 1;
+                if attempt > 64 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "fsWrite temp 名独占创建重试耗尽（64）",
+                    ));
+                }
+            }
+            Err(e) => return Err(e),
+        }
     }
 }
 
@@ -546,6 +595,24 @@ mod tests {
         // 坏形参=usage 退出 2（不 panic）
         assert_eq!(fs_write_main(&["only".to_string()]), 2);
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn fs_write_temp_is_exclusive_and_unique() {
+        // S8-4（CWE-377）：独占创建——旧可预测名（pid-id）被敌意预占（symlink/普通文件）时，
+        // 原 fs::write 截断跟随＝任意覆盖；新形换名自建、预占者零触碰，且多次创建互不覆盖。
+        let hostile =
+            std::env::temp_dir().join(format!("standardcode-fsw-{}-1.tmp", std::process::id()));
+        std::fs::write(&hostile, b"victim").unwrap();
+        let a = create_fs_write_temp(b"one").unwrap();
+        let b = create_fs_write_temp(b"two").unwrap();
+        assert_ne!(a, b, "两次创建必须互不覆盖（唯一后缀）");
+        assert_eq!(std::fs::read(&a).unwrap(), b"one");
+        assert_eq!(std::fs::read(&b).unwrap(), b"two");
+        assert_eq!(std::fs::read(&hostile).unwrap(), b"victim"); // 预占面零截断
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+        let _ = std::fs::remove_file(&hostile);
     }
 
     #[test]

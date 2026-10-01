@@ -158,4 +158,37 @@ describe("DoD⑤ 包形制审计（postinstall 零提权=附录 E 供应链约�
     }
     expect(failed).toBe(true);
   });
+
+  it("S8-8：verify 零命中 fail-closed——空/全行格式不符的 SHA256SUMS 不得零核验绿过；坏行混入即 fail", () => {
+    const verify = (dir: string): boolean => {
+      try {
+        execFileSync(process.execPath, [join(repoRoot, "scripts/checksum.mjs"), "verify", dir], { stdio: "pipe" });
+        return true; // PASSED
+      } catch {
+        return false;
+      }
+    };
+    // 空文件：原循环零命中 → fail=0 → 绿过（缺陷原形）
+    const d1 = tmp();
+    writeFileSync(join(d1, "SHA256SUMS.txt"), "");
+    expect(verify(d1)).toBe(false);
+    // 全行格式不符：原每行 continue → 同样零核验绿过
+    const d2 = tmp();
+    writeFileSync(join(d2, "SHA256SUMS.txt"), "not-a-hash just some text\nanother malformed line\n");
+    expect(verify(d2)).toBe(false);
+    // 合法行之间混入坏行：原跳过坏行、只核好行 → 绿；现坏行计 fail
+    const d3 = tmp();
+    const f = join(d3, "a.bin");
+    writeFileSync(f, "ok");
+    execFileSync(process.execPath, [join(repoRoot, "scripts/checksum.mjs"), "gen", f], { stdio: "pipe" });
+    const sums = join(d3, "SHA256SUMS.txt");
+    writeFileSync(sums, readFileSync(sums, "utf8") + "garbage line in between\n");
+    expect(verify(d3)).toBe(false);
+    // 复核：纯 gen 输出仍绿（正路不受影响）
+    const d4 = tmp();
+    const f4 = join(d4, "b.bin");
+    writeFileSync(f4, "ok");
+    execFileSync(process.execPath, [join(repoRoot, "scripts/checksum.mjs"), "gen", f4], { stdio: "pipe" });
+    expect(verify(d4)).toBe(true);
+  });
 });

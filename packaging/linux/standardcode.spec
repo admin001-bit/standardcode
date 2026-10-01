@@ -9,7 +9,10 @@
 #   V-WP10 复核后按窄口径收窄（2026-09-23）：`%global __brp_strip %{nil}` 只关 brp-strip、保留 brp-compress 等其余
 #   后处理——已在本机重跑 build-rpm.sh，载荷摘要硬断言仍 PASS（若后续发行版宏布局变化导致失败，回退全局口径并登记）。
 Name:           standardcode
-Version:        0.1.3
+# S8-10（全仓审查 2026-10-01）：Version 消费宏——原字面量 0.1.3 无条件重设，build-rpm.sh 的
+# `--define version $VERSION` 被覆盖（--version 0.1.4 产出 rpm 仍 0.1.3，内外矛盾）。
+# 注入路径=build-rpm.sh 恒传 --define version（直跑 rpmbuild 须自带，否则宏未定义=响亮失败不静默）。
+Version:        %{version}
 Release:        1%{?dist}
 Summary:        Open-source CLI coding agent (generic multi-protocol providers)
 

@@ -73,6 +73,13 @@ mkdir -p "$OUT_DIR"
 RPM="$OUT_DIR/$(basename "$PRODUCED")"
 cp "$PRODUCED" "$RPM"
 
+# S8-10（全仓审查 2026-10-01）：产出文件名版本硬断言——原「只打印不校验」，spec Version 字面量
+# 覆盖 --define version 时内外矛盾静默流过。文件名形 standardcode-<ver>-1.<arch>.rpm。
+case "$(basename "$RPM")" in
+  *-"${VERSION}"-*) log "rpm 版本断言 OK  $(basename "$RPM") 含 -${VERSION}-" ;;
+  *) fail "rpm 版本矛盾：$(basename "$RPM") 不含 -${VERSION}-（spec Version 未消费 --define version？S8-10）" ;;
+esac
+
 if command -v rpm >/dev/null 2>&1; then
   rpm -qp --queryformat '%{NAME} %{VERSION}-%{RELEASE} %{ARCH}\n' "$RPM" 2>/dev/null || true
   rpm -qpl "$RPM" 2>/dev/null || true

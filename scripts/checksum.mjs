@@ -38,9 +38,19 @@ if (mode === "verify") {
   }
   const base = resolve(dirname0(sumFile));
   let fail = 0;
+  let matched = 0;
   for (const line of readFileSync(sumFile, "utf8").split("\n")) {
-    const m = /^([0-9a-f]{64})\s{2}(.+)$/.exec(line.trim());
-    if (!m) continue;
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const m = /^([0-9a-f]{64})\s{2}(.+)$/.exec(trimmed);
+    // S8-8（全仓审查 2026-10-01，SEC-040 校验门）：格式不符行原 `continue` 静默跳过——空/全行
+    // 格式不符的 SHA256SUMS 循环零命中 → fail=0 → 零核验绿过（产物零核验）。现：坏行计 fail。
+    if (!m) {
+      console.error(`[checksum] BAD LINE (格式不符): ${trimmed}`);
+      fail++;
+      continue;
+    }
+    matched++;
     const f = join(base, m[2]);
     if (!existsSync(f)) {
       console.error(`[checksum] MISSING ${m[2]}`);
@@ -53,6 +63,10 @@ if (mode === "verify") {
       console.error(`[checksum] MISMATCH ${m[2]} (expected ${m[1]}, got ${actual})`);
       fail++;
     }
+  }
+  if (matched === 0) {
+    console.error("[checksum] verify FAILED (0 条目命中——空/零合法行的 SHA256SUMS 不得零核验绿过)");
+    process.exit(1);
   }
   if (fail > 0) {
     console.error(`[checksum] verify FAILED (${fail} item(s))`);
